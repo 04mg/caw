@@ -30,18 +30,18 @@ From the repository root:
 cd src
 
 # Linux / macOS
-go build -o ../wterm .
+go build -o ../caw .
 
 # Windows
-go build -o ../wterm.exe .
+go build -o ../caw.exe .
 ```
 
 Cross-compile from any platform:
 ```sh
 cd src
-GOOS=linux GOARCH=amd64 go build -o ../wterm .
-GOOS=windows GOARCH=amd64 go build -o ../wterm.exe .
-GOOS=darwin GOARCH=amd64 go build -o ../wterm-macos .
+GOOS=linux GOARCH=amd64 go build -o ../caw .
+GOOS=windows GOARCH=amd64 go build -o ../caw.exe .
+GOOS=darwin GOARCH=amd64 go build -o ../caw-macos .
 ```
 
 ## Contributing

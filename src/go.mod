@@ -1,4 +1,4 @@
-module wterm
+module caw
 
 go 1.25.0
 
