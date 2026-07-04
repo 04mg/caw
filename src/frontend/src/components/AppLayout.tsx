@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
-import cawSvg from '@/assets/caw.svg'
+import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/components/WorkspacePanel'
 import { TerminalGrid } from '@/components/TerminalGrid'
 import {

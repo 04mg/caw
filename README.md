@@ -1,14 +1,14 @@
-<p align="center">
-  <img src="caw.svg" alt="Caw" width="200">
-</p>
+<!-- Header -->
+  <p align="center">
+    <img src="LOGO.svg" alt="Caw" width="200">
+  </p>
 
-<h1 align="center">Caw</h1>
-<p align="center"><i>cloud agentic workspace</i></p>
+  <h1 align="center">Caw</h1>
 
-<p align="center">
-  A terminal-based workspace manager with multi-pane terminals, tab management,
-  workspace persistence, and emoji picker — powered by a Go backend and React frontend.
-</p>
+  <p align="center">
+    <i>Cloud agentic workspace</i>
+  </p>
+<!-- /Header -->
 
 ## Build
 
