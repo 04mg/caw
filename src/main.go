@@ -19,6 +19,9 @@ import (
 //go:embed frontend/dist
 var frontendFS embed.FS
 
+//go:embed icon.txt
+var iconTxt string
+
 type TerminalSession struct {
 	ID         string
 	Pty        *ptySession
@@ -62,7 +65,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(distFS)))
 
 	addr := ":" + port
-	fmt.Printf("Caw listening on http://localhost%s\n", addr)
+	fmt.Print(strings.Replace(iconTxt, ":8080", addr, 1))
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
