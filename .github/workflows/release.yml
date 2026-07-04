@@ -15,12 +15,11 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: bump
-        uses: anothrNick/github-tag-action@v1
+        uses: anothrNick/github-tag-action@1.71.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEFAULT_BUMP: patch
-          WITH_V: true
-
+          TAG_PREFIX: v
   release:
     if: needs.tag.outputs.tag
     needs: tag
@@ -40,10 +39,10 @@ jobs:
 
       - run: |
           cd src
-          GOOS=linux   GOARCH=amd64 go build -o caw-linux-amd64    .
-          GOOS=darwin  GOARCH=amd64 go build -o caw-darwin-amd64   .
-          GOOS=darwin  GOARCH=arm64 go build -o caw-darwin-arm64   .
-          GOOS=windows GOARCH=amd64 go build -o caw-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o caw-linux-amd64    .
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -o caw-darwin-amd64   .
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o caw-darwin-arm64   .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o caw-windows-amd64.exe .
 
       - uses: softprops/action-gh-release@v2
         with:
