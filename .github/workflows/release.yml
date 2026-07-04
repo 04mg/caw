@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    outputs:
+      tag: ${{ steps.bump.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: bump
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: patch
+          WITH_V: true
+
+  release:
+    if: needs.tag.outputs.tag
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: ${{ needs.tag.outputs.tag }} }
+
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - run: cd src/frontend && npm ci && npm run build
+
+      - run: |
+          cd src
+          GOOS=linux   GOARCH=amd64 go build -o caw-linux-amd64    .
+          GOOS=darwin  GOARCH=amd64 go build -o caw-darwin-amd64   .
+          GOOS=darwin  GOARCH=arm64 go build -o caw-darwin-arm64   .
+          GOOS=windows GOARCH=amd64 go build -o caw-windows-amd64.exe .
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.tag }}
+          files: src/caw-*
+          generate_release_notes: true
