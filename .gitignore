@@ -10,8 +10,8 @@ go.work
 go.work.sum
 
 # Node / Vite
-node_modules/
-frontend/dist/
+src/frontend/node_modules/
+src/frontend/dist/
 
 # IDE
 .idea/
