@@ -16,9 +16,9 @@ type Info struct {
 func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/available", func(w http.ResponseWriter, r *http.Request) {
 		agentsList := []Info{
-			{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode"}},
-			{ID: "agy", Label: "Antigravity", Cmd: []string{"agy"}},
-			{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
+			{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--dangerously-skip-permissions"}},
+			{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},
+			{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}},
 		}
 		available := []Info{}
 		for _, a := range agentsList {
