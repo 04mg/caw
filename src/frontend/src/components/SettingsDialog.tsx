@@ -2,15 +2,17 @@ import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key } from 'lucide-react'
+import { Antigravity, OpenCode } from '@lobehub/icons'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
+import { cn } from '@/lib/utils'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'quotas'
+type Section = 'appearance' | 'agents' | 'terminal' | 'limits'
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -21,6 +23,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [antigravityKey, setAntigravityKey] = useState('')
   const [opencodeCookie, setOpencodeCookie] = useState('')
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
+  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode'>('antigravity')
 
   // Load settings on open
   useEffect(() => {
@@ -154,15 +157,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             Terminal
           </button>
           <button
-            onClick={() => setActiveSection('quotas')}
+            onClick={() => setActiveSection('limits')}
             className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'quotas'
+              activeSection === 'limits'
                 ? 'bg-accent text-accent-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
             }`}
           >
             <Key className="h-3.5 w-3.5" />
-            Quotas
+            Limits
           </button>
         </div>
 
@@ -314,70 +317,112 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </div>
           )}
 
-          {activeSection === 'quotas' && (
+          {activeSection === 'limits' && (
             <div className="flex flex-col h-full gap-4">
               <div>
-                <h3 className="text-sm font-medium mb-1">Quotas</h3>
-                <p className="text-xs text-muted-foreground">Configure credentials for AI coding plan providers.</p>
+                <h3 className="text-sm font-medium mb-1">Limits</h3>
+                <p className="text-xs text-muted-foreground">Configure credentials for usage limits.</p>
               </div>
 
-              <div className="flex flex-col gap-4 mt-2 overflow-y-auto pr-1">
-                {/* Antigravity Settings */}
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
-                  <h4 className="text-xs font-semibold">
-                    Antigravity
-                  </h4>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-medium text-muted-foreground">API Key</label>
-                    <input
-                      type="password"
-                      value={antigravityKey}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        setAntigravityKey(val)
-                        saveSettings(val, opencodeCookie, opencodeWorkspace)
-                      }}
-                      placeholder="Enter Antigravity API key..."
-                      className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
-                    />
-                  </div>
+              {/* Step 1: Choose provider */}
+              <div className="flex flex-col gap-2 shrink-0">
+                <label className="text-xs font-semibold text-muted-foreground select-none">1. Select Provider</label>
+                <div className="grid grid-cols-2 gap-3 mt-0.5">
+                  {[
+                    { id: 'antigravity', label: 'Antigravity', icon: Antigravity, description: 'Google Antigravity usage limits' },
+                    { id: 'opencode', label: 'OpenCode', icon: OpenCode, description: 'OpenCode Go usage limits' }
+                  ].map((prov) => {
+                    const isSelected = selectedLimitProvider === prov.id
+                    const Icon = prov.icon
+                    return (
+                      <div
+                        key={prov.id}
+                        onClick={() => setSelectedLimitProvider(prov.id as any)}
+                        className={cn(
+                          "flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer select-none transition-all",
+                          isSelected
+                            ? "border-primary bg-accent/40 ring-1 ring-ring"
+                            : "border-border hover:bg-accent/30 text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <div className="h-8 w-8 rounded bg-muted flex items-center justify-center shrink-0">
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-xs font-semibold text-foreground">{prov.label}</p>
+                          <p className="text-[10px] text-muted-foreground/80">{prov.description}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
+              </div>
 
-                {/* OpenCode Settings */}
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
-                  <h4 className="text-xs font-semibold">
-                    OpenCode
-                  </h4>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">Auth Cookie</label>
-                      <input
-                        type="password"
-                        value={opencodeCookie}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          setOpencodeCookie(val)
-                          saveSettings(antigravityKey, val, opencodeWorkspace)
-                        }}
-                        placeholder="auth cookie value..."
-                        className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
-                      />
+              {/* Step 2: Configure credentials */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <label className="text-xs font-semibold text-muted-foreground select-none mb-1.5">2. Configure Credentials</label>
+                <div className="flex-1 overflow-y-auto pr-1">
+                  {selectedLimitProvider === 'antigravity' && (
+                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                      <h4 className="text-xs font-semibold flex items-center gap-1.5">
+                        <Antigravity className="h-4 w-4 shrink-0" />
+                        Antigravity Configuration
+                      </h4>
+                      <div className="flex flex-col gap-1 mt-1">
+                        <label className="text-[10px] font-medium text-muted-foreground">API Key</label>
+                        <input
+                          type="password"
+                          value={antigravityKey}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setAntigravityKey(val)
+                            saveSettings(val, opencodeCookie, opencodeWorkspace)
+                          }}
+                          placeholder="Enter Antigravity API key..."
+                          className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                        />
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">Workspace ID</label>
-                      <input
-                        type="text"
-                        value={opencodeWorkspace}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          setOpencodeWorkspace(val)
-                          saveSettings(antigravityKey, opencodeCookie, val)
-                        }}
-                        placeholder="e.g. wrk_01KVB2..."
-                        className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
-                      />
+                  )}
+
+                  {selectedLimitProvider === 'opencode' && (
+                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                      <h4 className="text-xs font-semibold flex items-center gap-1.5">
+                        <OpenCode className="h-4 w-4 shrink-0" />
+                        OpenCode Configuration
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 mt-1">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-medium text-muted-foreground">Auth Cookie</label>
+                          <input
+                            type="password"
+                            value={opencodeCookie}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setOpencodeCookie(val)
+                              saveSettings(antigravityKey, val, opencodeWorkspace)
+                            }}
+                            placeholder="auth cookie value..."
+                            className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-medium text-muted-foreground">Workspace ID</label>
+                          <input
+                            type="text"
+                            value={opencodeWorkspace}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setOpencodeWorkspace(val)
+                              saveSettings(antigravityKey, opencodeCookie, val)
+                            }}
+                            placeholder="e.g. wrk_01KVB2..."
+                            className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
