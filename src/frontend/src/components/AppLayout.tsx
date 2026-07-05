@@ -509,6 +509,8 @@ export function AppLayout() {
         leafCount={leafCount}
         cwd={activeWorkspace.path}
         onSizesChange={handleSizesChange}
+        gitStatuses={gitStatuses}
+        onOpenDiff={openDiff}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -659,7 +661,6 @@ export function AppLayout() {
                   <FolderSidebar
                     workspacePath={activeWorkspace?.path || ''}
                     onOpenFile={openFile}
-                    onOpenDiff={() => openDiff()}
                     gitStatuses={gitStatuses}
                     onRefresh={fetchGitStatus}
                   />
