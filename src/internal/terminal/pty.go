@@ -1,4 +1,4 @@
-package main
+package terminal
 
 import (
 	"os"
@@ -8,12 +8,12 @@ import (
 	"github.com/aymanbagabas/go-pty"
 )
 
-type ptySession struct {
+type Pty struct {
 	ptmx pty.Pty
 	cmd  *pty.Cmd
 }
 
-func startPty(cwd string, cmdArgs []string) (*ptySession, error) {
+func startPty(cwd string, cmdArgs []string) (*Pty, error) {
 	ptmx, err := pty.New()
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func startPty(cwd string, cmdArgs []string) (*ptySession, error) {
 		return nil, err
 	}
 
-	return &ptySession{ptmx: ptmx, cmd: c}, nil
+	return &Pty{ptmx: ptmx, cmd: c}, nil
 }
 
 func getShell() string {

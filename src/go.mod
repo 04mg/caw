@@ -1,4 +1,4 @@
-module caw
+module github.com/04mg/caw
 
 go 1.25.0
 
