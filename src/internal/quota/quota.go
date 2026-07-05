@@ -54,7 +54,11 @@ func Register(mux *http.ServeMux, store *state.Store) {
 		for name, provider := range registry {
 			config, ok := settings[name]
 			if !ok {
-				continue
+				if name == "antigravity" {
+					config = make(map[string]string)
+				} else {
+					continue
+				}
 			}
 
 			// Call the strategy implementation

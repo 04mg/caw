@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key } from 'lucide-react'
-import { Antigravity, OpenCode } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama } from '@lobehub/icons'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 import { cn } from '@/lib/utils'
@@ -23,7 +23,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [antigravityKey, setAntigravityKey] = useState('')
   const [opencodeCookie, setOpencodeCookie] = useState('')
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
-  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode'>('antigravity')
+  const [ollamaCookie, setOllamaCookie] = useState('')
+  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode' | 'ollama'>('antigravity')
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -33,6 +34,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         setAntigravityKey(data.antigravity?.apiKey || '')
         setOpencodeCookie(data.opencode?.cookie || '')
         setOpencodeWorkspace(data.opencode?.workspaceId || '')
+        setOllamaCookie(data.ollama?.cookie || '')
       }
     } catch (e) {
       console.error('Failed to load quota settings', e)
@@ -65,7 +67,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }, [open, loadQuotaSettings])
 
-  const saveSettings = async (agKey: string, ocCookie: string, ocWorkspace: string) => {
+  const saveSettings = async (agKey: string, ocCookie: string, ocWorkspace: string, olCookie: string) => {
     try {
       await fetch('/api/quotas/settings', {
         method: 'POST',
@@ -73,6 +75,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         body: JSON.stringify({
           antigravity: { apiKey: agKey },
           opencode: { cookie: ocCookie, workspaceId: ocWorkspace },
+          ollama: { cookie: olCookie },
         }),
       })
     } catch (e) {
@@ -328,10 +331,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               {/* Step 1: Choose provider */}
               <div className="flex flex-col gap-2 shrink-0">
                 <label className="text-xs font-semibold text-muted-foreground select-none">1. Select Provider</label>
-                <div className="grid grid-cols-2 gap-3 mt-0.5">
+                <div className="grid grid-cols-3 gap-3 mt-0.5">
                   {[
                     { id: 'antigravity', label: 'Antigravity', icon: Antigravity },
-                    { id: 'opencode', label: 'OpenCode', icon: OpenCode }
+                    { id: 'opencode', label: 'OpenCode', icon: OpenCode },
+                    { id: 'ollama', label: 'Ollama', icon: Ollama }
                   ].map((prov) => {
                     const isSelected = selectedLimitProvider === prov.id
                     const Icon = prov.icon
@@ -380,7 +384,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           onChange={(e) => {
                             const val = e.target.value
                             setAntigravityKey(val)
-                            saveSettings(val, opencodeCookie, opencodeWorkspace)
+                            saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie)
                           }}
                           placeholder="Enter Antigravity refresh token or access token..."
                           className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
@@ -404,7 +408,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                             onChange={(e) => {
                               const val = e.target.value
                               setOpencodeCookie(val)
-                              saveSettings(antigravityKey, val, opencodeWorkspace)
+                              saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie)
                             }}
                             placeholder="auth cookie value..."
                             className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
@@ -418,12 +422,38 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                             onChange={(e) => {
                               const val = e.target.value
                               setOpencodeWorkspace(val)
-                              saveSettings(antigravityKey, opencodeCookie, val)
+                              saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie)
                             }}
                             placeholder="e.g. wrk_01KVB2..."
                             className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
                           />
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedLimitProvider === 'ollama' && (
+                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                      <h4 className="text-xs font-semibold flex items-center gap-1.5">
+                        <Ollama className="h-4 w-4 shrink-0" />
+                        Ollama Configuration
+                      </h4>
+                      <div className="flex flex-col gap-1.5 mt-1">
+                        <p className="text-[10px] text-muted-foreground leading-normal">
+                          Provide your Ollama session cookie to retrieve usage limits from your account.
+                        </p>
+                        <label className="text-[10px] font-medium text-muted-foreground mt-1">__Secure-session Cookie</label>
+                        <input
+                          type="password"
+                          value={ollamaCookie}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setOllamaCookie(val)
+                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val)
+                          }}
+                          placeholder="Enter __Secure-session cookie..."
+                          className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                        />
                       </div>
                     </div>
                   )}
