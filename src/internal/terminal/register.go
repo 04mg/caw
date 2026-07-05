@@ -17,6 +17,10 @@ type CreateRequest struct {
 	Cmd []string `json:"cmd,omitempty"`
 }
 
+type KillRequest struct {
+	ID string `json:"id"`
+}
+
 func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader) {
 	mux.HandleFunc("/api/terminal/create", func(w http.ResponseWriter, r *http.Request) {
 		var req CreateRequest
@@ -135,5 +139,29 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 				sess.Pty.ptmx.Resize(int(colsF), int(rowsF))
 			}
 		}
+	})
+
+	mux.HandleFunc("/api/terminal/kill", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req KillRequest
+		if err := httputil.ReadJSON(r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		sessionsMu.Lock()
+		sess, ok := sessions[req.ID]
+		if ok {
+			delete(sessions, req.ID)
+		}
+		sessionsMu.Unlock()
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		sess.Pty.Kill()
+		w.WriteHeader(http.StatusOK)
 	})
 }

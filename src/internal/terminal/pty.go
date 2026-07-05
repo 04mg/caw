@@ -17,6 +17,13 @@ func (p *Pty) Close() error {
 	return p.ptmx.Close()
 }
 
+func (p *Pty) Kill() error {
+	if p.cmd != nil && p.cmd.Process != nil {
+		return p.cmd.Process.Kill()
+	}
+	return nil
+}
+
 func startPty(cwd string, cmdArgs []string) (*Pty, error) {
 	ptmx, err := pty.New()
 	if err != nil {

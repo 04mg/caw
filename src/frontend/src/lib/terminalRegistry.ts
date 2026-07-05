@@ -222,6 +222,11 @@ export function destroyTerminal(leafId: string) {
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   notify()
+  fetch('/api/terminal/kill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: leafId }),
+  }).catch(() => {})
 }
 
 export function detachTerminal(leafId: string) {
