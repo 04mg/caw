@@ -16,6 +16,8 @@ interface TerminalGridProps {
   leafCount: number
   cwd: string
   onSizesChange: (splitId: string, sizes: number[]) => void
+  gitStatuses?: Record<string, string>
+  onOpenDiff?: (filePath?: string) => void
 }
 
 function childKey(child: LayoutNode): string {
@@ -32,6 +34,8 @@ export function TerminalGrid({
   leafCount,
   cwd,
   onSizesChange,
+  gitStatuses,
+  onOpenDiff,
 }: TerminalGridProps): ReactNode {
   if (node.type === 'empty') {
     return null
@@ -47,7 +51,7 @@ export function TerminalGrid({
         onPointerDown={() => onFocus(node.id)}
       >
         {isEditor ? (
-          <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} />
+          <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} />
         ) : (
           <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} />
         )}
@@ -120,6 +124,8 @@ export function TerminalGrid({
               leafCount={leafCount}
               cwd={cwd}
               onSizesChange={onSizesChange}
+              gitStatuses={gitStatuses}
+              onOpenDiff={onOpenDiff}
             />
           </Panel>
         </Fragment>
