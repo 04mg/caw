@@ -6,7 +6,7 @@ import {
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp } from 'lucide-react'
-import { Antigravity, OpenCode } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
 interface Quota {
@@ -28,6 +28,7 @@ interface ProviderData {
 interface AllQuotas {
 	antigravity?: ProviderData
 	opencode?:    ProviderData
+	ollama?:      ProviderData
 }
 
 interface StatusBarProps {
@@ -103,9 +104,10 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		localStorage.setItem('caw:quota:selected_view', view)
 	}
 
-	const hasAntigravity = !!settings.antigravity?.apiKey
+	const hasAntigravity = true
 	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
-	const isConfigured = hasAntigravity || hasOpenCode
+	const hasOllama = !!settings.ollama?.cookie
+	const isConfigured = hasAntigravity || hasOpenCode || hasOllama
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
@@ -121,16 +123,19 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		const [provider, type] = selectedView.split(':')
 		const providerData = quotas[provider as keyof AllQuotas]
 
+		const providerLabel = provider === 'antigravity' ? 'Antigravity' : provider === 'opencode' ? 'OpenCode' : 'Ollama'
+		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
+
 		if (!providerData) {
 			return { text: 'Select Limit', isError: false }
 		}
 
 		if (providerData.error) {
-			return { text: `${provider === 'antigravity' ? 'Antigravity' : 'OpenCode'}: Error`, isError: true }
+			return { text: `${providerLabel}: Error`, isError: true }
 		}
 
 		if (!providerData.data) {
-			return { text: `${provider === 'antigravity' ? 'Antigravity' : 'OpenCode'}: Loading`, isError: false }
+			return { text: `${providerLabel}: Loading`, isError: false }
 		}
 
 		const q = providerData.data[type as keyof QuotaResponse]
@@ -138,10 +143,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 			return { text: 'Select Limit', isError: false }
 		}
 
-		const providerLabel = provider === 'antigravity' ? 'Antigravity' : 'OpenCode'
-		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
-
-		if (provider === 'opencode') {
+		if (provider === 'opencode' || provider === 'ollama') {
 			return { text: `${providerLabel} (${typeLabel}): ${q.used}%`, isError: false, percentage: q.used }
 		}
 
@@ -204,6 +206,8 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 									<Antigravity className="h-3.5 w-3.5 shrink-0" />
 								) : selectedView.startsWith('opencode') ? (
 									<OpenCode className="h-3.5 w-3.5 shrink-0" />
+								) : selectedView.startsWith('ollama') ? (
+									<Ollama className="h-3.5 w-3.5 shrink-0" />
 								) : null}
 							</>
 						)}
@@ -308,6 +312,49 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 												].map(({ key, label }) => {
 													const val = quotas.opencode!.data![key as keyof QuotaResponse]
 													const viewKey = `opencode:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, 100, true)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+
+								{(hasAntigravity || hasOpenCode) && hasOllama && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasOllama && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<Ollama className="h-3.5 w-3.5 shrink-0" />
+											Ollama
+										</span>
+										{quotas?.ollama?.error ? (
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.ollama.error}</span>
+										) : !quotas?.ollama?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: 'Session Limit' },
+													{ key: 'weekly', label: 'Weekly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.ollama!.data![key as keyof QuotaResponse]
+													const viewKey = `ollama:${key}`
 													const isActive = selectedView === viewKey
 													return (
 														<div
