@@ -16,24 +16,31 @@ export function splitLeaf(
   targetId: string,
   orientation: 'horizontal' | 'vertical',
   cwd: string,
-): LayoutNode {
-  if (root.type === 'empty') return root
-  if (root.type === 'leaf') {
-    if (root.id === targetId) {
-      return {
-        type: 'split',
-        id: crypto.randomUUID(),
-        orientation,
-        children: [root, createLeaf(cwd)],
-        sizes: [50, 50],
+): { node: LayoutNode; newLeafId: string } {
+  let newLeafId = ''
+
+  function doSplit(n: LayoutNode): LayoutNode {
+    if (n.type === 'empty') return n
+    if (n.type === 'leaf') {
+      if (n.id === targetId) {
+        newLeafId = crypto.randomUUID()
+        return {
+          type: 'split',
+          id: crypto.randomUUID(),
+          orientation,
+          children: [n, { type: 'leaf', id: newLeafId, cwd }],
+          sizes: [50, 50],
+        }
       }
+      return n
     }
-    return root
+    return {
+      ...n,
+      children: n.children.map(doSplit),
+    }
   }
-  return {
-    ...root,
-    children: root.children.map((c) => splitLeaf(c, targetId, orientation, cwd)),
-  }
+
+  return { node: doSplit(root), newLeafId }
 }
 
 export function removeLeaf(root: LayoutNode, targetId: string): LayoutNode {

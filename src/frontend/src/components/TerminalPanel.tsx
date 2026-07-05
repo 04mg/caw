@@ -1,17 +1,20 @@
 import { useEffect, useRef } from 'react'
-import { attachTerminal, detachTerminal, type TerminalInstance } from '@/lib/terminalRegistry'
+import { attachTerminal, detachTerminal, getTerminal, type TerminalInstance } from '@/lib/terminalRegistry'
 
 interface TerminalPanelProps {
   terminalId: string
   cwd: string
   cmd?: string[]
+  isActive?: boolean
 }
 
-export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
+export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
 
   useEffect(() => {
     const el = elRef.current
@@ -46,6 +49,10 @@ export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
       inst = await attachTerminal(terminalId, el, cwd, cmd)
       if (cancelled) return
 
+      if (isActiveRef.current) {
+        inst.term.focus()
+      }
+
       const ro = new ResizeObserver(() => {
         if (fitTimerRef.current) clearTimeout(fitTimerRef.current)
         fitTimerRef.current = setTimeout(flushResize, 80)
@@ -66,6 +73,14 @@ export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
       detachTerminal(terminalId)
     }
   }, [terminalId, cwd, cmd])
+
+  useEffect(() => {
+    if (!isActive) return
+    const inst = getTerminal(terminalId)
+    if (inst) {
+      inst.term.focus()
+    }
+  }, [isActive, terminalId])
 
   return (
     <div className="relative h-full w-full overflow-hidden">
