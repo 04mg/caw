@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
-import { Save, AlertCircle, RefreshCw, Check } from 'lucide-react'
+import { Save, AlertCircle, RefreshCw, Check, GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface EditorPanelProps {
@@ -8,9 +8,11 @@ interface EditorPanelProps {
   isDiff?: boolean
   cwd: string
   onSaveSuccess?: () => void
+  gitStatuses?: Record<string, string>
+  onOpenDiff?: (filePath?: string) => void
 }
 
-export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess }: EditorPanelProps) {
+export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses, onOpenDiff }: EditorPanelProps) {
   const [content, setContent] = useState('')
   const [originalContent, setOriginalContent] = useState('')
   const [editedContent, setEditedContent] = useState('')
@@ -214,6 +216,17 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess }: EditorPane
                 <AlertCircle className="h-3 w-3" /> Save failed
               </span>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px] font-medium"
+              onClick={() => onOpenDiff?.(filePath)}
+              disabled={!filePath || !gitStatuses?.[filePath]?.includes('M')}
+              title={gitStatuses?.[filePath]?.includes('M') ? 'View diff' : !gitStatuses ? 'Not a git repository' : 'File is not modified'}
+            >
+              <GitBranch className="h-3.5 w-3.5 mr-1" />
+              Diff
+            </Button>
             <Button
               variant={isDirty ? 'default' : 'secondary'}
               size="sm"
