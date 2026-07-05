@@ -22,7 +22,8 @@ type CreateRequest struct {
 }
 
 type KillRequest struct {
-	ID string `json:"id"`
+	ID           string `json:"id"`
+	DeleteBranch bool   `json:"deleteBranch"`
 }
 
 func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader) {
@@ -64,30 +65,45 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			Cwd:        cwd,
 			conns:      make(map[*websocket.Conn]bool),
 			scrollback: []byte{},
-			onExit: func() {
-				sessionsMu.Lock()
-				delete(sessions, id)
-				sessionsMu.Unlock()
+		}
+		sess.onExit = func() {
+			sessionsMu.Lock()
+			delete(sessions, id)
+			sessionsMu.Unlock()
 
-				// Clean up Git worktree if cwd is an agent worktree
-				home, err := os.UserHomeDir()
-				if err == nil {
-					worktreesBase := filepath.Clean(filepath.Join(home, ".caw", "worktrees"))
-					cleanCwd := filepath.Clean(cwd)
-					if strings.HasPrefix(cleanCwd, worktreesBase) && cleanCwd != worktreesBase {
-						go func() {
-							time.Sleep(500 * time.Millisecond)
-							mainRepo := getMainRepoPath(cleanCwd)
-							if mainRepo != "" {
-								cmdRemove := exec.Command("git", "worktree", "remove", "--force", cleanCwd)
-								cmdRemove.Dir = mainRepo
-								_ = cmdRemove.Run()
+			// Clean up Git worktree if cwd is an agent worktree
+			home, err := os.UserHomeDir()
+			if err == nil {
+				worktreesBase := filepath.Clean(filepath.Join(home, ".caw", "worktrees"))
+				cleanCwd := filepath.Clean(cwd)
+				if strings.HasPrefix(cleanCwd, worktreesBase) && cleanCwd != worktreesBase {
+					go func() {
+						time.Sleep(500 * time.Millisecond)
+						mainRepo := getMainRepoPath(cleanCwd)
+						if mainRepo != "" {
+							branchName := ""
+							// Get branch name before removing worktree
+							cmdBranch := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+							cmdBranch.Dir = cleanCwd
+							branchOut, err := cmdBranch.Output()
+							if err == nil {
+								branchName = strings.TrimSpace(string(branchOut))
 							}
-							_ = os.RemoveAll(cleanCwd)
-						}()
-					}
+
+							cmdRemove := exec.Command("git", "worktree", "remove", "--force", cleanCwd)
+							cmdRemove.Dir = mainRepo
+							_ = cmdRemove.Run()
+
+							if sess.DeleteBranch && branchName != "" && branchName != "HEAD" {
+								cmdDel := exec.Command("git", "branch", "-D", branchName)
+								cmdDel.Dir = mainRepo
+								_ = cmdDel.Run()
+							}
+						}
+						_ = os.RemoveAll(cleanCwd)
+					}()
 				}
-			},
+			}
 		}
 		sessionsMu.Lock()
 		sessions[id] = sess
@@ -177,6 +193,9 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		sessionsMu.Lock()
 		sess, ok := sessions[req.ID]
 		if ok {
+			if req.DeleteBranch {
+				sess.DeleteBranch = true
+			}
 			delete(sessions, req.ID)
 		}
 		sessionsMu.Unlock()

@@ -28,7 +28,6 @@ interface FolderSidebarProps {
   onRefresh: () => void
   noHeader?: boolean
   mainWorkspacePath?: string
-  activeTabName?: string
   onClose?: () => void
 }
 
@@ -39,7 +38,6 @@ export function FolderSidebar({
   onRefresh,
   noHeader,
   mainWorkspacePath,
-  activeTabName,
   onClose,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
@@ -235,11 +233,6 @@ export function FolderSidebar({
         <span className="flex-1 text-xs font-medium text-muted-foreground truncate">
           Explorer
         </span>
-        {isWorktree && (
-          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-md shrink-0 select-none animate-pulse">
-            Worktree: {activeTabName || 'Agent'}
-          </span>
-        )}
         <Button
           variant="ghost"
           size="icon"
@@ -276,7 +269,11 @@ export function FolderSidebar({
         <div className={dragOverPath === workspacePath ? 'ring-1 ring-primary rounded-sm' : ''}>
           {workspacePath ? (
             <LazyFileNode
-              name={workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath}
+              name={
+                isWorktree
+                  ? `Worktree: ${workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath}`
+                  : (workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath)
+              }
               path={workspacePath}
               isDir={true}
               depth={0}

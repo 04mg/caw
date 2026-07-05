@@ -9,13 +9,14 @@ import (
 )
 
 type Session struct {
-	ID         string
-	Pty        *Pty
-	Cwd        string
-	mu         sync.Mutex
-	conns      map[*websocket.Conn]bool
-	scrollback []byte
-	onExit     func()
+	ID           string
+	Pty          *Pty
+	Cwd          string
+	DeleteBranch bool
+	mu           sync.Mutex
+	conns        map[*websocket.Conn]bool
+	scrollback   []byte
+	onExit       func()
 }
 
 // stripAlternateScreen removes the alternate screen toggle sequences
