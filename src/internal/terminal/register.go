@@ -88,14 +88,21 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 
 		sess.mu.Lock()
 		sess.conns[c] = true
+		// Copy scrollback under lock, strip alternate screen sequences
+		// so that xterm.js stays in the normal buffer (with scrollback).
+		scrollback := make([]byte, len(sess.scrollback))
+		copy(scrollback, sess.scrollback)
 		sess.mu.Unlock()
 
-		if len(sess.scrollback) > 0 {
-			msg, _ := json.Marshal(map[string]any{
-				"type": "output",
-				"data": string(sess.scrollback),
-			})
-			c.WriteMessage(websocket.TextMessage, msg)
+		if len(scrollback) > 0 {
+			stripped := stripAlternateScreen(scrollback)
+			if len(stripped) > 0 {
+				msg, _ := json.Marshal(map[string]any{
+					"type": "output",
+					"data": string(stripped),
+				})
+				c.WriteMessage(websocket.TextMessage, msg)
+			}
 		}
 
 		defer func() {

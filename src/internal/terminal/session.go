@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"encoding/json"
 	"sync"
 
@@ -15,6 +16,27 @@ type Session struct {
 	conns      map[*websocket.Conn]bool
 	scrollback []byte
 	onExit     func()
+}
+
+// stripAlternateScreen removes the alternate screen toggle sequences
+// (\x1b[?1049h and \x1b[?1049l) from the buffer, keeping only normal
+// screen output so scrollback replay works correctly in xterm.js.
+func stripAlternateScreen(data []byte) []byte {
+	if !bytes.Contains(data, []byte("\x1b[?1049")) {
+		return data
+	}
+
+	// Remove \x1b[?1049h (enter alt screen)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1049h"), nil)
+	// Remove \x1b[?1049l (leave alt screen)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1049l"), nil)
+	// Also remove \x1b[?1047h and \x1b[?1047l (alternate screen buffer)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1047h"), nil)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1047l"), nil)
+	// Also remove \x1b[?1048h and \x1b[?1048l (save/restore cursor)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1048h"), nil)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?1048l"), nil)
+	return data
 }
 
 func (s *Session) ReadLoop() {
@@ -41,7 +63,10 @@ func (s *Session) ReadLoop() {
 					"type": "output",
 					"data": string(data),
 				})
-				c.WriteMessage(websocket.TextMessage, msg)
+				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+					// Dead connection — remove it to avoid repeated failures.
+					delete(s.conns, c)
+				}
 			}
 			s.mu.Unlock()
 		}
