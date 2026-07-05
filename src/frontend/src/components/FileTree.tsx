@@ -43,7 +43,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
             <File className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           </>
         )}
-        <span className="truncate">{node.name}</span>
+        <span className="truncate text-muted-foreground">{node.name}</span>
       </button>
       {node.isDir && expanded && node.children && (
         <div>

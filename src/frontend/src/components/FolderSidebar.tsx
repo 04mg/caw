@@ -637,7 +637,7 @@ function LazyFileNode({
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="truncate flex-1 font-medium">{name}</span>
+            <span className="truncate flex-1 font-medium text-muted-foreground">{name}</span>
           )}
 
           {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50 shrink-0" />}
