@@ -14,10 +14,26 @@ interface Quota {
 	limit: number
 }
 
+interface QuotaItem {
+	name:        string
+	label:       string
+	description: string
+	used:        number
+	limit:       number
+	resetTime?:  string
+}
+
+interface QuotaGroup {
+	name:        string
+	description: string
+	items:       QuotaItem[]
+}
+
 interface QuotaResponse {
 	fiveHour: Quota
 	weekly:   Quota
 	monthly:  Quota
+	groups?:  QuotaGroup[]
 }
 
 interface ProviderData {
@@ -104,7 +120,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		localStorage.setItem('caw:quota:selected_view', view)
 	}
 
-	const hasAntigravity = true
+	const hasAntigravity = settings.antigravity?.installed !== 'false'
 	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
 	const hasOllama = !!settings.ollama?.cookie
 	const isConfigured = hasAntigravity || hasOpenCode || hasOllama
@@ -120,11 +136,11 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 			return { text: 'No Data', isError: false }
 		}
 
-		const [provider, type] = selectedView.split(':')
+		const parts = selectedView.split(':')
+		const provider = parts[0]
 		const providerData = quotas[provider as keyof AllQuotas]
 
 		const providerLabel = provider === 'antigravity' ? 'Antigravity' : provider === 'opencode' ? 'OpenCode Go' : 'Ollama'
-		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
 
 		if (!providerData) {
 			return { text: 'Select Limit', isError: false }
@@ -138,12 +154,25 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 			return { text: `${providerLabel}: Loading`, isError: false }
 		}
 
-		const q = providerData.data[type as keyof QuotaResponse]
+		// Check for dynamic group selection: provider:groupName:itemName
+		if (provider === 'antigravity' && providerData.data.groups && parts.length === 3) {
+			const groupName = parts[1]
+			const itemName = parts[2]
+			const group = providerData.data.groups.find(g => g.name === groupName)
+			const item = group?.items.find(i => i.name === itemName)
+			if (item) {
+				return { text: `${providerLabel} (${item.label}): ${item.used}%`, isError: false, percentage: item.used }
+			}
+		}
+
+		const type = parts[1]
+		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
+		const q = providerData.data[type as 'fiveHour' | 'weekly' | 'monthly']
 		if (!q) {
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (provider === 'opencode' || provider === 'ollama') {
+		if (provider === 'opencode' || provider === 'ollama' || provider === 'antigravity') {
 			return { text: `${providerLabel} (${typeLabel}): ${q.used}%`, isError: false, percentage: q.used }
 		}
 
@@ -260,32 +289,62 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 										) : !quotas?.antigravity?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: '5h Rolling Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' },
-													{ key: 'monthly', label: 'Monthly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.antigravity!.data![key as keyof QuotaResponse]
-													const viewKey = `antigravity:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, false)}
+											<div className="flex flex-col gap-3 pl-1.5 border-l border-border">
+												{quotas.antigravity.data.groups ? (
+													quotas.antigravity.data.groups.map((group) => (
+														<div key={group.name} className="flex flex-col gap-1.5">
+															<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
+																{group.name}
+															</span>
+															{group.items.map((item) => {
+																const viewKey = `antigravity:${group.name}:${item.name}`
+																const isActive = selectedView === viewKey
+																return (
+																	<div
+																		key={item.name}
+																		onClick={() => selectView(viewKey)}
+																		className={cn(
+																			"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																			isActive && "bg-accent/20 border-border"
+																		)}
+																	>
+																		<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																			<span className="text-foreground" title={item.description}>{item.label}</span>
+																			{isActive && <Check className="h-3 w-3 text-primary" />}
+																		</div>
+																		{renderProgressBar(item.used, 100, true)}
+																	</div>
+																)
+															})}
 														</div>
-													)
-												})}
+													))
+												) : (
+													[
+														{ key: 'fiveHour', label: '5h Rolling Limit' },
+														{ key: 'weekly', label: 'Weekly Limit' },
+														{ key: 'monthly', label: 'Monthly Limit' }
+													].map(({ key, label }) => {
+														const val = quotas.antigravity!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+														const viewKey = `antigravity:${key}`
+														const isActive = selectedView === viewKey
+														return (
+															<div
+																key={key}
+																onClick={() => selectView(viewKey)}
+																className={cn(
+																	"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																	isActive && "bg-accent/20 border-border"
+																)}
+															>
+																<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																	<span className="text-foreground">{label}</span>
+																	{isActive && <Check className="h-3 w-3 text-primary" />}
+																</div>
+																{renderProgressBar(val.used, 100, true)}
+															</div>
+														)
+													})
+												)}
 											</div>
 										)}
 									</div>
@@ -310,7 +369,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 													{ key: 'weekly', label: 'Weekly Limit' },
 													{ key: 'monthly', label: 'Monthly Limit' }
 												].map(({ key, label }) => {
-													const val = quotas.opencode!.data![key as keyof QuotaResponse]
+													const val = quotas.opencode!.data![key as 'fiveHour' | 'weekly' | 'monthly']
 													const viewKey = `opencode:${key}`
 													const isActive = selectedView === viewKey
 													return (
@@ -353,7 +412,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 													{ key: 'fiveHour', label: 'Session Limit' },
 													{ key: 'weekly', label: 'Weekly Limit' }
 												].map(({ key, label }) => {
-													const val = quotas.ollama!.data![key as keyof QuotaResponse]
+													const val = quotas.ollama!.data![key as 'fiveHour' | 'weekly' | 'monthly']
 													const viewKey = `ollama:${key}`
 													const isActive = selectedView === viewKey
 													return (
