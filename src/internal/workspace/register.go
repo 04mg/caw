@@ -53,6 +53,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/list", handleListDir)
 	mux.HandleFunc("/api/workspace/list-all", handleListAll)
 	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
+	mux.HandleFunc("/api/workspace/search-all", handleSearchAll)
 	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
 	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
 	mux.HandleFunc("/api/workspace/file/upload", handleFileUpload)
@@ -224,6 +225,55 @@ func handleSearchDirs(w http.ResponseWriter, r *http.Request) {
 
 func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func handleSearchAll(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	root := r.URL.Query().Get("root")
+	if root == "" {
+		root = "."
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		httputil.WriteJSON(w, []FileNode{})
+		return
+	}
+	results := []FileNode{}
+	searchAll(abs, q, &results, 0, 4, 30)
+	httputil.WriteJSON(w, results)
+}
+
+func searchAll(dir, q string, results *[]FileNode, depth, maxDepth, maxResults int) {
+	if depth > maxDepth || len(*results) >= maxResults {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if len(*results) >= maxResults {
+			return
+		}
+		name := e.Name()
+		if name == "" || name[0] == '.' {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		isDir := e.IsDir()
+
+		if q == "" || containsFold(name, q) {
+			*results = append(*results, FileNode{Name: name, Path: path, IsDir: isDir})
+		}
+		if isDir {
+			searchAll(path, q, results, depth+1, maxDepth, maxResults)
+		}
+	}
 }
 
 func handleListAll(w http.ResponseWriter, r *http.Request) {
