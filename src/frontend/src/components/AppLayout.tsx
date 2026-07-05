@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { CommandPalette } from '@/components/CommandPalette'
+import { StatusBar } from '@/components/StatusBar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -890,6 +891,11 @@ export function AppLayout() {
           </Group>
         </div>
       </div>
+
+      <StatusBar
+        workspaceName={activeWorkspace?.name}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 

@@ -60,6 +60,12 @@ func (s *Store) migrate() {
 		sizes        TEXT DEFAULT '[]',
 		file_path    TEXT DEFAULT '',
 		is_diff      INTEGER DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS quota_settings (
+		provider TEXT NOT NULL,
+		key      TEXT NOT NULL,
+		value    TEXT NOT NULL,
+		PRIMARY KEY (provider, key)
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
@@ -243,6 +249,59 @@ func (s *Store) saveLayoutTree(tx *sql.Tx, tabID, parentID string, ln LayoutNode
 	for i, child := range ln.Children {
 		s.saveLayoutTree(tx, tabID, ln.ID, child, i)
 	}
+}
+
+func (s *Store) GetQuotaSettings() (map[string]map[string]string, error) {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT provider, key, value FROM quota_settings")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make(map[string]map[string]string)
+	for rows.Next() {
+		var provider, key, val string
+		if err := rows.Scan(&provider, &key, &val); err != nil {
+			return nil, err
+		}
+		if _, ok := res[provider]; !ok {
+			res[provider] = make(map[string]string)
+		}
+		res[provider][key] = val
+	}
+	return res, nil
+}
+
+func (s *Store) SaveQuotaSettings(settings map[string]map[string]string) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM quota_settings"); err != nil {
+		return err
+	}
+
+	for provider, kv := range settings {
+		for key, val := range kv {
+			if val == "" {
+				continue
+			}
+			_, err := tx.Exec("INSERT INTO quota_settings (provider, key, value) VALUES (?, ?, ?)", provider, key, val)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) Close() {

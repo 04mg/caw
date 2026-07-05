@@ -12,6 +12,7 @@ import (
 	"github.com/04mg/caw/internal/agent"
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
+	"github.com/04mg/caw/internal/quota"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
 	"github.com/04mg/caw/internal/workspace"
@@ -49,6 +50,7 @@ func (s *Server) ListenAndServe(port string) {
 	workspace.RegisterWS(mux)
 	git.Register(mux)
 	agent.Register(mux)
+	quota.Register(mux, s.store)
 
 	mux.Handle("/", http.FileServer(http.FS(s.frontendFS)))
 
