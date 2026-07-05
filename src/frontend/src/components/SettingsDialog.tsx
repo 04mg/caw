@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
-import { Monitor, Bot, Terminal, Check, Moon, Sun } from 'lucide-react'
+import { Monitor, Bot, Terminal, Check, Moon, Sun, Key } from 'lucide-react'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 
@@ -10,7 +10,7 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type Section = 'appearance' | 'agents' | 'terminal'
+type Section = 'appearance' | 'agents' | 'terminal' | 'quotas'
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -18,6 +18,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
+  const [antigravityKey, setAntigravityKey] = useState('')
+  const [opencodeCookie, setOpencodeCookie] = useState('')
+  const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
 
   // Load settings on open
   useEffect(() => {
@@ -40,8 +43,38 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
+
+      const loadQuotaSettings = async () => {
+        try {
+          const res = await fetch('/api/quotas/settings')
+          if (res.ok) {
+            const data = await res.json()
+            setAntigravityKey(data.antigravity?.apiKey || '')
+            setOpencodeCookie(data.opencode?.cookie || '')
+            setOpencodeWorkspace(data.opencode?.workspaceId || '')
+          }
+        } catch (e) {
+          console.error('Failed to load quota settings', e)
+        }
+      }
+      loadQuotaSettings()
     }
   }, [open])
+
+  const saveSettings = async (agKey: string, ocCookie: string, ocWorkspace: string) => {
+    try {
+      await fetch('/api/quotas/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          antigravity: { apiKey: agKey },
+          opencode: { cookie: ocCookie, workspaceId: ocWorkspace },
+        }),
+      })
+    } catch (e) {
+      console.error('Failed to save quota settings', e)
+    }
+  }
 
   const applyTheme = (newTheme: 'light' | 'dark' | 'system') => {
     setTheme(newTheme)
@@ -72,8 +105,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     localStorage.setItem('caw:disabledAgents', JSON.stringify(nextDisabled))
   }
 
+  const handleOpenChange = (newOpen: boolean) => {
+    onOpenChange(newOpen)
+    if (!newOpen) {
+      window.dispatchEvent(new CustomEvent('caw:settings-updated'))
+    }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="w-[600px] h-[400px] max-w-none max-h-none p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg">
         {/* Sidebar */}
         <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none">
@@ -112,6 +152,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           >
             <Terminal className="h-3.5 w-3.5" />
             Terminal
+          </button>
+          <button
+            onClick={() => setActiveSection('quotas')}
+            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              activeSection === 'quotas'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+            }`}
+          >
+            <Key className="h-3.5 w-3.5" />
+            Quotas
           </button>
         </div>
 
@@ -258,6 +309,75 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     )}
                   </div>
                   <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'quotas' && (
+            <div className="flex flex-col h-full gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Quotas</h3>
+                <p className="text-xs text-muted-foreground">Configure credentials for AI coding plan providers.</p>
+              </div>
+
+              <div className="flex flex-col gap-4 mt-2 overflow-y-auto pr-1">
+                {/* Antigravity Settings */}
+                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                  <h4 className="text-xs font-semibold">
+                    Antigravity
+                  </h4>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">API Key</label>
+                    <input
+                      type="password"
+                      value={antigravityKey}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setAntigravityKey(val)
+                        saveSettings(val, opencodeCookie, opencodeWorkspace)
+                      }}
+                      placeholder="Enter Antigravity API key..."
+                      className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                    />
+                  </div>
+                </div>
+
+                {/* OpenCode Settings */}
+                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                  <h4 className="text-xs font-semibold">
+                    OpenCode
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-medium text-muted-foreground">Auth Cookie</label>
+                      <input
+                        type="password"
+                        value={opencodeCookie}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setOpencodeCookie(val)
+                          saveSettings(antigravityKey, val, opencodeWorkspace)
+                        }}
+                        placeholder="auth cookie value..."
+                        className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-medium text-muted-foreground">Workspace ID</label>
+                      <input
+                        type="text"
+                        value={opencodeWorkspace}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setOpencodeWorkspace(val)
+                          saveSettings(antigravityKey, opencodeCookie, val)
+                        }}
+                        placeholder="e.g. wrk_01KVB2..."
+                        className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

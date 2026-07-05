@@ -1,0 +1,341 @@
+import { useState, useEffect, useCallback } from 'react'
+import {
+	DropdownMenu,
+	DropdownMenuTrigger,
+	DropdownMenuContent,
+	DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
+import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+interface Quota {
+	used:  number
+	limit: number
+}
+
+interface QuotaResponse {
+	fiveHour: Quota
+	weekly:   Quota
+	monthly:  Quota
+}
+
+interface ProviderData {
+	data?: QuotaResponse
+	error?: string
+}
+
+interface AllQuotas {
+	antigravity?: ProviderData
+	opencode?:    ProviderData
+}
+
+interface StatusBarProps {
+	workspaceName?: string
+	onOpenSettings: () => void
+}
+
+export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
+	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
+	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
+	const [isLoading, setIsLoading] = useState(false)
+	const [selectedView, setSelectedView] = useState<string>('')
+
+	const fetchSettings = useCallback(async () => {
+		try {
+			const res = await fetch('/api/quotas/settings')
+			if (res.ok) {
+				const data = await res.json()
+				setSettings(data || {})
+			}
+		} catch (e) {
+			console.error('Error fetching settings', e)
+		}
+	}, [])
+
+	const fetchQuotas = useCallback(async () => {
+		setIsLoading(true)
+		try {
+			const res = await fetch('/api/quotas')
+			if (res.ok) {
+				const data = await res.json()
+				setQuotas(data)
+			} else {
+				console.error('Failed to fetch quotas', res.statusText)
+			}
+		} catch (e) {
+			console.error('Error fetching quotas', e)
+		} finally {
+			setIsLoading(false)
+		}
+	}, [])
+
+	const refreshAll = useCallback(async () => {
+		await fetchSettings()
+		await fetchQuotas()
+	}, [fetchSettings, fetchQuotas])
+
+	// Auto poll every 60s
+	useEffect(() => {
+		refreshAll()
+		const timer = setInterval(fetchQuotas, 60000)
+
+		window.addEventListener('caw:settings-updated', refreshAll)
+
+		return () => {
+			clearInterval(timer)
+			window.removeEventListener('caw:settings-updated', refreshAll)
+		}
+	}, [refreshAll, fetchQuotas])
+
+	// Load / initialize selected view
+	useEffect(() => {
+		const saved = localStorage.getItem('caw:quota:selected_view')
+		if (saved) {
+			setSelectedView(saved)
+		} else {
+			setSelectedView('antigravity:fiveHour')
+		}
+	}, [])
+
+	const selectView = (view: string) => {
+		setSelectedView(view)
+		localStorage.setItem('caw:quota:selected_view', view)
+	}
+
+	const hasAntigravity = !!settings.antigravity?.apiKey
+	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
+	const isConfigured = hasAntigravity || hasOpenCode
+
+	const getQuotaDisplay = () => {
+		if (!isConfigured) {
+			return { text: 'Configure Quotas', isError: false }
+		}
+		if (isLoading && !quotas) {
+			return { text: 'Loading Quotas...', isError: false }
+		}
+		if (!quotas) {
+			return { text: 'No Data', isError: false }
+		}
+
+		const [provider, type] = selectedView.split(':')
+		const providerData = quotas[provider as keyof AllQuotas]
+
+		if (!providerData) {
+			return { text: 'Select Quota', isError: false }
+		}
+
+		if (providerData.error) {
+			return { text: `${provider === 'antigravity' ? 'Antigravity' : 'OpenCode'}: Error`, isError: true }
+		}
+
+		if (!providerData.data) {
+			return { text: `${provider === 'antigravity' ? 'Antigravity' : 'OpenCode'}: Loading`, isError: false }
+		}
+
+		const q = providerData.data[type as keyof QuotaResponse]
+		if (!q) {
+			return { text: 'Select Quota', isError: false }
+		}
+
+		const providerLabel = provider === 'antigravity' ? 'Antigravity' : 'OpenCode'
+		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
+
+		if (provider === 'opencode') {
+			return { text: `${providerLabel} (${typeLabel}): ${q.used}%`, isError: false, percentage: q.used }
+		}
+
+		const pct = q.limit > 0 ? Math.round((q.used / q.limit) * 100) : 0
+		return { text: `${providerLabel} (${typeLabel}): ${q.used}/${q.limit} (${pct}%)`, isError: false, percentage: pct }
+	}
+
+	const activeDisplay = getQuotaDisplay()
+
+	const renderProgressBar = (used: number, limit: number, isPercentageOnly: boolean) => {
+		const pct = isPercentageOnly ? used : limit > 0 ? (used / limit) * 100 : 0
+		return (
+			<div className="flex flex-col gap-1 w-full mt-1.5 animate-none">
+				<div className="flex justify-between text-[10px] text-muted-foreground select-none">
+					<span>{isPercentageOnly ? `${used}%` : `${used} / ${limit}`}</span>
+					<span>{Math.round(pct)}%</span>
+				</div>
+				<div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
+					<div
+						className={cn(
+							"h-full rounded-full transition-all duration-300",
+							pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+						)}
+						style={{ width: `${Math.min(100, pct)}%` }}
+					/>
+				</div>
+			</div>
+		)
+	}
+
+	return (
+		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none">
+			<div className="flex items-center gap-2">
+				<div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+				<span className="font-medium text-foreground/80">
+					{workspaceName ? `Workspace: ${workspaceName}` : 'Ready'}
+				</span>
+			</div>
+
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<button className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer">
+						{activeDisplay.isError ? (
+							<AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />
+						) : isLoading ? (
+							<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+						) : (
+							<div className={cn(
+								"h-1.5 w-1.5 rounded-full",
+								activeDisplay.text === 'Configure Quotas' 
+									? 'bg-amber-400' 
+									: activeDisplay.percentage !== undefined
+										? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+										: 'bg-muted-foreground'
+							)} />
+						)}
+						<span className="font-mono text-[11px] shrink-0">{activeDisplay.text}</span>
+						<ChevronUp className="h-3 w-3 opacity-60 shrink-0" />
+					</button>
+				</DropdownMenuTrigger>
+
+				<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none">
+					<div className="flex items-center justify-between px-2 py-1.5">
+						<span className="text-xs font-semibold text-foreground">Coding Plan Quotas</span>
+						<button
+							onClick={(e) => {
+								e.stopPropagation()
+								refreshAll()
+							}}
+							disabled={isLoading}
+							className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+							title="Refresh Quotas"
+						>
+							<RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+						</button>
+					</div>
+
+					<DropdownMenuSeparator className="bg-border" />
+
+					<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+						{!isConfigured ? (
+							<div className="px-2 py-4 text-center text-xs text-muted-foreground">
+								No quota providers configured.
+								<button
+									onClick={() => {
+										onOpenSettings()
+									}}
+									className="mt-2 block w-full px-2 py-1.5 text-center text-xs font-medium text-primary bg-secondary/40 border border-border rounded hover:bg-secondary transition-all"
+								>
+									Configure Providers in Settings
+								</button>
+							</div>
+						) : (
+							<>
+								{hasAntigravity && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase">Antigravity</span>
+										{quotas?.antigravity?.error ? (
+											<span className="text-[10px] text-red-400 italic">Error: {quotas.antigravity.error}</span>
+										) : !quotas?.antigravity?.data ? (
+											<span className="text-[10px] text-muted-foreground italic">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: '5h Rolling Limit' },
+													{ key: 'weekly', label: 'Weekly Limit' },
+													{ key: 'monthly', label: 'Monthly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.antigravity!.data![key as keyof QuotaResponse]
+													const viewKey = `antigravity:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, val.limit, false)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+
+								{hasAntigravity && hasOpenCode && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasOpenCode && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase">OpenCode</span>
+										{quotas?.opencode?.error ? (
+											<span className="text-[10px] text-red-400 italic">Error: {quotas.opencode.error}</span>
+										) : !quotas?.opencode?.data ? (
+											<span className="text-[10px] text-muted-foreground italic">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: '5h Rolling Limit' },
+													{ key: 'weekly', label: 'Weekly Limit' },
+													{ key: 'monthly', label: 'Monthly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.opencode!.data![key as keyof QuotaResponse]
+													const viewKey = `opencode:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, 100, true)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+							</>
+						)}
+					</div>
+
+					{isConfigured && (
+						<>
+							<DropdownMenuSeparator className="bg-border" />
+							<div className="px-1 py-1">
+								<button
+									onClick={() => {
+										onOpenSettings()
+									}}
+									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer"
+								>
+									<Key className="h-3 w-3" />
+									Configure Providers...
+								</button>
+							</div>
+						</>
+					)}
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	)
+}
