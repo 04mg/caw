@@ -219,6 +219,12 @@ export function FolderSidebar({
 
       <ScrollArea
         className="flex-1"
+        onContextMenu={(e) => {
+          if (!workspacePath) return
+          e.preventDefault()
+          const rootName = workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath
+          setContextMenu({ x: e.clientX, y: e.clientY, path: workspacePath, name: rootName, isDir: true })
+        }}
         onDragOver={(e) => {
           if (workspacePath) handleDragOver(e, workspacePath)
         }}

@@ -23,6 +23,7 @@ export function WorkspaceMenu({ onDelete, onEdit }: WorkspaceMenuProps) {
     <div ref={ref} className="relative">
       <button
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        onPointerDown={(e) => e.stopPropagation()}
         className="h-5 w-5 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center justify-center"
         title="More"
       >

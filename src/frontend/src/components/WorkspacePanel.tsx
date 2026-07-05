@@ -17,7 +17,6 @@ interface WorkspacePanelProps {
   onDeleteWorkspace: (id: string) => void
   onEditWorkspace: (id: string, name: string, emoji: string) => void
   onReorderWorkspaces: (from: number, to: number) => void
-  pickerTrigger: number
   collapsed: boolean
   onToggle: () => void
   noHeader?: boolean
@@ -33,7 +32,6 @@ export function WorkspacePanel({
   onDeleteWorkspace,
   onEditWorkspace,
   onReorderWorkspaces,
-  pickerTrigger,
   collapsed,
   onToggle,
   noHeader,
@@ -57,10 +55,6 @@ export function WorkspacePanel({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
-
-  useEffect(() => {
-    if (pickerTrigger > 0) setPickerOpen(true)
-  }, [pickerTrigger, setPickerOpen])
 
   const handleChoose = useCallback(
     (path: string, name: string, emoji: string) => {

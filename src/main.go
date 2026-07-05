@@ -785,6 +785,22 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+func uniquePath(path string) string {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return path
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	name := base[:len(base)-len(ext)]
+	for i := 1; ; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s(%d)%s", name, i, ext))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
+
 func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -810,7 +826,7 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcName := filepath.Base(absSrc)
-	destPath := filepath.Join(absTarget, srcName)
+	destPath := uniquePath(filepath.Join(absTarget, srcName))
 
 	info, err := os.Stat(absSrc)
 	if err != nil {

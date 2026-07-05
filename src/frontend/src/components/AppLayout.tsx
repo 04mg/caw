@@ -467,10 +467,8 @@ export function AppLayout() {
     })
   }, [])
 
-  const [pickerTrigger, setPickerTrigger] = useState(0)
-
   useHotkeys({
-    'Alt+W': () => setPickerTrigger((v) => v + 1),
+    'Alt+W': () => setPickerOpen(true),
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
@@ -575,7 +573,6 @@ export function AppLayout() {
                 onDeleteWorkspace={handleDeleteWorkspace}
                 onEditWorkspace={handleEditWorkspace}
                 onReorderWorkspaces={handleReorderWorkspaces}
-                pickerTrigger={pickerTrigger}
                 collapsed={true}
                 onToggle={toggleSidebar}
                 pickerOpen={pickerOpen}
@@ -603,7 +600,6 @@ export function AppLayout() {
                     onDeleteWorkspace={handleDeleteWorkspace}
                     onEditWorkspace={handleEditWorkspace}
                     onReorderWorkspaces={handleReorderWorkspaces}
-                    pickerTrigger={pickerTrigger}
                     collapsed={false}
                     onToggle={toggleSidebar}
                     pickerOpen={pickerOpen}
@@ -618,7 +614,7 @@ export function AppLayout() {
             <Panel>
               <div className="flex flex-col h-full">
                 <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
-                  <div className="flex flex-1 overflow-x-auto h-full">
+                  <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
                     {tabs}
                   </div>
                   <div className="flex items-center shrink-0 h-full">
