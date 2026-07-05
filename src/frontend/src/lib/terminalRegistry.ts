@@ -10,6 +10,10 @@ export interface TerminalInstance {
   /** Buffer of output received before the term was ready, replayed on open. */
   buffer: string[]
   exited: boolean
+  /** @internal set during buffer replay to queue incoming ws messages */
+  _replaying: boolean
+  /** @internal messages queued during replay */
+  _pendingQueue: string[]
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -92,6 +96,18 @@ function wireInput(inst: TerminalInstance) {
   })
 }
 
+function flushPending(inst: TerminalInstance) {
+  const queue = inst._pendingQueue
+  inst._pendingQueue = []
+  for (const data of queue) {
+    inst.term.write(data, () => {
+      inst.term.scrollToBottom()
+    })
+    inst.buffer.push(data)
+    if (inst.buffer.length > 10000) inst.buffer.shift()
+  }
+}
+
 function connectWs(inst: TerminalInstance, backendId: string) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${backendId}`)
@@ -105,6 +121,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
     try {
       const msg = JSON.parse(event.data)
       if (msg.type === 'output') {
+        if (inst._replaying) {
+          inst._pendingQueue.push(msg.data)
+          return
+        }
         inst.term.write(msg.data, () => {
           inst.term.scrollToBottom()
         })
@@ -124,8 +144,6 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       }
     }
   }
-
-  wireInput(inst)
 }
 
 export async function attachTerminal(
@@ -146,10 +164,18 @@ export async function attachTerminal(
     // Fit first so the terminal dimensions are correct before writing.
     fit.fit()
     // Replay buffered output so the terminal isn't blank after re-attach.
+    // Queue incoming WS messages during replay to avoid interleaved writes.
+    existing._replaying = true
+    existing._pendingQueue = []
     if (existing.buffer.length > 0) {
       term.write(existing.buffer.join(''), () => {
         term.scrollToBottom()
+        existing._replaying = false
+        flushPending(existing)
       })
+    } else {
+      existing._replaying = false
+      flushPending(existing)
     }
 
     // Re-wire input handlers since the old term was disposed.
@@ -168,8 +194,9 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [] }
   registry.set(leafId, inst)
+  wireInput(inst)
 
   try {
     const backendId = await ensureBackend(leafId, cwd, cmd)
