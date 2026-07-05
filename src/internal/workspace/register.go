@@ -409,6 +409,7 @@ func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	getHub().EmitEvent(abs, "file-modified", false)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -453,6 +454,7 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	getHub().EmitEvent(dest, "file-created", false)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -480,10 +482,17 @@ func handleFileRename(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	wasDir := false
+	if info, err := os.Stat(absOld); err == nil {
+		wasDir = info.IsDir()
+	}
+
 	if err := os.Rename(absOld, absNew); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	getHub().EmitEvent(absOld, "file-deleted", wasDir)
+	getHub().EmitEvent(absNew, "file-created", wasDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -541,7 +550,8 @@ func handleFileCopy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if info.IsDir() {
+	isDir := info.IsDir()
+	if isDir {
 		if err := os.MkdirAll(absDst, 0755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -556,6 +566,7 @@ func handleFileCopy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	getHub().EmitEvent(absDst, "file-created", isDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -578,10 +589,16 @@ func handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	wasDir := true
+	if info, err := os.Stat(abs); err == nil {
+		wasDir = info.IsDir()
+	}
+
 	if err := os.RemoveAll(abs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	getHub().EmitEvent(abs, "file-deleted", wasDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -604,7 +621,8 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Type == "dir" {
+	isDir := req.Type == "dir"
+	if isDir {
 		if err := os.MkdirAll(abs, 0755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -615,6 +633,7 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	getHub().EmitEvent(abs, "file-created", isDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -666,7 +685,8 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if info.IsDir() {
+	isDir := info.IsDir()
+	if isDir {
 		if err := os.MkdirAll(destPath, 0755); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -681,5 +701,6 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	getHub().EmitEvent(destPath, "file-created", isDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
