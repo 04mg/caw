@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -7,8 +7,8 @@ export function createEmpty(): LayoutNode {
   return { type: 'empty' }
 }
 
-export function createLeaf(cwd: string): LayoutNode {
-  return { type: 'leaf', id: crypto.randomUUID(), cwd }
+export function createLeaf(cwd: string, cmd?: string[], agentId?: string): LayoutNode {
+  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, agentId }
 }
 
 export function splitLeaf(
@@ -132,4 +132,15 @@ export function getLeafCwd(root: LayoutNode, id: string): string | null {
     if (v !== null) return v
   }
   return null
+}
+
+export function findAgentId(node: LayoutNode): string | undefined {
+  if (node.type === 'leaf') return node.agentId
+  if (node.type === 'split') {
+    for (const child of node.children) {
+      const id = findAgentId(child)
+      if (id) return id
+    }
+  }
+  return undefined
 }

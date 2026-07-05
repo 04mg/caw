@@ -11,6 +11,7 @@ import {
   collectLeafIds,
   countLeaves,
   setSplitSizes,
+  findAgentId,
 } from '@/lib/layout'
 import {
   type Workspace,
@@ -180,12 +181,12 @@ export function AppLayout() {
     [activeWorkspace, patchWorkspace],
   )
 
-  const addTab = useCallback(() => {
+  const addTab = useCallback((cmd?: string[], agentId?: string, label?: string) => {
     if (!activeWorkspace) return
     const newTab = {
       id: crypto.randomUUID(),
-      name: 'Terminal',
-      layout: createLeaf(activeWorkspace.path || ''),
+      name: label || 'Terminal',
+      layout: createLeaf(activeWorkspace.path || '', cmd, agentId),
     }
     patchWorkspace(activeWorkspace.id, (ws) => ({
       ...ws,
@@ -362,7 +363,11 @@ export function AppLayout() {
 
   const tabs = activeWorkspace ? (
     <DraggableTabBar
-      tabs={layouts.map((t) => ({ id: t.id, name: t.name }))}
+      tabs={layouts.map((t) => ({
+        id: t.id,
+        name: t.name,
+        agentId: findAgentId(t.layout),
+      }))}
       activeIndex={activeWorkspace.activeTabIndex}
       onSwitch={switchTab}
       onClose={closeTab}

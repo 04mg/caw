@@ -13,14 +13,23 @@ type ptySession struct {
 	cmd  *pty.Cmd
 }
 
-func startPty(cwd string) (*ptySession, error) {
+func startPty(cwd string, cmdArgs []string) (*ptySession, error) {
 	ptmx, err := pty.New()
 	if err != nil {
 		return nil, err
 	}
 
-	shell := getShell()
-	c := ptmx.Command(shell)
+	var c *pty.Cmd
+	if len(cmdArgs) > 0 {
+		name := cmdArgs[0]
+		if path, err := exec.LookPath(name); err == nil {
+			name = path
+		}
+		c = ptmx.Command(name, cmdArgs[1:]...)
+	} else {
+		shell := getShell()
+		c = ptmx.Command(shell)
+	}
 	c.Dir = cwd
 	c.Env = append(os.Environ(), "TERM=xterm-256color")
 

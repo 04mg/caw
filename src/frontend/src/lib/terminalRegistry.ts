@@ -18,11 +18,11 @@ function notify() {
   for (const s of subscribers) s()
 }
 
-async function ensureBackend(leafId: string, cwd: string): Promise<string> {
+async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promise<string> {
   const res = await fetch('/api/terminal/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: leafId, cwd: cwd || '' }),
+    body: JSON.stringify({ id: leafId, cwd: cwd || '', cmd }),
   })
   const { id } = await res.json()
   return id
@@ -93,6 +93,7 @@ export async function attachTerminal(
   leafId: string,
   el: HTMLElement,
   cwd: string,
+  cmd?: string[],
 ): Promise<TerminalInstance> {
   const existing = registry.get(leafId)
   if (existing) {
@@ -131,7 +132,7 @@ export async function attachTerminal(
   registry.set(leafId, inst)
 
   try {
-    const backendId = await ensureBackend(leafId, cwd)
+    const backendId = await ensureBackend(leafId, cwd, cmd)
     connectWs(inst, backendId)
   } catch (err) {
     console.error('terminal backend init failed:', err)
