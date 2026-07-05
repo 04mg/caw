@@ -31,6 +31,7 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { Checkbox } from '@/components/ui/checkbox'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -914,35 +915,35 @@ export function AppLayout() {
         <DialogContent className="max-w-md p-6">
           <DialogHeader>
             <DialogTitle className="text-base font-semibold text-foreground">
-              Close Agent Workspace
+              Close workspace
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground mt-2 space-y-2" asChild>
               <div>
                 <div>
-                  Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will permanently delete the temporary worktree directory.
+                  Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will delete the temporary worktree directory.
                 </div>
                 
                 {closeConfirm && (closeConfirm.hasUncommitted || closeConfirm.hasUnmergedCommits) ? (
-                  <div className="border border-red-500/20 bg-red-500/5 rounded p-3 text-red-400 mt-2">
-                    <strong className="block text-xs font-semibold mb-1">⚠️ Warning: Unmerged Changes</strong>
-                    {closeConfirm.hasUncommitted && <div className="ml-1">• You have uncommitted local changes.</div>}
-                    {closeConfirm.hasUnmergedCommits && <div className="ml-1">• You have unmerged commits on branch <code className="px-1 py-0.5 rounded bg-black/30 font-mono text-[11px] text-white">{closeConfirm.agentBranch}</code>.</div>}
+                  <div className="text-red-400">
+                    ⚠️ Branch {closeConfirm.agentBranch} has unmerged changes.
                   </div>
                 ) : (
-                  <div className="border border-border bg-secondary/10 rounded p-3 mt-2 text-muted-foreground">
-                    ✓ The workspace branch <code className="px-1 py-0.5 rounded bg-muted font-mono text-[11px] text-foreground">{closeConfirm?.agentBranch}</code> is clean with no unmerged changes.
+                  <div className="text-muted-foreground">
+                    ✓ Branch {closeConfirm?.agentBranch} is clean with no unmerged changes.
                   </div>
                 )}
 
-                <div className="mt-4 pt-2 border-t border-border">
-                  <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={deleteBranchChecked}
-                      onChange={(e) => setDeleteBranchChecked(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-border bg-background text-primary focus:ring-ring"
-                    />
-                    <span>Delete the Git branch <code className="px-1 py-0.5 rounded bg-muted font-mono text-[11px] text-foreground">{closeConfirm?.agentBranch}</code> as well</span>
+                <div className="flex items-center gap-2 pt-2">
+                  <Checkbox
+                    id="delete-branch-cb"
+                    checked={deleteBranchChecked}
+                    onChange={(e) => setDeleteBranchChecked(e.target.checked)}
+                  />
+                  <label
+                    htmlFor="delete-branch-cb"
+                    className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Delete branch {closeConfirm?.agentBranch}
                   </label>
                 </div>
               </div>
@@ -966,7 +967,7 @@ export function AppLayout() {
                 }
               }}
             >
-              Confirm Close
+              Close
             </Button>
           </div>
         </DialogContent>
