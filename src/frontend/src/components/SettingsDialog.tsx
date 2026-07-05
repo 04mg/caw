@@ -25,6 +25,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [ollamaCookie, setOllamaCookie] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode' | 'ollama'>('antigravity')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
+  const [agyInstalled, setAgyInstalled] = useState(true)
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -35,6 +36,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         setOpencodeCookie(data.opencode?.cookie || '')
         setOpencodeWorkspace(data.opencode?.workspaceId || '')
         setOllamaCookie(data.ollama?.cookie || '')
+        setAgyInstalled(data.antigravity?.installed !== 'false')
       }
     } catch (e) {
       console.error('Failed to load quota settings', e)
@@ -335,10 +337,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
               <div className="grid grid-cols-1 gap-2.5 mt-2">
                 {[
-                  { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity },
-                  { id: 'opencode', label: 'OpenCode Go', description: 'OpenCode Go workspace authorization', icon: OpenCode },
-                  { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama }
-                ].map((prov) => {
+                  { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity, show: agyInstalled },
+                  { id: 'opencode', label: 'OpenCode Go', description: 'OpenCode Go workspace authorization', icon: OpenCode, show: true },
+                  { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama, show: true }
+                ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
                   return (
                     <button
@@ -370,41 +372,22 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {activeSection === 'limits' && limitStep === 2 && (
             <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setLimitStep(1)}
-                  className="flex items-center justify-center h-7 px-2.5 rounded-lg border border-border bg-background hover:bg-accent text-xs font-semibold text-muted-foreground hover:text-foreground gap-1.5 transition-all outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                  Back
-                </button>
-                <span className="text-[9px] font-mono font-semibold text-muted-foreground px-1.5 py-0.5 rounded bg-muted uppercase tracking-wider">
-                  Configure limits
-                </span>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold flex items-center gap-2">
-                  {selectedLimitProvider === 'antigravity' && (
-                    <>
-                      <Antigravity className="h-4.5 w-4.5 text-primary shrink-0" />
-                      Antigravity Configuration
-                    </>
-                  )}
-                  {selectedLimitProvider === 'opencode' && (
-                    <>
-                      <OpenCode className="h-4.5 w-4.5 text-primary shrink-0" />
-                      OpenCode Go Configuration
-                    </>
-                  )}
-                  {selectedLimitProvider === 'ollama' && (
-                    <>
-                      <Ollama className="h-4.5 w-4.5 text-primary shrink-0" />
-                      Ollama Configuration
-                    </>
-                  )}
+              <div className="flex flex-col gap-1">
+                <h3 className="text-sm font-semibold flex items-center gap-2 select-none">
+                  <button
+                    onClick={() => setLimitStep(1)}
+                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring"
+                    title="Back to Providers"
+                  >
+                    <ArrowLeft className="h-4 w-4 shrink-0" />
+                  </button>
+                  <span>
+                    {selectedLimitProvider === 'antigravity' && 'Antigravity Configuration'}
+                    {selectedLimitProvider === 'opencode' && 'OpenCode Go Configuration'}
+                    {selectedLimitProvider === 'ollama' && 'Ollama Configuration'}
+                  </span>
                 </h3>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-muted-foreground mt-0.5 pl-7">
                   Specify the details needed to authenticate limits tracking for this provider.
                 </p>
               </div>

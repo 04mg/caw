@@ -115,7 +115,12 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}, nil
 	}
 
-	return nil, fmt.Errorf("could not resolve Antigravity limits locally via agy CLI (ensure agy is logged in) and no manual token fallback is configured")
+	return nil, fmt.Errorf("agy is not running")
+}
+
+func (p *AntigravityProvider) IsInstalled() bool {
+	_, err := findAgyPath()
+	return err == nil
 }
 
 func findAgyPids() ([]int, error) {
@@ -387,6 +392,41 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 		Weekly:   quota.Quota{Used: 0, Limit: 100},
 		Monthly:  quota.Quota{Used: 0, Limit: 100},
 	}
+
+	var groups []quota.QuotaGroup
+	for _, group := range qs.Groups {
+		qg := quota.QuotaGroup{
+			Name:        group.DisplayName,
+			Description: group.Description,
+		}
+		for _, bucket := range group.Buckets {
+			if bucket.Disabled {
+				continue
+			}
+			fraction := 1.0
+			if bucket.RemainingFraction != nil {
+				fraction = *bucket.RemainingFraction
+			}
+			used := 100 - int(fraction*100)
+			if used < 0 {
+				used = 0
+			}
+			if used > 100 {
+				used = 100
+			}
+
+			qg.Items = append(qg.Items, quota.QuotaItem{
+				Name:        bucket.BucketID,
+				Label:       bucket.DisplayName,
+				Description: bucket.ResetDescription,
+				Used:        used,
+				Limit:       100,
+				ResetTime:   bucket.ResetTime,
+			})
+		}
+		groups = append(groups, qg)
+	}
+	res.Groups = groups
 
 	for _, group := range qs.Groups {
 		groupName := strings.ToLower(group.DisplayName)

@@ -12,10 +12,26 @@ type Quota struct {
 	Limit int `json:"limit"`
 }
 
+type QuotaItem struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Used        int    `json:"used"`
+	Limit       int    `json:"limit"`
+	ResetTime   string `json:"resetTime,omitempty"`
+}
+
+type QuotaGroup struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Items       []QuotaItem `json:"items"`
+}
+
 type QuotaResponse struct {
-	FiveHour Quota `json:"fiveHour"`
-	Weekly   Quota `json:"weekly"`
-	Monthly  Quota `json:"monthly"`
+	FiveHour Quota        `json:"fiveHour"`
+	Weekly   Quota        `json:"weekly"`
+	Monthly  Quota        `json:"monthly"`
+	Groups   []QuotaGroup `json:"groups,omitempty"`
 }
 
 type ProviderResponse struct {
@@ -52,6 +68,12 @@ func Register(mux *http.ServeMux, store *state.Store) {
 		res := make(map[string]ProviderResponse)
 
 		for name, provider := range registry {
+			if checker, ok := provider.(interface{ IsInstalled() bool }); ok {
+				if !checker.IsInstalled() {
+					continue
+				}
+			}
+
 			config, ok := settings[name]
 			if !ok {
 				if name == "antigravity" {
@@ -86,6 +108,21 @@ func Register(mux *http.ServeMux, store *state.Store) {
 			if settings == nil {
 				settings = make(map[string]map[string]string)
 			}
+
+			// Inject installed status
+			for name, provider := range registry {
+				if checker, ok := provider.(interface{ IsInstalled() bool }); ok {
+					if settings[name] == nil {
+						settings[name] = make(map[string]string)
+					}
+					if checker.IsInstalled() {
+						settings[name]["installed"] = "true"
+					} else {
+						settings[name]["installed"] = "false"
+					}
+				}
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(settings)
 
