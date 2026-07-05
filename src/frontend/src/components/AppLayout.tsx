@@ -24,12 +24,13 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, Workflow } from 'lucide-react'
+import { Settings, Folder, Workflow, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -811,6 +812,7 @@ export function AppLayout() {
                     {tabs}
                   </div>
                   <div className="flex items-center shrink-0 h-full">
+                    {/* Settings Button */}
                     <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
                       <Button
                         variant="ghost"
@@ -822,8 +824,39 @@ export function AppLayout() {
                         <Settings className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                    <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
-                      {folderSidebarCollapsed ? (
+
+                    {/* Workflow Button (Always Visible) */}
+                    <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={toggleWorktrees}
+                          >
+                            <Workflow className={activeWorkspace?.enableWorktrees ? 'lava-lamp-icon h-3.5 w-3.5' : 'h-3.5 w-3.5 opacity-50'} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent className="flex items-center select-none">
+                          {activeWorkspace?.enableWorktrees ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0 animate-bounce" />
+                              <span>Worktrees Enabled</span>
+                            </>
+                          ) : (
+                            <>
+                              <X className="h-3.5 w-3.5 text-red-500 mr-1.5 shrink-0" />
+                              <span>Worktrees Disabled</span>
+                            </>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+
+                    {/* Folder Button (Only Visible when Sidebar is Collapsed) */}
+                    {folderSidebarCollapsed && (
+                      <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -833,22 +866,8 @@ export function AppLayout() {
                         >
                           <Folder className="h-3.5 w-3.5" />
                         </Button>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-5 w-5 shrink-0 rounded transition-all duration-300 ${
-                            activeWorkspace?.enableWorktrees
-                              ? 'lava-lamp-bg text-white shadow-[0_0_10px_rgba(168,85,247,0.5)]'
-                              : 'text-muted-foreground opacity-50 hover:opacity-100'
-                          }`}
-                          onClick={toggleWorktrees}
-                          title={activeWorkspace?.enableWorktrees ? '✓ Worktrees' : '✕ Worktrees'}
-                        >
-                          <Workflow className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 {terminalBody}
@@ -929,6 +948,14 @@ export function AppLayout() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <svg style={{ width: 0, height: 0, position: 'absolute' }}>
+        <linearGradient id="lava-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" className="lava-stop-1" />
+          <stop offset="50%" className="lava-stop-2" />
+          <stop offset="100%" className="lava-stop-3" />
+        </linearGradient>
+      </svg>
     </div>
   )
 }
