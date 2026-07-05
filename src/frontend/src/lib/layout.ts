@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string; filePath?: string; isDiff?: boolean }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -150,4 +150,15 @@ export function findAgentId(node: LayoutNode): string | undefined {
     }
   }
   return undefined
+}
+
+export function findAgentLeaves(node: LayoutNode): { id: string; cwd: string; agentBranch?: string; baseBranch?: string }[] {
+  if (node.type === 'empty') return []
+  if (node.type === 'leaf') {
+    if (node.agentBranch && node.cwd) {
+      return [{ id: node.id, cwd: node.cwd, agentBranch: node.agentBranch, baseBranch: node.baseBranch }]
+    }
+    return []
+  }
+  return node.children.flatMap(findAgentLeaves)
 }

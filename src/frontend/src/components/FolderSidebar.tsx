@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef, useLayoutEffect } from
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, Loader2,
   RefreshCw, FileCode, Pencil, Trash2, Copy, Download,
-  ClipboardPaste, FolderPlus, MoreVertical
+  ClipboardPaste, FolderPlus, MoreVertical, PanelRightClose
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,9 @@ interface FolderSidebarProps {
   gitStatuses: Record<string, string>
   onRefresh: () => void
   noHeader?: boolean
+  mainWorkspacePath?: string
+  activeTabName?: string
+  onClose?: () => void
 }
 
 export function FolderSidebar({
@@ -35,8 +38,12 @@ export function FolderSidebar({
   gitStatuses,
   onRefresh,
   noHeader,
+  mainWorkspacePath,
+  activeTabName,
+  onClose,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
+  const isWorktree = !!(mainWorkspacePath && workspacePath && workspacePath !== mainWorkspacePath)
   const [busy, setBusy] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; path: string; name: string; isDir: boolean; isRoot?: boolean
@@ -215,18 +222,32 @@ export function FolderSidebar({
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
       {!noHeader && (
       <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
-        <span className="flex-1 text-xs font-medium text-muted-foreground truncate">
-          Explorer
-        </span>
         <Button
           variant="ghost"
           size="icon"
-          className="h-5 w-5"
+          className="h-5 w-5 hover:text-foreground"
           onClick={handleRefresh}
           disabled={loading}
           title="Refresh files"
         >
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+        <span className="flex-1 text-xs font-medium text-muted-foreground truncate">
+          Explorer
+        </span>
+        {isWorktree && (
+          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-md shrink-0 select-none animate-pulse">
+            Worktree: {activeTabName || 'Agent'}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5 hover:text-foreground"
+          onClick={onClose}
+          title="Close Sidebar"
+        >
+          <PanelRightClose className="h-3.5 w-3.5" />
         </Button>
       </div>
       )}

@@ -171,3 +171,15 @@ html, body, #root {
 .xterm .xterm-scrollable-element > .scrollbar {
   display: none !important;
 }
+
+@keyframes lava-lamp {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.lava-lamp-bg {
+  background: linear-gradient(135deg, #a855f7, #ec4899, #3b82f6, #10b981);
+  background-size: 300% 300%;
+  animation: lava-lamp 6s ease infinite;
+}

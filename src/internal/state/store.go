@@ -64,6 +64,7 @@ func (s *Store) migrate() {
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
 	}
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN enable_worktrees INTEGER DEFAULT 1")
 }
 
 func (s *Store) Get() AppState {
@@ -80,7 +81,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -88,9 +89,11 @@ func (s *Store) Get() AppState {
 
 	for wRows.Next() {
 		var w Workspace
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID); err != nil {
+		var enableWorktrees int
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees); err != nil {
 			continue
 		}
+		w.EnableWorktrees = enableWorktrees != 0
 		w.Layouts = s.loadTabLayouts(w.ID)
 		as.Workspaces = append(as.Workspaces, w)
 	}
@@ -196,9 +199,13 @@ func (s *Store) Set(as AppState) {
 		if w.Layouts == nil {
 			w.Layouts = []TabLayout{}
 		}
+		enableWT := 0
+		if w.EnableWorktrees {
+			enableWT = 1
+		}
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id) VALUES (?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID,
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT,
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(
@@ -243,26 +250,27 @@ func (s *Store) Close() {
 }
 
 func DefaultDBPath() string {
-	exePath, err := os.Executable()
-	if err == nil {
-		exePath, err = filepath.EvalSymlinks(exePath)
-	}
+	home, err := os.UserHomeDir()
 	if err != nil {
-		dir, dErr := os.UserConfigDir()
-		if dErr != nil {
-			dir, _ = os.Getwd()
+		home, err = os.UserConfigDir()
+		if err != nil {
+			home, _ = os.Getwd()
 		}
-		return filepath.Join(dir, "caw", "caw.db")
 	}
-	return filepath.Join(filepath.Dir(exePath), "caw.db")
+	p := filepath.Join(home, ".caw", "caw.db")
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	return p
 }
 
 func DefaultStatePath() string {
-	dir, err := os.UserConfigDir()
-	if dir == "" || err != nil {
-		dir, _ = os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home, err = os.UserConfigDir()
+		if err != nil {
+			home, _ = os.Getwd()
+		}
 	}
-	p := filepath.Join(dir, "caw", "state.json")
+	p := filepath.Join(home, ".caw", "state.json")
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	return p
 }
