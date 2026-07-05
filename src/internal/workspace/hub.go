@@ -113,6 +113,9 @@ func (h *FileEventHub) Subscribe(conn *websocket.Conn, rootPath string) {
 			if err != nil || !fi.IsDir() {
 				return err
 			}
+			if shouldIgnoreDir(fi.Name()) {
+				return filepath.SkipDir
+			}
 			w.Add(path)
 			return nil
 		})
@@ -210,6 +213,16 @@ func (h *FileEventHub) watchPath(rootPath string, w *fsnotify.Watcher) {
 	}
 }
 
+func shouldIgnoreDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	if name == "node_modules" {
+		return true
+	}
+	return false
+}
+
 func shouldIgnoreEvent(path string) bool {
 	name := filepath.Base(path)
 
@@ -242,10 +255,16 @@ func (h *FileEventHub) handleFSEvent(rootPath string, event fsnotify.Event, w *f
 
 	if event.Has(fsnotify.Create) {
 		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			if shouldIgnoreDir(fi.Name()) {
+				return
+			}
 			w.Add(path)
 			filepath.Walk(path, func(subPath string, subFi os.FileInfo, err error) error {
 				if err != nil || !subFi.IsDir() || subPath == path {
 					return err
+				}
+				if shouldIgnoreDir(subFi.Name()) {
+					return filepath.SkipDir
 				}
 				w.Add(subPath)
 				return nil
