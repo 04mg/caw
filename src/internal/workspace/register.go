@@ -1,64 +1,58 @@
-package main
+package workspace
 
 import (
-	"embed"
-	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
-	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
+	"github.com/04mg/caw/internal/httputil"
 )
 
-//go:embed frontend/dist
-var frontendFS embed.FS
-
-//go:embed icon.txt
-var iconTxt string
-
-type TerminalSession struct {
-	ID         string
-	Pty        *ptySession
-	Cwd        string
-	mu         sync.Mutex
-	conns      map[*websocket.Conn]bool
-	scrollback []byte
+type FileNode struct {
+	Name     string     `json:"name"`
+	Path     string     `json:"path"`
+	IsDir    bool       `json:"isDir"`
+	Children []FileNode `json:"children,omitempty"`
 }
 
-var (
-	sessions   = make(map[string]*TerminalSession)
-	sessionsMu sync.RWMutex
-)
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+type WriteRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
-func main() {
-	port := "8080"
-	if p := os.Getenv("PORT"); p != "" {
-		port = p
-	}
+type RenameRequest struct {
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+}
 
-	distFS, err := fs.Sub(frontendFS, "frontend/dist")
-	if err != nil {
-		log.Fatalf("embed sub: %v", err)
-	}
+type CopyRequest struct {
+	SourcePath string `json:"sourcePath"`
+	DestPath   string `json:"destPath"`
+}
 
-	initState()
+type DeleteRequest struct {
+	Path string `json:"path"`
+}
 
-	mux := http.NewServeMux()
+type CreateRequest struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+type PasteRequest struct {
+	SourcePath string `json:"sourcePath"`
+	TargetDir  string `json:"targetDir"`
+}
+
+func Register(mux *http.ServeMux) {
+	mux.HandleFunc("/api/workspace/open", handleOpenDir)
 	mux.HandleFunc("/api/workspace/tree", handleFileTree)
 	mux.HandleFunc("/api/workspace/list", handleListDir)
 	mux.HandleFunc("/api/workspace/list-all", handleListAll)
+	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
 	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
 	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
 	mux.HandleFunc("/api/workspace/file/upload", handleFileUpload)
@@ -67,21 +61,6 @@ func main() {
 	mux.HandleFunc("/api/workspace/file/delete", handleFileDelete)
 	mux.HandleFunc("/api/workspace/file/create", handleFileCreate)
 	mux.HandleFunc("/api/workspace/file/paste", handleFilePaste)
-	mux.HandleFunc("/api/git/status", handleGitStatus)
-	mux.HandleFunc("/api/git/diff", handleGitDiff)
-	mux.HandleFunc("/api/git/original", handleGitOriginal)
-	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
-	mux.HandleFunc("/api/workspace/open", handleOpenDir)
-	mux.HandleFunc("/api/terminal/create", handleTerminalCreate)
-	mux.HandleFunc("/ws/terminal/", handleTerminalWS)
-	mux.HandleFunc("/api/workspaces", handleWorkspaces)
-	mux.HandleFunc("/ws/state", handleStateWS)
-	mux.HandleFunc("/api/agents/available", handleAgentsAvailable)
-	mux.Handle("/", http.FileServer(http.FS(distFS)))
-
-	addr := ":" + port
-	fmt.Print(strings.Replace(iconTxt, ":8080", addr, 1))
-	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
 func handleOpenDir(w http.ResponseWriter, r *http.Request) {
@@ -104,14 +83,7 @@ func handleOpenDir(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a directory", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]string{"path": abs})
-}
-
-type FileNode struct {
-	Name     string     `json:"name"`
-	Path     string     `json:"path"`
-	IsDir    bool       `json:"isDir"`
-	Children []FileNode `json:"children,omitempty"`
+	httputil.WriteJSON(w, map[string]string{"path": abs})
 }
 
 func handleFileTree(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +102,7 @@ func handleFileTree(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, node)
+	httputil.WriteJSON(w, node)
 }
 
 func buildTree(dir string, depth int) (FileNode, error) {
@@ -164,149 +136,6 @@ func buildTree(dir string, depth int) (FileNode, error) {
 	return node, nil
 }
 
-type CreateTerminalRequest struct {
-	Cwd string   `json:"cwd"`
-	ID  string   `json:"id"`
-	Cmd []string `json:"cmd,omitempty"`
-}
-
-func handleTerminalCreate(w http.ResponseWriter, r *http.Request) {
-	var req CreateTerminalRequest
-	if err := readJSON(r, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cwd := req.Cwd
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
-
-	// If a client-supplied id is provided and a session already exists with
-	// that id, reuse it (e.g. after a browser reload while the server kept
-	// running). Otherwise create a fresh pty using the supplied id (when
-	// present) so the client and server stay in sync.
-	if req.ID != "" {
-		sessionsMu.RLock()
-		existing, ok := sessions[req.ID]
-		sessionsMu.RUnlock()
-		if ok {
-			writeJSON(w, map[string]string{"id": existing.ID})
-			return
-		}
-	}
-
-	id := req.ID
-	if id == "" {
-		id = uuid.New().String()
-	}
-
-	ps, err := startPty(cwd, req.Cmd)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	sess := &TerminalSession{
-		ID:         id,
-		Pty:        ps,
-		Cwd:        cwd,
-		conns:      make(map[*websocket.Conn]bool),
-		scrollback: []byte{},
-	}
-	sessionsMu.Lock()
-	sessions[id] = sess
-	sessionsMu.Unlock()
-
-	go sess.readLoop()
-
-	writeJSON(w, map[string]string{"id": id})
-}
-
-func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/ws/terminal/"):]
-	sessionsMu.RLock()
-	sess, ok := sessions[id]
-	sessionsMu.RUnlock()
-	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-
-	sess.mu.Lock()
-	sess.conns[c] = true
-	sess.mu.Unlock()
-
-	if len(sess.scrollback) > 0 {
-		msg, _ := json.Marshal(map[string]interface{}{
-			"type": "output",
-			"data": string(sess.scrollback),
-		})
-		c.WriteMessage(websocket.TextMessage, msg)
-	}
-
-	defer func() {
-		sess.mu.Lock()
-		delete(sess.conns, c)
-		sess.mu.Unlock()
-		c.Close()
-	}()
-
-	for {
-		_, data, err := c.ReadMessage()
-		if err != nil {
-			return
-		}
-		var msg map[string]interface{}
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		switch msg["type"] {
-		case "input":
-			if s, ok := msg["data"].(string); ok {
-				sess.Pty.ptmx.Write([]byte(s))
-			}
-		case "resize":
-			colsF, okCols := msg["cols"].(float64)
-			rowsF, okRows := msg["rows"].(float64)
-			if !okCols || !okRows {
-				continue
-			}
-			sess.Pty.ptmx.Resize(int(colsF), int(rowsF))
-		}
-	}
-}
-
-func (s *TerminalSession) readLoop() {
-	buf := make([]byte, 4096)
-	for {
-		n, err := s.Pty.ptmx.Read(buf)
-		if n > 0 {
-			data := buf[:n]
-			s.mu.Lock()
-			s.scrollback = append(s.scrollback, data...)
-			if len(s.scrollback) > 256*1024 {
-				s.scrollback = append([]byte(nil), s.scrollback[len(s.scrollback)-256*1024:]...)
-			}
-			for c := range s.conns {
-				msg, _ := json.Marshal(map[string]interface{}{
-					"type": "output",
-					"data": string(data),
-				})
-				c.WriteMessage(websocket.TextMessage, msg)
-			}
-			s.mu.Unlock()
-		}
-		if err != nil {
-			break
-		}
-	}
-}
-
 func handleListDir(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("path")
 	if dir == "" {
@@ -328,7 +157,7 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		writeJSON(w, []FileNode{})
+		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
 	var children []FileNode
@@ -346,7 +175,7 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 			IsDir: true,
 		})
 	}
-	writeJSON(w, children)
+	httputil.WriteJSON(w, children)
 }
 
 func handleSearchDirs(w http.ResponseWriter, r *http.Request) {
@@ -362,15 +191,13 @@ func handleSearchDirs(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
-		writeJSON(w, []FileNode{})
+		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
 
-	// Only list immediate subdirectories of root whose name contains q.
-	// No recursive walk — keeps results relevant and bounded.
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		writeJSON(w, []FileNode{})
+		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
 
@@ -392,61 +219,11 @@ func handleSearchDirs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, results)
+	httputil.WriteJSON(w, results)
 }
 
 func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
-}
-
-func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
-
-func readJSON(r *http.Request, v interface{}) error {
-	body, err := readAll(r)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, v)
-}
-
-func readAll(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
-	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := r.Body.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-		}
-		if err != nil {
-			break
-		}
-	}
-	return buf, nil
-}
-
-type AgentInfo struct {
-	ID    string   `json:"id"`
-	Label string   `json:"label"`
-	Cmd   []string `json:"cmd"`
-}
-
-func handleAgentsAvailable(w http.ResponseWriter, r *http.Request) {
-	agentsList := []AgentInfo{
-		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode"}},
-		{ID: "agy", Label: "Antigravity", Cmd: []string{"agy"}},
-		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
-	}
-	available := []AgentInfo{}
-	for _, a := range agentsList {
-		if _, err := exec.LookPath(a.Cmd[0]); err == nil {
-			available = append(available, a)
-		}
-	}
-	writeJSON(w, available)
 }
 
 func handleListAll(w http.ResponseWriter, r *http.Request) {
@@ -471,7 +248,7 @@ func handleListAll(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		writeJSON(w, []FileNode{})
+		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
 	var children []FileNode
@@ -491,7 +268,7 @@ func handleListAll(w http.ResponseWriter, r *http.Request) {
 			IsDir: isDir,
 		})
 	}
-	writeJSON(w, children)
+	httputil.WriteJSON(w, children)
 }
 
 func handleFileRead(w http.ResponseWriter, r *http.Request) {
@@ -523,18 +300,13 @@ func handleFileRead(w http.ResponseWriter, r *http.Request) {
 	w.Write(content)
 }
 
-type WriteFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
 func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req WriteFileRequest
-	if err := readJSON(r, &req); err != nil {
+	var req WriteRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -552,31 +324,7 @@ func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-type RenameRequest struct {
-	OldPath string `json:"oldPath"`
-	NewPath string `json:"newPath"`
-}
-
-type CopyRequest struct {
-	SourcePath string `json:"sourcePath"`
-	DestPath   string `json:"destPath"`
-}
-
-type DeleteRequest struct {
-	Path string `json:"path"`
-}
-
-type CreateRequest struct {
-	Path string `json:"path"`
-	Type string `json:"type"` // "file" or "dir"
-}
-
-type PasteRequest struct {
-	SourcePath string `json:"sourcePath"`
-	TargetDir  string `json:"targetDir"`
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func handleFileUpload(w http.ResponseWriter, r *http.Request) {
@@ -620,7 +368,7 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func handleFileRename(w http.ResponseWriter, r *http.Request) {
@@ -629,7 +377,7 @@ func handleFileRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req RenameRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -651,7 +399,7 @@ func handleFileRename(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func copyFile(src, dst string) error {
@@ -685,7 +433,7 @@ func handleFileCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CopyRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -723,7 +471,7 @@ func handleFileCopy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func handleFileDelete(w http.ResponseWriter, r *http.Request) {
@@ -732,7 +480,7 @@ func handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DeleteRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -749,7 +497,7 @@ func handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func handleFileCreate(w http.ResponseWriter, r *http.Request) {
@@ -758,7 +506,7 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -782,7 +530,7 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
 
 func uniquePath(path string) string {
@@ -807,7 +555,7 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req PasteRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -848,112 +596,5 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
-
-func handleGitStatus(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cmd := exec.Command("git", "status", "--porcelain", "-u")
-	cmd.Dir = abs
-	output, err := cmd.Output()
-	if err != nil {
-		writeJSON(w, map[string]string{})
-		return
-	}
-
-	statuses := make(map[string]string)
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if len(line) < 4 {
-			continue
-		}
-		statusXY := line[:2]
-		filePath := line[3:]
-		filePath = strings.Trim(filePath, "\"")
-		absFilePath := filepath.Join(abs, filePath)
-		statuses[absFilePath] = statusXY
-	}
-	writeJSON(w, statuses)
-}
-
-func handleGitDiff(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cmd := exec.Command("git", "diff", "HEAD")
-	cmd.Dir = abs
-	output, err := cmd.Output()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(output)
-}
-
-func handleGitOriginal(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	
-	dir := filepath.Dir(abs)
-	var gitRoot string
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			gitRoot = dir
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	
-	if gitRoot == "" {
-		http.Error(w, "not a git repository", http.StatusBadRequest)
-		return
-	}
-	
-	relPath, err := filepath.Rel(gitRoot, abs)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	relPath = filepath.ToSlash(relPath)
-	
-	cmd := exec.Command("git", "show", "HEAD:"+relPath)
-	cmd.Dir = gitRoot
-	output, err := cmd.Output()
-	if err != nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(""))
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(output)
-}
-

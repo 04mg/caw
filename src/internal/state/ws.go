@@ -1,4 +1,4 @@
-package main
+package state
 
 import (
 	"encoding/json"
@@ -17,49 +17,49 @@ var stateUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func handleStateWS(w http.ResponseWriter, r *http.Request) {
-	c, err := stateUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-
-	stateClientsMu.Lock()
-	stateClients[c] = true
-	stateClientsMu.Unlock()
-
-	defer func() {
-		stateClientsMu.Lock()
-		delete(stateClients, c)
-		stateClientsMu.Unlock()
-		c.Close()
-	}()
-
-	// Send current state on connect.
-	cur := getState()
-	if msg, err := json.Marshal(cur); err == nil {
-		c.WriteMessage(websocket.TextMessage, msg)
-	}
-
-	// Read loop: clients may send state updates too.
-	for {
-		_, data, err := c.ReadMessage()
+func RegisterWS(mux *http.ServeMux, store *Store) {
+	mux.HandleFunc("/ws/state", func(w http.ResponseWriter, r *http.Request) {
+		c, err := stateUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		var s AppState
-		if err := json.Unmarshal(data, &s); err != nil {
-			continue
+
+		stateClientsMu.Lock()
+		stateClients[c] = true
+		stateClientsMu.Unlock()
+
+		defer func() {
+			stateClientsMu.Lock()
+			delete(stateClients, c)
+			stateClientsMu.Unlock()
+			c.Close()
+		}()
+
+		cur := store.Get()
+		if msg, err := json.Marshal(cur); err == nil {
+			c.WriteMessage(websocket.TextMessage, msg)
 		}
-		if s.Workspaces == nil {
-			s.Workspaces = []Workspace{}
+
+		for {
+			_, data, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			var s AppState
+			if err := json.Unmarshal(data, &s); err != nil {
+				continue
+			}
+			if s.Workspaces == nil {
+				s.Workspaces = []Workspace{}
+			}
+			store.Set(s)
+			broadcastStateExcept(c, store)
 		}
-		setState(s)
-		broadcastStateExcept(c)
-	}
+	})
 }
 
-func broadcastStateExcept(exclude *websocket.Conn) {
-	cur := getState()
+func broadcastStateExcept(exclude *websocket.Conn, store *Store) {
+	cur := store.Get()
 	msg, err := json.Marshal(cur)
 	if err != nil {
 		return
@@ -77,8 +77,8 @@ func broadcastStateExcept(exclude *websocket.Conn) {
 	}
 }
 
-func broadcastStateToAll() {
-	cur := getState()
+func broadcastStateToAll(store *Store) {
+	cur := store.Get()
 	msg, err := json.Marshal(cur)
 	if err != nil {
 		return
