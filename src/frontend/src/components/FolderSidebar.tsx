@@ -96,34 +96,32 @@ export function FolderSidebar({
   const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
     const sep = parentPath.includes('\\') ? '\\' : '/'
     const newPath = parentPath + sep + name
+    setCreateTarget(null)
     try {
-      const res = await fetch('/api/workspace/file/create', {
+      await fetch('/api/workspace/file/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: newPath, type }),
       })
-      if (res.ok) {
-        setCreateTarget(null)
-        triggerRefresh()
-        onRefresh()
-      }
     } catch { /* ignore */ }
+    triggerRefresh()
+    onRefresh()
   }, [triggerRefresh, onRefresh])
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget) return
+    const target = deleteTarget
+    if (!target) return
+    setDeleteTarget(null)
     try {
-      const res = await fetch('/api/workspace/file/delete', {
+      await fetch('/api/workspace/file/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: deleteTarget.path }),
+        body: JSON.stringify({ path: target.path }),
       })
-      if (res.ok) {
-        setDeleteTarget(null)
-        triggerRefresh()
-      }
     } catch { /* ignore */ }
-  }, [deleteTarget, triggerRefresh])
+    triggerRefresh()
+    onRefresh()
+  }, [deleteTarget, triggerRefresh, onRefresh])
 
   const handleCopy = useCallback((path: string) => {
     setClipboard({ path })
@@ -131,19 +129,18 @@ export function FolderSidebar({
   }, [])
 
   const handlePaste = useCallback(async (targetDir: string) => {
-    if (!clipboard) return
+    const src = clipboard?.path
+    if (!src) return
+    setContextMenu(null)
     try {
-      const res = await fetch('/api/workspace/file/paste', {
+      await fetch('/api/workspace/file/paste', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: clipboard.path, targetDir }),
+        body: JSON.stringify({ sourcePath: src, targetDir }),
       })
-      if (res.ok) {
-        setContextMenu(null)
-        triggerRefresh()
-        onRefresh()
-      }
     } catch { /* ignore */ }
+    triggerRefresh()
+    onRefresh()
   }, [clipboard, triggerRefresh, onRefresh])
 
   const handleUpload = useCallback(async (targetDir: string, files: FileList) => {
