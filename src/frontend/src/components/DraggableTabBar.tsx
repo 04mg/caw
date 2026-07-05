@@ -149,11 +149,13 @@ export function DraggableTabBar({
               return <Terminal className="h-3 w-3 shrink-0" />
             })()}
             <span className="truncate max-w-28">{tab.name}</span>
-            <X
-              onPointerDown={(e) => { e.stopPropagation() }}
-              onClick={(e) => { e.stopPropagation(); onClose(i) }}
-              className="h-3 w-3 ml-1 shrink-0 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity"
-            />
+            {!tab.filePath && !tab.isDiff && (
+              <X
+                onPointerDown={(e) => { e.stopPropagation() }}
+                onClick={(e) => { e.stopPropagation(); onClose(i) }}
+                className="h-3 w-3 ml-1 shrink-0 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity"
+              />
+            )}
           </button>
         )
       })}

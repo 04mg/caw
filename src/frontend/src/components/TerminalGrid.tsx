@@ -52,35 +52,37 @@ export function TerminalGrid({
           <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} />
         )}
 
-        <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!isEditor) {
-                destroyTerminal(node.id)
-              }
-              onClose(node.id)
-            }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Close pane"
-          >
-            <X className="h-3 w-3" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSplitHoriz(node.id) }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Split horizontally"
-          >
-            <Columns2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSplitVert(node.id) }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Split vertically"
-          >
-            <Rows2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {!isEditor && (
+          <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!isEditor) {
+                  destroyTerminal(node.id)
+                }
+                onClose(node.id)
+              }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Close pane"
+            >
+              <X className="h-3 w-3" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSplitHoriz(node.id) }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Split horizontally"
+            >
+              <Columns2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSplitVert(node.id) }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Split vertically"
+            >
+              <Rows2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     )
   }
