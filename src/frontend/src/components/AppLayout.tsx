@@ -377,8 +377,8 @@ export function AppLayout() {
 
   const handleClosePane = useCallback(
     (id: string) => {
-      if (!activeWorkspace || !activeTab) return
       destroyTerminal(id)
+      if (!activeWorkspace || !activeTab) return
       const newLayout = removeLeaf(activeTab.layout, id)
       const remaining = collectLeafIds(newLayout)
       if (remaining.length === 0) {
