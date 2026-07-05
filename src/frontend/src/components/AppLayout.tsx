@@ -66,6 +66,7 @@ export function AppLayout() {
     hasUncommitted: boolean;
     hasUnmergedCommits: boolean;
   } | null>(null)
+  const [deleteBranchChecked, setDeleteBranchChecked] = useState(false)
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
@@ -306,11 +307,11 @@ export function AppLayout() {
   }, [activeWorkspace, patchWorkspace])
 
   const forceCloseTab = useCallback(
-    (index: number) => {
+    (index: number, deleteBranch?: boolean) => {
       if (!activeWorkspace) return
       const tab = activeWorkspace.layouts[index]
       if (tab) {
-        for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId)
+        for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId, deleteBranch)
       }
       patchWorkspace(activeWorkspace.id, (ws) => {
         const next = ws.layouts.filter((_, i) => i !== index)
@@ -341,49 +342,36 @@ export function AppLayout() {
       if (!tab) return
 
       const agentLeaves = findAgentLeaves(tab.layout)
-      let hasChanges = false
-      let changeInfo: any = null
-
-      for (const leaf of agentLeaves) {
-        if (leaf.agentBranch && leaf.cwd) {
-          try {
-            const res = await fetch('/api/agents/check-changes', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                worktreePath: leaf.cwd,
-                branchName: leaf.agentBranch,
-                baseBranch: leaf.baseBranch,
-              }),
-            })
-            if (res.ok) {
-              const data = await res.json()
-              if (data.hasUncommitted || data.hasUnmergedCommits) {
-                hasChanges = true
-                changeInfo = {
-                  agentBranch: leaf.agentBranch,
-                  hasUncommitted: data.hasUncommitted,
-                  hasUnmergedCommits: data.hasUnmergedCommits,
-                  targetId: tab.id,
-                  index,
-                }
-                break
-              }
-            }
-          } catch (err) {
-            console.error('Failed to check agent changes:', err)
+      if (agentLeaves.length > 0) {
+        const firstLeaf = agentLeaves[0]
+        let uncommitted = false
+        let unmerged = false
+        try {
+          const res = await fetch('/api/agents/check-changes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              worktreePath: firstLeaf.cwd,
+              branchName: firstLeaf.agentBranch,
+              baseBranch: firstLeaf.baseBranch,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            uncommitted = !!data.hasUncommitted
+            unmerged = !!data.hasUnmergedCommits
           }
+        } catch (err) {
+          console.error('Failed to check agent changes:', err)
         }
-      }
 
-      if (hasChanges && changeInfo) {
         setCloseConfirm({
           type: 'tab',
-          targetId: changeInfo.targetId,
-          index: changeInfo.index,
-          agentBranch: changeInfo.agentBranch,
-          hasUncommitted: changeInfo.hasUncommitted,
-          hasUnmergedCommits: changeInfo.hasUnmergedCommits,
+          targetId: tab.id,
+          index,
+          agentBranch: firstLeaf.agentBranch || '',
+          hasUncommitted: uncommitted,
+          hasUnmergedCommits: unmerged,
         })
         return
       }
@@ -497,14 +485,14 @@ export function AppLayout() {
   )
 
   const forceClosePane = useCallback(
-    (id: string) => {
-      destroyTerminal(id)
+    (id: string, deleteBranch?: boolean) => {
+      destroyTerminal(id, deleteBranch)
       if (!activeWorkspace || !activeTab) return
       const newLayout = removeLeaf(activeTab.layout, id)
       const remaining = collectLeafIds(newLayout)
       if (remaining.length === 0) {
         const tabIndex = activeWorkspace.layouts.findIndex((t) => t.id === activeTab.id)
-        if (tabIndex >= 0) forceCloseTab(tabIndex)
+        if (tabIndex >= 0) forceCloseTab(tabIndex, deleteBranch)
         return
       }
       updateActiveLayout(() => newLayout)
@@ -533,6 +521,8 @@ export function AppLayout() {
 
       const leaf = findLeafById(activeTab.layout, id)
       if (leaf && leaf.type === 'leaf' && leaf.agentBranch && leaf.cwd) {
+        let uncommitted = false
+        let unmerged = false
         try {
           const res = await fetch('/api/agents/check-changes', {
             method: 'POST',
@@ -545,20 +535,21 @@ export function AppLayout() {
           })
           if (res.ok) {
             const data = await res.json()
-            if (data.hasUncommitted || data.hasUnmergedCommits) {
-              setCloseConfirm({
-                type: 'pane',
-                targetId: id,
-                agentBranch: leaf.agentBranch,
-                hasUncommitted: data.hasUncommitted,
-                hasUnmergedCommits: data.hasUnmergedCommits,
-              })
-              return
-            }
+            uncommitted = !!data.hasUncommitted
+            unmerged = !!data.hasUnmergedCommits
           }
         } catch (err) {
           console.error('Failed to check agent changes:', err)
         }
+
+        setCloseConfirm({
+          type: 'pane',
+          targetId: id,
+          agentBranch: leaf.agentBranch,
+          hasUncommitted: uncommitted,
+          hasUnmergedCommits: unmerged,
+        })
+        return
       }
 
       forceClosePane(id)
@@ -842,12 +833,12 @@ export function AppLayout() {
                           {activeWorkspace?.enableWorktrees ? (
                             <>
                               <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0 animate-bounce" />
-                              <span>Worktrees Enabled</span>
+                              <span>Worktrees</span>
                             </>
                           ) : (
                             <>
                               <X className="h-3.5 w-3.5 text-red-500 mr-1.5 shrink-0" />
-                              <span>Worktrees Disabled</span>
+                              <span>Worktrees</span>
                             </>
                           )}
                         </TooltipContent>
@@ -887,7 +878,6 @@ export function AppLayout() {
                   <FolderSidebar
                     workspacePath={currentWorkspacePath}
                     mainWorkspacePath={activeWorkspace?.path || ''}
-                    activeTabName={activeTab?.name || ''}
                     onOpenFile={openFile}
                     gitStatuses={gitStatuses}
                     onRefresh={fetchGitStatus}
@@ -912,22 +902,54 @@ export function AppLayout() {
         onOpenWorkspacePicker={() => setPickerOpen(true)}
       />
 
-      <Dialog open={closeConfirm !== null} onOpenChange={(open) => { if (!open) setCloseConfirm(null) }}>
+      <Dialog
+        open={closeConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCloseConfirm(null)
+            setDeleteBranchChecked(false)
+          }
+        }}
+      >
         <DialogContent className="max-w-md p-6">
           <DialogHeader>
             <DialogTitle className="text-base font-semibold text-foreground">
-              Unmerged Changes in Agent Workspace
+              Close Agent Workspace
             </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground mt-2">
-              This agent's workspace has uncommitted changes or unmerged commits on branch <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">{closeConfirm?.agentBranch}</code>.
-              <br /><br />
-              Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will permanently delete the worktree directory, and any uncommitted changes will be lost. The Git branch will remain intact for manual merging.
-              <br /><br />
-              Are you sure you want to close?
+            <DialogDescription className="text-xs text-muted-foreground mt-2 space-y-2" asChild>
+              <div>
+                <div>
+                  Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will permanently delete the temporary worktree directory.
+                </div>
+                
+                {closeConfirm && (closeConfirm.hasUncommitted || closeConfirm.hasUnmergedCommits) ? (
+                  <div className="border border-red-500/20 bg-red-500/5 rounded p-3 text-red-400 mt-2">
+                    <strong className="block text-xs font-semibold mb-1">⚠️ Warning: Unmerged Changes</strong>
+                    {closeConfirm.hasUncommitted && <div className="ml-1">• You have uncommitted local changes.</div>}
+                    {closeConfirm.hasUnmergedCommits && <div className="ml-1">• You have unmerged commits on branch <code className="px-1 py-0.5 rounded bg-black/30 font-mono text-[11px] text-white">{closeConfirm.agentBranch}</code>.</div>}
+                  </div>
+                ) : (
+                  <div className="border border-border bg-secondary/10 rounded p-3 mt-2 text-muted-foreground">
+                    ✓ The workspace branch <code className="px-1 py-0.5 rounded bg-muted font-mono text-[11px] text-foreground">{closeConfirm?.agentBranch}</code> is clean with no unmerged changes.
+                  </div>
+                )}
+
+                <div className="mt-4 pt-2 border-t border-border">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={deleteBranchChecked}
+                      onChange={(e) => setDeleteBranchChecked(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-border bg-background text-primary focus:ring-ring"
+                    />
+                    <span>Delete the Git branch <code className="px-1 py-0.5 rounded bg-muted font-mono text-[11px] text-foreground">{closeConfirm?.agentBranch}</code> as well</span>
+                  </label>
+                </div>
+              </div>
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 mt-4">
-            <Button variant="ghost" onClick={() => setCloseConfirm(null)}>
+            <Button variant="ghost" onClick={() => { setCloseConfirm(null); setDeleteBranchChecked(false) }}>
               Cancel
             </Button>
             <Button
@@ -935,11 +957,12 @@ export function AppLayout() {
               onClick={() => {
                 if (closeConfirm) {
                   if (closeConfirm.type === 'tab') {
-                    if (closeConfirm.index !== undefined) forceCloseTab(closeConfirm.index)
+                    if (closeConfirm.index !== undefined) forceCloseTab(closeConfirm.index, deleteBranchChecked)
                   } else {
-                    forceClosePane(closeConfirm.targetId)
+                    forceClosePane(closeConfirm.targetId, deleteBranchChecked)
                   }
                   setCloseConfirm(null)
+                  setDeleteBranchChecked(false)
                 }
               }}
             >

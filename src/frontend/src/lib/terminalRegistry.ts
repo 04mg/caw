@@ -215,7 +215,7 @@ export function setAllTerminalFontSizes(size: number) {
   }
 }
 
-export function destroyTerminal(leafId: string) {
+export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
   try { inst.ws?.close() } catch { /* ignore */ }
@@ -225,7 +225,7 @@ export function destroyTerminal(leafId: string) {
   fetch('/api/terminal/kill', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: leafId }),
+    body: JSON.stringify({ id: leafId, deleteBranch }),
   }).catch(() => {})
 }
 
