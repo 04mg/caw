@@ -73,6 +73,24 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   return { term, fit }
 }
 
+function wireInput(inst: TerminalInstance) {
+  inst.term.attachCustomKeyEventHandler((e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
+      if (inst.ws?.readyState === WebSocket.OPEN) {
+        inst.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
+      }
+      return false
+    }
+    return true
+  })
+
+  inst.term.onData((data) => {
+    if (inst.ws?.readyState === WebSocket.OPEN) {
+      inst.ws.send(JSON.stringify({ type: 'input', data }))
+    }
+  })
+}
+
 function connectWs(inst: TerminalInstance, backendId: string) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${backendId}`)
@@ -104,14 +122,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
     }
   }
 
-  inst.term.onKey(({ key, domEvent }) => {
-    if (inst.ws?.readyState !== WebSocket.OPEN) return
-    if (domEvent.ctrlKey && !domEvent.altKey && !domEvent.metaKey && (domEvent.key === 'Enter' || domEvent.key === 'Return')) {
-      inst.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
-      return
-    }
-    inst.ws.send(JSON.stringify({ type: 'input', data: key }))
-  })
+  wireInput(inst)
 }
 
 export async function attachTerminal(
@@ -135,15 +146,8 @@ export async function attachTerminal(
     }
     fit.fit()
 
-    // Re-wire onKey since the old term was disposed.
-    term.onKey(({ key, domEvent }) => {
-      if (existing.ws?.readyState !== WebSocket.OPEN) return
-      if (domEvent.ctrlKey && !domEvent.altKey && !domEvent.metaKey && (domEvent.key === 'Enter' || domEvent.key === 'Return')) {
-        existing.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
-        return
-      }
-      existing.ws.send(JSON.stringify({ type: 'input', data: key }))
-    })
+    // Re-wire input handlers since the old term was disposed.
+    wireInput(existing)
 
     // Send a resize for the new dimensions.
     if (existing.ws?.readyState === WebSocket.OPEN) {

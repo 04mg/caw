@@ -18,6 +18,14 @@ type Session struct {
 }
 
 func (s *Session) ReadLoop() {
+	// Monitor process exit and close the PTY to unblock Read.
+	// On Windows, the ConPTY output pipe may not signal EOF when the
+	// process exits, so we must explicitly break the Read.
+	go func() {
+		s.Pty.cmd.Wait()
+		s.Pty.Close()
+	}()
+
 	buf := make([]byte, 4096)
 	for {
 		n, err := s.Pty.ptmx.Read(buf)
