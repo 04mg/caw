@@ -67,6 +67,7 @@ export function FolderSidebar({
   const handleRefresh = async () => {
     setLoading(true)
     await onRefresh()
+    triggerRefresh()
     setLoading(false)
   }
 
@@ -438,7 +439,6 @@ function LazyFileNode({
   const createInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
-    if (loaded || loading) return
     setLoading(true)
     try {
       const res = await fetch(`/api/workspace/list-all?path=${encodeURIComponent(path)}`)
@@ -457,18 +457,27 @@ function LazyFileNode({
       setLoaded(true)
       setLoading(false)
     }
-  }, [path, loaded, loading])
+  }, [path])
 
+  // Load on first mount if startExpanded
+  const initialLoadDone = useRef(false)
   useEffect(() => {
-    if (startExpanded) load()
+    if (startExpanded && !initialLoadDone.current) {
+      initialLoadDone.current = true
+      load()
+    }
   }, [startExpanded, load])
 
+  // Re-fetch children when refreshCounter changes.
+  // Only fires on refreshCounter change (not on toggle), captures current expanded state.
   useEffect(() => {
-    if (loaded) {
+    if (expanded) {
+      load()
+    } else {
       setLoaded(false)
       setChildren([])
-      if (expanded) load()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshCounter])
 
   const isCreating = createTarget?.parentPath === path
