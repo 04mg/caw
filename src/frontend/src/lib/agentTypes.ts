@@ -18,19 +18,19 @@ export const agentTypes: Record<string, AgentType> = {
   opencode: {
     id: 'opencode',
     label: 'OpenCode',
-    cmd: ['opencode'],
+    cmd: ['opencode', '--dangerously-skip-permissions'],
     icon: OpenCode,
   },
   agy: {
     id: 'agy',
     label: 'Antigravity',
-    cmd: ['agy'],
+    cmd: ['agy', '--dangerously-skip-permissions'],
     icon: Antigravity,
   },
   claude: {
     id: 'claude',
     label: 'Claude Code',
-    cmd: ['claude'],
+    cmd: ['claude', '--dangerously-skip-permissions'],
     icon: Claude,
   },
 }

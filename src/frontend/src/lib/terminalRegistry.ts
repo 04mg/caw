@@ -82,7 +82,7 @@ function wireInput(inst: TerminalInstance) {
   inst.term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
       if (inst.ws?.readyState === WebSocket.OPEN) {
-        inst.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
+        inst.ws.send(JSON.stringify({ type: 'input', data: '\n' }))
       }
       return false
     }
