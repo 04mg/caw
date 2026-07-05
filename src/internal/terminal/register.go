@@ -60,7 +60,6 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 				sessionsMu.Lock()
 				delete(sessions, id)
 				sessionsMu.Unlock()
-				ps.Close()
 			},
 		}
 		sessionsMu.Lock()
