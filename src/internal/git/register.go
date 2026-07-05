@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/04mg/caw/internal/httputil"
 )
@@ -15,6 +17,14 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/diff", handleDiff)
 	mux.HandleFunc("/api/git/original", handleOriginal)
 }
+
+var (
+	statusCache     map[string]string
+	statusCacheRepo string
+	statusCacheTime time.Time
+	statusCacheMu   sync.Mutex
+	statusCacheTTL  = 2 * time.Second
+)
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
@@ -27,6 +37,16 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	statusCacheMu.Lock()
+	if abs == statusCacheRepo && time.Since(statusCacheTime) < statusCacheTTL && statusCache != nil {
+		result := statusCache
+		statusCacheMu.Unlock()
+		httputil.WriteJSON(w, result)
+		return
+	}
+	statusCacheMu.Unlock()
+
 	cmd := exec.Command("git", "status", "--porcelain", "-u")
 	cmd.Dir = abs
 	output, err := cmd.Output()
@@ -35,7 +55,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	statuses := make(map[string]string)
+	statuses := make(map[string]string, 64)
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		if len(line) < 4 {
@@ -47,6 +67,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		absFilePath := filepath.Join(abs, filePath)
 		statuses[absFilePath] = statusXY
 	}
+
+	statusCacheMu.Lock()
+	statusCache = statuses
+	statusCacheRepo = abs
+	statusCacheTime = time.Now()
+	statusCacheMu.Unlock()
+
 	httputil.WriteJSON(w, statuses)
 }
 
