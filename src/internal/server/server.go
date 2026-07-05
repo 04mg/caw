@@ -34,7 +34,7 @@ func New() *Server {
 	return &Server{
 		sessions:   make(map[string]*terminal.Session),
 		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		store:      state.NewStore(state.DefaultStatePath()),
+		store:      state.NewStore(state.DefaultDBPath()),
 		frontendFS: frontendFS,
 	}
 }
