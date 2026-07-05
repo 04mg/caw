@@ -3,6 +3,7 @@ import { Search, Terminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { agentTypes } from '@/lib/agentTypes'
 
 interface AgentInfo {
   id: string
@@ -46,6 +47,7 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fileResults, setFileResults] = useState<FileResult[]>([])
   const [searching, setSearching] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -58,6 +60,17 @@ export function CommandPalette({
       .then((r) => r.ok ? r.json() : [])
       .then(setAgents)
       .catch(() => setAgents([]))
+
+    const savedDisabled = localStorage.getItem('caw:disabledAgents')
+    if (savedDisabled) {
+      try {
+        setDisabledAgents(JSON.parse(savedDisabled))
+      } catch {
+        setDisabledAgents([])
+      }
+    } else {
+      setDisabledAgents([])
+    }
   }, [open])
 
   useEffect(() => {
@@ -110,11 +123,14 @@ export function CommandPalette({
     })
 
     for (const agent of agents) {
+      if (disabledAgents.includes(agent.id)) continue
+      const agentMeta = agentTypes[agent.id]
+      const IconComponent = agentMeta?.icon || Bot
       result.push({
         id: `agent-${agent.id}`,
-        label: `Run ${agent.label}`,
+        label: `Launch ${agent.label}`,
         type: 'command',
-        icon: <Bot className="h-4 w-4" />,
+        icon: <IconComponent className="h-4 w-4" />,
         action: () => { onAddAgent(agent.cmd, agent.id, agent.label); onOpenChange(false) },
       })
     }
@@ -132,7 +148,7 @@ export function CommandPalette({
     }
 
     return result
-  }, [agents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onOpenFile])
+  }, [agents, disabledAgents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onOpenFile])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items
