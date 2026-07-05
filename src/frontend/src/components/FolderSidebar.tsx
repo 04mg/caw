@@ -195,13 +195,14 @@ export function FolderSidebar({
 
     const handleEvent = (_event: FileTreeEvent) => {
       triggerRefresh()
+      onRefresh?.()
     }
 
     const unsub = subscribeToFileTree(workspacePath, handleEvent)
     return () => {
       unsub()
     }
-  }, [workspacePath, triggerRefresh])
+  }, [workspacePath, triggerRefresh, onRefresh])
 
   return (
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
