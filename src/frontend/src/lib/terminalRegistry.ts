@@ -9,6 +9,7 @@ export interface TerminalInstance {
   ws: WebSocket | null
   /** Buffer of output received before the term was ready, replayed on open. */
   buffer: string[]
+  exited: boolean
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -89,12 +90,18 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
       } else if (msg.type === 'exit') {
+        inst.exited = true
         onTerminalExit?.(inst.leafId)
       }
     } catch { /* skip */ }
   }
   ws.onclose = () => {
-    if (inst.ws === ws) inst.ws = null
+    if (inst.ws === ws) {
+      inst.ws = null
+      if (!inst.exited && registry.has(inst.leafId)) {
+        onTerminalExit?.(inst.leafId)
+      }
+    }
   }
 
   inst.term.onKey(({ key, domEvent }) => {
@@ -151,7 +158,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [] }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false }
   registry.set(leafId, inst)
 
   try {

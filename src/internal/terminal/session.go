@@ -46,6 +46,7 @@ func (s *Session) ReadLoop() {
 	for c := range s.conns {
 		msg, _ := json.Marshal(map[string]any{"type": "exit"})
 		c.WriteMessage(websocket.TextMessage, msg)
+		c.Close()
 	}
 	s.mu.Unlock()
 
