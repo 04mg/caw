@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key } from 'lucide-react'
@@ -25,6 +25,31 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode'>('antigravity')
 
+  const loadQuotaSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/quotas/settings')
+      if (res.ok) {
+        const data = await res.json()
+        setAntigravityKey(data.antigravity?.apiKey || '')
+        setOpencodeCookie(data.opencode?.cookie || '')
+        setOpencodeWorkspace(data.opencode?.workspaceId || '')
+      }
+    } catch (e) {
+      console.error('Failed to load quota settings', e)
+    }
+  }, [])
+
+  // Auto re-fetch on focus to catch Google Login redirections automatically
+  useEffect(() => {
+    const handleFocus = () => {
+      if (open && activeSection === 'limits') {
+        loadQuotaSettings()
+      }
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [open, activeSection, loadQuotaSettings])
+
   // Load settings on open
   useEffect(() => {
     if (open) {
@@ -47,22 +72,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
 
-      const loadQuotaSettings = async () => {
-        try {
-          const res = await fetch('/api/quotas/settings')
-          if (res.ok) {
-            const data = await res.json()
-            setAntigravityKey(data.antigravity?.apiKey || '')
-            setOpencodeCookie(data.opencode?.cookie || '')
-            setOpencodeWorkspace(data.opencode?.workspaceId || '')
-          }
-        } catch (e) {
-          console.error('Failed to load quota settings', e)
-        }
-      }
       loadQuotaSettings()
     }
-  }, [open])
+  }, [open, loadQuotaSettings])
 
   const saveSettings = async (agKey: string, ocCookie: string, ocWorkspace: string) => {
     try {
@@ -363,12 +375,38 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <label className="text-xs font-semibold text-muted-foreground select-none mb-1.5">2. Configure Credentials</label>
                 <div className="flex-1 overflow-y-auto pr-1">
                   {selectedLimitProvider === 'antigravity' && (
-                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
                       <h4 className="text-xs font-semibold flex items-center gap-1.5">
                         <Antigravity className="h-4 w-4 shrink-0" />
                         Antigravity Configuration
                       </h4>
-                      <div className="flex flex-col gap-1 mt-1">
+                      
+                      <div className="flex flex-col gap-2 mt-1">
+                        <p className="text-[10px] text-muted-foreground">
+                          Authenticate with your Google account to automatically retrieve your Antigravity usage limits.
+                        </p>
+                        <button
+                          onClick={() => {
+                            const redirectUri = encodeURIComponent(window.location.protocol + '//' + window.location.host + '/api/quotas/oauth2callback')
+                            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=${redirectUri}&response_type=code&scope=https://www.googleapis.com/auth/cloud-platform&access_type=offline&prompt=consent`
+                            window.open(authUrl, '_blank')
+                          }}
+                          className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary/95 rounded-md shadow-sm transition-all cursor-pointer"
+                        >
+                          <svg className="h-3.5 w-3.5 mr-0.5 fill-current" viewBox="0 0 24 24">
+                            <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.113-5.136 4.113-3.072 0-5.564-2.492-5.564-5.564s2.492-5.564 5.564-5.564c1.334 0 2.544.475 3.503 1.258l2.906-2.906C18.666 4.168 15.657 3 12.24 3 6.99 3 2.74 7.25 2.74 12.5S6.99 22 12.24 22c5.318 0 9.264-3.738 9.264-9.421 0-.697-.08-1.396-.224-2.294H12.24Z"/>
+                          </svg>
+                          Login with Google
+                        </button>
+                      </div>
+
+                      <div className="relative flex py-1.5 items-center">
+                        <div className="flex-grow border-t border-border/60"></div>
+                        <span className="flex-shrink mx-2 text-[9px] text-muted-foreground uppercase font-semibold">Or Configure Manually</span>
+                        <div className="flex-grow border-t border-border/60"></div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
                         <label className="text-[10px] font-medium text-muted-foreground">Refresh Token / Access Token</label>
                         <input
                           type="password"
