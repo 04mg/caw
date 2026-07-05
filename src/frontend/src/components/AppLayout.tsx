@@ -528,6 +528,7 @@ export function AppLayout() {
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
+          <Shortcut keys="Alt+P" label="Command palette" />
         </div>
       </div>
     </div>
@@ -543,6 +544,7 @@ export function AppLayout() {
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
+          <Shortcut keys="Alt+P" label="Command palette" />
         </div>
       </div>
     </div>
@@ -558,6 +560,7 @@ export function AppLayout() {
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
+          <Shortcut keys="Alt+P" label="Command palette" />
         </div>
       </div>
     </div>
