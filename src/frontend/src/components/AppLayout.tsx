@@ -51,6 +51,7 @@ export function AppLayout() {
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
@@ -497,38 +498,6 @@ export function AppLayout() {
     />
   ) : null
 
-  const tabBar = (
-    <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
-      <div className="flex flex-1 overflow-x-auto h-full">
-        {tabs}
-      </div>
-      <div className="flex items-center shrink-0 h-full">
-        <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={() => setSettingsOpen(true)}
-            title="Settings"
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={toggleFolderSidebar}
-            title="Workspace Files"
-          >
-            <Folder className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-
   const terminalBody = activeTab && activeWorkspace && leafCount > 0 ? (
     <div className="relative flex-1 min-h-0">
       <TerminalGrid
@@ -593,91 +562,116 @@ export function AppLayout() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background select-none">
-      {/* Header row when left sidebar is collapsed */}
-      {sidebarCollapsed && (
-        <div className="flex h-[33px] shrink-0 border-b border-border bg-background">
-          <WorkspacePanel
-            workspaces={workspaces}
-            activeWorkspaceId={activeWorkspaceId}
-            onSelectWorkspace={setActiveWorkspaceId}
-            onAddWorkspace={handleAddWorkspace}
-            onDeleteWorkspace={handleDeleteWorkspace}
-            onEditWorkspace={handleEditWorkspace}
-            onReorderWorkspaces={handleReorderWorkspaces}
-            pickerTrigger={pickerTrigger}
-            collapsed={true}
-            onToggle={toggleSidebar}
-          />
-          <div className="flex-1 min-w-0">{tabBar}</div>
+      <div className="flex-1 min-h-0">
+        <div className="flex h-full w-full">
+          <Group orientation="horizontal" className="flex-1">
+            {/* Left Workspace Panel */}
+            {sidebarCollapsed ? (
+              <WorkspacePanel
+                workspaces={workspaces}
+                activeWorkspaceId={activeWorkspaceId}
+                onSelectWorkspace={setActiveWorkspaceId}
+                onAddWorkspace={handleAddWorkspace}
+                onDeleteWorkspace={handleDeleteWorkspace}
+                onEditWorkspace={handleEditWorkspace}
+                onReorderWorkspaces={handleReorderWorkspaces}
+                pickerTrigger={pickerTrigger}
+                collapsed={true}
+                onToggle={toggleSidebar}
+                pickerOpen={pickerOpen}
+                onPickerOpenChange={setPickerOpen}
+              />
+            ) : (
+              <>
+                <Panel
+                  id="sidebar"
+                  panelRef={sidebarRef}
+                  defaultSize={sidebarDefaultSize}
+                  minSize="15%"
+                  maxSize="50%"
+                  onResize={(size) => {
+                    if (size.asPercentage >= 15) {
+                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
+                    }
+                  }}
+                >
+                  <WorkspacePanel
+                    workspaces={workspaces}
+                    activeWorkspaceId={activeWorkspaceId}
+                    onSelectWorkspace={setActiveWorkspaceId}
+                    onAddWorkspace={handleAddWorkspace}
+                    onDeleteWorkspace={handleDeleteWorkspace}
+                    onEditWorkspace={handleEditWorkspace}
+                    onReorderWorkspaces={handleReorderWorkspaces}
+                    pickerTrigger={pickerTrigger}
+                    collapsed={false}
+                    onToggle={toggleSidebar}
+                    pickerOpen={pickerOpen}
+                    onPickerOpenChange={setPickerOpen}
+                  />
+                </Panel>
+                <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+              </>
+            )}
+
+            {/* Main Terminals / Editors Content */}
+            <Panel>
+              <div className="flex flex-col h-full">
+                <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
+                  <div className="flex flex-1 overflow-x-auto h-full">
+                    {tabs}
+                  </div>
+                  <div className="flex items-center shrink-0 h-full">
+                    <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => setSettingsOpen(true)}
+                        title="Settings"
+                      >
+                        <Settings className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={toggleFolderSidebar}
+                        title="Workspace Files"
+                      >
+                        <Folder className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                {terminalBody}
+              </div>
+            </Panel>
+
+            {/* Right Folder Explorer Panel (only if expanded) */}
+            {!folderSidebarCollapsed && (
+              <>
+                <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                <Panel
+                  id="folder-sidebar"
+                  defaultSize="20%"
+                  minSize="15%"
+                  maxSize="50%"
+                >
+                  <FolderSidebar
+                    workspacePath={activeWorkspace?.path || ''}
+                    onOpenFile={openFile}
+                    onOpenDiff={() => openDiff()}
+                    gitStatuses={gitStatuses}
+                    onRefresh={fetchGitStatus}
+                  />
+                </Panel>
+              </>
+            )}
+          </Group>
         </div>
-      )}
-
-      {/* Tab bar when sidebar is expanded */}
-      {!sidebarCollapsed && tabBar}
-
-      {/* Main Resizable Body */}
-      <div className="flex-1 min-h-0 relative">
-        <Group orientation="horizontal" className="h-full w-full">
-          {/* Left Workspace Panel (only if expanded) */}
-          {!sidebarCollapsed && (
-            <>
-              <Panel
-                id="sidebar"
-                panelRef={sidebarRef}
-                defaultSize={sidebarDefaultSize}
-                minSize="15%"
-                maxSize="50%"
-                onResize={(size) => {
-                  if (size.asPercentage >= 15) {
-                    localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                  }
-                }}
-              >
-                <WorkspacePanel
-                  workspaces={workspaces}
-                  activeWorkspaceId={activeWorkspaceId}
-                  onSelectWorkspace={setActiveWorkspaceId}
-                  onAddWorkspace={handleAddWorkspace}
-                  onDeleteWorkspace={handleDeleteWorkspace}
-                  onEditWorkspace={handleEditWorkspace}
-                  onReorderWorkspaces={handleReorderWorkspaces}
-                  pickerTrigger={pickerTrigger}
-                  collapsed={false}
-                  onToggle={toggleSidebar}
-                />
-              </Panel>
-              <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-            </>
-          )}
-
-          {/* Main Terminals / Editors Content */}
-          <Panel>
-            <div className="flex h-full flex-col">
-              {terminalBody}
-            </div>
-          </Panel>
-
-          {/* Right Folder Explorer Panel (only if expanded) */}
-          {!folderSidebarCollapsed && (
-            <>
-              <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-              <Panel
-                id="folder-sidebar"
-                defaultSize="20%"
-                minSize="15%"
-                maxSize="50%"
-              >
-                <FolderSidebar
-                  workspacePath={activeWorkspace?.path || ''}
-                  onOpenFile={openFile}
-                  onOpenDiff={() => openDiff()}
-                  gitStatuses={gitStatuses}
-                  onRefresh={fetchGitStatus}
-                />
-              </Panel>
-            </>
-          )}
-        </Group>
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

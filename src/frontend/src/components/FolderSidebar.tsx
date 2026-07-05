@@ -15,6 +15,7 @@ interface FolderSidebarProps {
   onOpenDiff: () => void
   gitStatuses: Record<string, string>
   onRefresh: () => void
+  noHeader?: boolean
 }
 
 export function FolderSidebar({
@@ -23,6 +24,7 @@ export function FolderSidebar({
   onOpenDiff,
   gitStatuses,
   onRefresh,
+  noHeader,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
 
@@ -37,7 +39,8 @@ export function FolderSidebar({
   return (
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
       {/* Sidebar Header */}
-      <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0">
+      {!noHeader && (
+      <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
         <span className="flex-1 text-xs font-medium text-muted-foreground truncate">
           Explorer
         </span>
@@ -52,6 +55,7 @@ export function FolderSidebar({
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
+      )}
 
       {/* Git Diff Bar */}
       {isGitRepo && (
