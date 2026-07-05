@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, Loader2,
-  GitBranch, RefreshCw, FileCode, Pencil, Trash2, Copy,
+  RefreshCw, FileCode, Pencil, Trash2, Copy,
   ClipboardPaste, FolderPlus, MoreVertical
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -23,7 +23,6 @@ interface FileNode {
 interface FolderSidebarProps {
   workspacePath: string
   onOpenFile: (path: string) => void
-  onOpenDiff: () => void
   gitStatuses: Record<string, string>
   onRefresh: () => void
   noHeader?: boolean
@@ -32,7 +31,6 @@ interface FolderSidebarProps {
 export function FolderSidebar({
   workspacePath,
   onOpenFile,
-  onOpenDiff,
   gitStatuses,
   onRefresh,
   noHeader,
@@ -40,7 +38,7 @@ export function FolderSidebar({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
-    x: number; y: number; path: string; name: string; isDir: boolean
+    x: number; y: number; path: string; name: string; isDir: boolean; isRoot?: boolean
   } | null>(null)
   const [clipboard, setClipboard] = useState<{ path: string } | null>(null)
   const [editingPath, setEditingPath] = useState<string | null>(null)
@@ -190,7 +188,11 @@ export function FolderSidebar({
     setContextMenu({ x, y, path, name, isDir })
   }, [])
 
-  const isGitRepo = Object.keys(gitStatuses).length > 0
+  // Poll for file changes every 3s while the component is mounted (visible)
+  useEffect(() => {
+    const interval = setInterval(() => triggerRefresh(), 3000)
+    return () => clearInterval(interval)
+  }, [triggerRefresh])
 
   return (
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
@@ -212,27 +214,13 @@ export function FolderSidebar({
       </div>
       )}
 
-      {isGitRepo && (
-        <div className="p-2 border-b border-border bg-muted/10 shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onOpenDiff}
-            className="w-full h-7 text-xs flex items-center justify-center gap-1.5 border-dashed border-primary/40 hover:border-primary/80 transition-colors"
-          >
-            <GitBranch className="h-3.5 w-3.5 text-primary" />
-            See Git Diff
-          </Button>
-        </div>
-      )}
-
       <ScrollArea
         className="relative flex-1"
         onContextMenu={(e) => {
           if (!workspacePath) return
           e.preventDefault()
           const rootName = workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath
-          setContextMenu({ x: e.clientX, y: e.clientY, path: workspacePath, name: rootName, isDir: true })
+          setContextMenu({ x: e.clientX, y: e.clientY, path: workspacePath, name: rootName, isDir: true, isRoot: true })
         }}
         onDragOver={(e) => {
           if (workspacePath) handleDragOver(e, workspacePath)
@@ -286,11 +274,7 @@ export function FolderSidebar({
       </ScrollArea>
 
       {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
+        <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           {contextMenu.isDir && (
             <>
               <button
@@ -310,20 +294,24 @@ export function FolderSidebar({
               <div className="border-t border-border my-0.5" />
             </>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            Rename
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleCopy(contextMenu.path) }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-          >
-            <Copy className="h-3.5 w-3.5" />
-            Copy
-          </button>
+          {!contextMenu.isRoot && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                Rename
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleCopy(contextMenu.path) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </button>
+            </>
+          )}
           {clipboard && contextMenu.isDir && (
             <button
               onClick={(e) => { e.stopPropagation(); handlePaste(contextMenu.path) }}
@@ -333,15 +321,19 @@ export function FolderSidebar({
               Paste
             </button>
           )}
-          <div className="border-t border-border my-0.5" />
-          <button
-            onClick={() => { setContextMenu(null); setDeleteTarget({ path: contextMenu.path, name: contextMenu.name, isDir: contextMenu.isDir }) }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </button>
-        </div>
+          {!contextMenu.isRoot && (
+            <>
+              <div className="border-t border-border my-0.5" />
+              <button
+                onClick={() => { setContextMenu(null); setDeleteTarget({ path: contextMenu.path, name: contextMenu.name, isDir: contextMenu.isDir }) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </>
+          )}
+        </SmartContextMenu>
       )}
 
       <DeleteDialog
@@ -352,6 +344,41 @@ export function FolderSidebar({
     </div>
   )
 }
+
+const SmartContextMenu = React.forwardRef<HTMLDivElement, { x: number; y: number; children: React.ReactNode }>(({ x, y, children }, ref) => {
+  const [pos, setPos] = useState({ left: x, top: y })
+
+  useLayoutEffect(() => {
+    const el = (ref as React.RefObject<HTMLDivElement | null>).current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const winW = window.innerWidth
+    const winH = window.innerHeight
+    let left = x
+    let top = y
+
+    if (x + rect.width > winW - 4) {
+      left = x - rect.width
+    }
+    if (top + rect.height > winH - 4) {
+      top = y - rect.height
+    }
+    if (left < 4) left = 4
+    if (top < 4) top = 4
+
+    setPos({ left, top })
+  }, [x, y, ref])
+
+  return (
+    <div
+      ref={ref as React.Ref<HTMLDivElement>}
+      className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5"
+      style={{ left: pos.left, top: pos.top }}
+    >
+      {children}
+    </div>
+  )
+})
 
 function DeleteDialog({
   target,
