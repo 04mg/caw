@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun } from 'lucide-react'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
@@ -214,19 +215,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-medium">Font Size</label>
                   <div className="flex items-center gap-3">
-                    <input
-                      type="range"
+                    <Slider
                       min={8}
                       max={32}
                       step={1}
-                      value={fontSize}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10)
-                        setFontSize(val)
-                        localStorage.setItem('caw:terminalFontSize', String(val))
-                        setAllTerminalFontSizes(val)
+                      value={[fontSize]}
+                      onValueChange={(val) => {
+                        const nextVal = val[0]
+                        setFontSize(nextVal)
+                        localStorage.setItem('caw:terminalFontSize', String(nextVal))
+                        setAllTerminalFontSizes(nextVal)
                       }}
-                      className="flex-1 accent-foreground"
+                      className="flex-1"
                     />
                     <span className="text-xs font-mono text-muted-foreground w-8 text-right tabular-nums">{fontSize}</span>
                   </div>
