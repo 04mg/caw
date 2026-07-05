@@ -2,11 +2,19 @@ package providers
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/04mg/caw/internal/quota"
 )
@@ -22,6 +30,32 @@ type GoogleAvailableModelsResponse struct {
 	Models map[string]GoogleModelQuota `json:"models"`
 }
 
+type QuotaSummaryBucket struct {
+	BucketID          string   `json:"bucketId"`
+	DisplayName       string   `json:"displayName"`
+	RemainingFraction *float64 `json:"remainingFraction"`
+	ResetTime         string   `json:"resetTime"`
+	ResetDescription  string   `json:"resetDescription"`
+	Disabled          bool     `json:"disabled"`
+}
+
+type QuotaSummaryGroup struct {
+	DisplayName string               `json:"displayName"`
+	Description string               `json:"description"`
+	Buckets     []QuotaSummaryBucket `json:"buckets"`
+}
+
+type QuotaSummary struct {
+	Description string               `json:"description"`
+	Groups      []QuotaSummaryGroup  `json:"groups"`
+}
+
+type QuotaSummaryResponse struct {
+	Code         interface{}   `json:"code"`
+	Message      string        `json:"message"`
+	QuotaSummary *QuotaSummary `json:"quotaSummary"`
+}
+
 type AntigravityProvider struct{}
 
 func init() {
@@ -29,50 +63,367 @@ func init() {
 }
 
 func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
+	// 1. Try to find an already running agy process and probe it
+	pids, err := findAgyPids()
+	if err == nil && len(pids) > 0 {
+		ports, err := findPortsForPids(pids)
+		if err == nil && len(ports) > 0 {
+			if res, err := queryAgyPorts(ports); err == nil {
+				return res, nil
+			}
+		}
+	}
+
+	// 2. If no running process was found or probe failed, try starting a temporary one-shot agy process
+	if res, err := fetchQuotaFromNewAgyInstance(); err == nil {
+		return res, nil
+	}
+
+	// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
 	token := config["apiKey"]
-	if token == "" {
-		return nil, fmt.Errorf("API key / Token is required")
+	if token != "" {
+		accessToken, err := getAccessToken(token)
+		if err != nil {
+			return nil, fmt.Errorf("auth error: %w", err)
+		}
+
+		modelsResponse, err := fetchAvailableModels(accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("api error: %w", err)
+		}
+
+		fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3-pro-high", "gemini-3-pro-low")
+		if err != nil {
+			return nil, err
+		}
+
+		weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-5-thinking", "claude-opus-4-5")
+		if err != nil {
+			return nil, err
+		}
+
+		monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3-pro-image")
+		if err != nil {
+			return nil, err
+		}
+
+		return &quota.QuotaResponse{
+			FiveHour: fiveHourQuota,
+			Weekly:   weeklyQuota,
+			Monthly:  monthlyQuota,
+		}, nil
 	}
 
-	accessToken, err := getAccessToken(token)
+	return nil, fmt.Errorf("could not resolve Antigravity limits locally via agy CLI (ensure agy is logged in) and no manual token fallback is configured")
+}
+
+func findAgyPids() ([]int, error) {
+	var pids []int
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("tasklist", "/nh", "/fo", "csv")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return nil, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		for _, line := range lines {
+			if strings.Contains(strings.ToLower(line), "agy.exe") {
+				parts := strings.Split(line, ",")
+				if len(parts) >= 2 {
+					pidStr := strings.Trim(parts[1], "\" \r\n")
+					if pid, err := strconv.Atoi(pidStr); err == nil {
+						pids = append(pids, pid)
+					}
+				}
+			}
+		}
+	} else {
+		cmd := exec.Command("ps", "-ax", "-o", "pid=", "-o", "comm=")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return nil, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				pidStr := fields[0]
+				comm := fields[1]
+				if strings.Contains(strings.ToLower(comm), "agy") {
+					if pid, err := strconv.Atoi(pidStr); err == nil {
+						pids = append(pids, pid)
+					}
+				}
+			}
+		}
+	}
+	return pids, nil
+}
+
+func findPortsForPids(pids []int) ([]int, error) {
+	if len(pids) == 0 {
+		return nil, nil
+	}
+	var ports []int
+
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("netstat", "-ano")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return nil, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 5 && fields[0] == "TCP" && fields[3] == "LISTENING" {
+				pidStr := fields[4]
+				for _, pid := range pids {
+					if pidStr == strconv.Itoa(pid) {
+						addr := fields[1]
+						idx := strings.LastIndex(addr, ":")
+						if idx != -1 {
+							portStr := addr[idx+1:]
+							if port, err := strconv.Atoi(portStr); err == nil {
+								ports = append(ports, port)
+							}
+						}
+					}
+				}
+			}
+		}
+	} else {
+		for _, pid := range pids {
+			cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", strconv.Itoa(pid))
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			if err := cmd.Run(); err == nil {
+				lines := strings.Split(out.String(), "\n")
+				for _, line := range lines {
+					if strings.Contains(line, "(LISTEN)") {
+						fields := strings.Fields(line)
+						if len(fields) >= 9 {
+							name := fields[8]
+							idx := strings.LastIndex(name, ":")
+							if idx != -1 {
+								portStr := name[idx+1:]
+								if port, err := strconv.Atoi(portStr); err == nil {
+									ports = append(ports, port)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	portMap := make(map[int]bool)
+	var deduped []int
+	for _, port := range ports {
+		if !portMap[port] {
+			portMap[port] = true
+			deduped = append(deduped, port)
+		}
+	}
+	return deduped, nil
+}
+
+func findAgyPath() (string, error) {
+	if path := os.Getenv("ANTIGRAVITY_CLI_PATH"); path != "" {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	if path, err := exec.LookPath("agy"); err == nil {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("auth error: %w", err)
+		return "", err
 	}
 
-	modelsResponse, err := fetchAvailableModels(accessToken)
-	if err != nil {
-		return nil, fmt.Errorf("api error: %w", err)
+	var paths []string
+	if runtime.GOOS == "windows" {
+		paths = []string{
+			filepath.Join(home, "AppData", "Local", "agy", "bin", "agy.exe"),
+			filepath.Join(home, ".local", "bin", "agy.exe"),
+		}
+	} else {
+		paths = []string{
+			filepath.Join(home, ".local", "bin", "agy"),
+			"/opt/homebrew/bin/agy",
+			"/usr/local/bin/agy",
+			filepath.Join(home, "bin", "agy"),
+		}
 	}
 
-	fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3-pro-high", "gemini-3-pro-low")
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("agy binary not found")
+}
+
+func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
+	agyPath, err := findAgyPath()
 	if err != nil {
 		return nil, err
 	}
 
-	weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-5-thinking", "claude-opus-4-5")
+	cmd := exec.Command(agyPath)
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
 
-	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3-pro-image")
-	if err != nil {
+	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
-	return &quota.QuotaResponse{
-		FiveHour: fiveHourQuota,
-		Weekly:   weeklyQuota,
-		Monthly:  monthlyQuota,
-	}, nil
+	defer func() {
+		stdin.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	var ports []int
+	for i := 0; i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		pids := []int{cmd.Process.Pid}
+		ports, err = findPortsForPids(pids)
+		if err == nil && len(ports) > 0 {
+			break
+		}
+	}
+
+	if len(ports) == 0 {
+		return nil, fmt.Errorf("timeout waiting for agy process to listen on ports")
+	}
+
+	return queryAgyPorts(ports)
+}
+
+func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   2 * time.Second,
+	}
+
+	var lastErr error
+	for _, port := range ports {
+		schemes := []string{"https", "http"}
+		for _, scheme := range schemes {
+			urlStr := fmt.Sprintf("%s://127.0.0.1:%d/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary", scheme, port)
+			
+			req, err := http.NewRequest("POST", urlStr, strings.NewReader("{}"))
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Connect-Protocol-Version", "1")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+				continue
+			}
+
+			var qResp QuotaSummaryResponse
+			if err := json.NewDecoder(resp.Body).Decode(&qResp); err != nil {
+				lastErr = err
+				continue
+			}
+
+			if qResp.QuotaSummary == nil {
+				lastErr = fmt.Errorf("quotaSummary missing in response")
+				continue
+			}
+
+			return mapQuotaSummaryToResponse(qResp.QuotaSummary), nil
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("failed to query quota from ports %v", ports)
+}
+
+func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
+	res := &quota.QuotaResponse{
+		FiveHour: quota.Quota{Used: 0, Limit: 100},
+		Weekly:   quota.Quota{Used: 0, Limit: 100},
+		Monthly:  quota.Quota{Used: 0, Limit: 100},
+	}
+
+	for _, group := range qs.Groups {
+		groupName := strings.ToLower(group.DisplayName)
+		for _, bucket := range group.Buckets {
+			if bucket.Disabled {
+				continue
+			}
+			bucketID := strings.ToLower(bucket.BucketID)
+			bucketName := strings.ToLower(bucket.DisplayName)
+			combined := bucketID + " " + bucketName
+
+			fraction := 1.0
+			if bucket.RemainingFraction != nil {
+				fraction = *bucket.RemainingFraction
+			}
+			used := 100 - int(fraction*100)
+			if used < 0 {
+				used = 0
+			}
+			if used > 100 {
+				used = 100
+			}
+
+			is5h := strings.Contains(combined, "5h") || strings.Contains(combined, "5-hour") || strings.Contains(combined, "five hour")
+			isWeekly := strings.Contains(combined, "weekly")
+
+			if strings.Contains(groupName, "gemini") {
+				if is5h {
+					res.FiveHour = quota.Quota{Used: used, Limit: 100}
+				} else if isWeekly {
+					res.Monthly = quota.Quota{Used: used, Limit: 100}
+				}
+			} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
+				if isWeekly {
+					res.Weekly = quota.Quota{Used: used, Limit: 100}
+				}
+			}
+		}
+	}
+	return res
 }
 
 func getAccessToken(token string) (string, error) {
-	// If it starts with ya29., it is already an access token
 	if len(token) > 5 && token[:5] == "ya29." {
 		return token, nil
 	}
 
-	// Exchange refresh token for access token using standard client credentials
 	data := url.Values{}
 	data.Set("client_id", "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com")
 	data.Set("client_secret", "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")
@@ -147,7 +498,6 @@ func getModelQuota(modelsResponse *GoogleAvailableModelsResponse, keys ...string
 			if m.QuotaInfo != nil && m.QuotaInfo.RemainingFraction != nil {
 				fraction = *m.QuotaInfo.RemainingFraction
 			}
-			// Map remaining fraction to used percentage
 			used := 100 - int(fraction*100)
 			if used < 0 {
 				used = 0

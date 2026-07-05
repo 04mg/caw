@@ -39,17 +39,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }, [])
 
-  // Auto re-fetch on focus to catch Google Login redirections automatically
-  useEffect(() => {
-    const handleFocus = () => {
-      if (open && activeSection === 'limits') {
-        loadQuotaSettings()
-      }
-    }
-    window.addEventListener('focus', handleFocus)
-    return () => window.removeEventListener('focus', handleFocus)
-  }, [open, activeSection, loadQuotaSettings])
-
   // Load settings on open
   useEffect(() => {
     if (open) {
@@ -341,8 +330,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <label className="text-xs font-semibold text-muted-foreground select-none">1. Select Provider</label>
                 <div className="grid grid-cols-2 gap-3 mt-0.5">
                   {[
-                    { id: 'antigravity', label: 'Antigravity', icon: Antigravity, description: 'Google Antigravity usage limits' },
-                    { id: 'opencode', label: 'OpenCode', icon: OpenCode, description: 'OpenCode Go usage limits' }
+                    { id: 'antigravity', label: 'Antigravity', icon: Antigravity },
+                    { id: 'opencode', label: 'OpenCode', icon: OpenCode }
                   ].map((prov) => {
                     const isSelected = selectedLimitProvider === prov.id
                     const Icon = prov.icon
@@ -362,7 +351,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         </div>
                         <div className="text-left">
                           <p className="text-xs font-semibold text-foreground">{prov.label}</p>
-                          <p className="text-[10px] text-muted-foreground/80">{prov.description}</p>
                         </div>
                       </div>
                     )
@@ -375,39 +363,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <label className="text-xs font-semibold text-muted-foreground select-none mb-1.5">2. Configure Credentials</label>
                 <div className="flex-1 overflow-y-auto pr-1">
                   {selectedLimitProvider === 'antigravity' && (
-                    <div className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-secondary/10 shrink-0">
                       <h4 className="text-xs font-semibold flex items-center gap-1.5">
                         <Antigravity className="h-4 w-4 shrink-0" />
                         Antigravity Configuration
                       </h4>
                       
-                      <div className="flex flex-col gap-2 mt-1">
-                        <p className="text-[10px] text-muted-foreground">
-                          Authenticate with your Google account to automatically retrieve your Antigravity usage limits.
+                      <div className="flex flex-col gap-1.5 mt-1">
+                        <p className="text-[10px] text-muted-foreground leading-normal">
+                          Usage limits are automatically resolved from your local <code>agy</code> CLI process. Optionally configure a Google OAuth Refresh Token as a manual fallback.
                         </p>
-                        <button
-                          onClick={() => {
-                            const redirectUri = encodeURIComponent(window.location.protocol + '//' + window.location.host + '/api/quotas/oauth2callback')
-                            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=${redirectUri}&response_type=code&scope=https://www.googleapis.com/auth/cloud-platform&access_type=offline&prompt=consent`
-                            window.open(authUrl, '_blank')
-                          }}
-                          className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary/95 rounded-md shadow-sm transition-all cursor-pointer"
-                        >
-                          <svg className="h-3.5 w-3.5 mr-0.5 fill-current" viewBox="0 0 24 24">
-                            <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.113-5.136 4.113-3.072 0-5.564-2.492-5.564-5.564s2.492-5.564 5.564-5.564c1.334 0 2.544.475 3.503 1.258l2.906-2.906C18.666 4.168 15.657 3 12.24 3 6.99 3 2.74 7.25 2.74 12.5S6.99 22 12.24 22c5.318 0 9.264-3.738 9.264-9.421 0-.697-.08-1.396-.224-2.294H12.24Z"/>
-                          </svg>
-                          Login with Google
-                        </button>
-                      </div>
-
-                      <div className="relative flex py-1.5 items-center">
-                        <div className="flex-grow border-t border-border/60"></div>
-                        <span className="flex-shrink mx-2 text-[9px] text-muted-foreground uppercase font-semibold">Or Configure Manually</span>
-                        <div className="flex-grow border-t border-border/60"></div>
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-medium text-muted-foreground">Refresh Token / Access Token</label>
+                        <label className="text-[10px] font-medium text-muted-foreground mt-1">Refresh Token / Access Token (Optional)</label>
                         <input
                           type="password"
                           value={antigravityKey}
