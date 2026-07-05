@@ -112,7 +112,7 @@ export function CommandPalette({
     for (const agent of agents) {
       result.push({
         id: `agent-${agent.id}`,
-        label: `New Agent: ${agent.label}`,
+        label: `Run ${agent.label}`,
         type: 'command',
         icon: <Bot className="h-4 w-4" />,
         action: () => { onAddAgent(agent.cmd, agent.id, agent.label); onOpenChange(false) },
@@ -188,7 +188,7 @@ export function CommandPalette({
           />
         </div>
 
-        <div className="max-h-[50vh] overflow-y-auto py-1">
+        <div className="max-h-[50vh] overflow-y-auto">
           {searching && (
             <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
