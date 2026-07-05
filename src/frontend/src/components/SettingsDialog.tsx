@@ -1,19 +1,22 @@
 import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Monitor, Bot, Check, Moon, Sun } from 'lucide-react'
+import { Monitor, Bot, Terminal, Check, Moon, Sun } from 'lucide-react'
 import { agentTypes } from '@/lib/agentTypes'
+import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-type Section = 'appearance' | 'agents'
+type Section = 'appearance' | 'agents' | 'terminal'
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
+  const [fontSize, setFontSize] = useState(13)
+  const [shellPath, setShellPath] = useState('')
 
   // Load settings on open
   useEffect(() => {
@@ -31,6 +34,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       } else {
         setDisabledAgents([])
       }
+
+      const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
+      setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
+
+      setShellPath(localStorage.getItem('caw:defaultShell') || '')
     }
   }, [open])
 
@@ -92,6 +100,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           >
             <Bot className="h-3.5 w-3.5" />
             Agents
+          </button>
+          <button
+            onClick={() => setActiveSection('terminal')}
+            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              activeSection === 'terminal'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+            }`}
+          >
+            <Terminal className="h-3.5 w-3.5" />
+            Terminal
           </button>
         </div>
 
@@ -180,6 +199,66 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       </div>
                     )
                   })}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'terminal' && (
+            <div className="flex flex-col h-full gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Terminal</h3>
+                <p className="text-xs text-muted-foreground">Configure terminal appearance and default shell.</p>
+              </div>
+
+              <div className="flex flex-col gap-5 mt-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Font Size</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={8}
+                      max={32}
+                      step={1}
+                      value={fontSize}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10)
+                        setFontSize(val)
+                        localStorage.setItem('caw:terminalFontSize', String(val))
+                        setAllTerminalFontSizes(val)
+                      }}
+                      className="flex-1 accent-foreground"
+                    />
+                    <span className="text-xs font-mono text-muted-foreground w-8 text-right tabular-nums">{fontSize}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Default Shell</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={shellPath}
+                      onChange={(e) => {
+                        setShellPath(e.target.value)
+                        localStorage.setItem('caw:defaultShell', e.target.value)
+                      }}
+                      placeholder="Auto (system default)"
+                      className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
+                    />
+                    {shellPath && (
+                      <button
+                        onClick={() => {
+                          setShellPath('')
+                          localStorage.removeItem('caw:defaultShell')
+                        }}
+                        className="px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
+                </div>
               </div>
             </div>
           )}

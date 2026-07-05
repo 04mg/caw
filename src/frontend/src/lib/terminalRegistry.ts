@@ -19,6 +19,10 @@ function notify() {
 }
 
 async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promise<string> {
+  if (!cmd || cmd.length === 0) {
+    const customShell = localStorage.getItem('caw:defaultShell')
+    if (customShell) cmd = [customShell]
+  }
   const res = await fetch('/api/terminal/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -29,9 +33,11 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promi
 }
 
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
+  const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
+  const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: 13,
+    fontSize,
     fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace",
     theme: {
       background: '#0a0a0a',
@@ -140,6 +146,12 @@ export async function attachTerminal(
 
   notify()
   return inst
+}
+
+export function setAllTerminalFontSizes(size: number) {
+  for (const inst of registry.values()) {
+    inst.term.options.fontSize = size
+  }
 }
 
 export function destroyTerminal(leafId: string) {
