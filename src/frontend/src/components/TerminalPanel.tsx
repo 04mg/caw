@@ -35,6 +35,13 @@ export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
       } catch { /* ignore */ }
     }
 
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        flushResize()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     ;(async () => {
       inst = await attachTerminal(terminalId, el, cwd, cmd)
       if (cancelled) return
@@ -49,6 +56,7 @@ export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
 
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', onVisibility)
       if (fitTimerRef.current) {
         clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
