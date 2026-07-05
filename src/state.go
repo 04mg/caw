@@ -9,12 +9,14 @@ import (
 )
 
 type LayoutNode struct {
-	Type        string      `json:"type"`
-	ID          string      `json:"id,omitempty"`
-	Cwd         string      `json:"cwd,omitempty"`
-	Orientation string      `json:"orientation,omitempty"`
+	Type        string       `json:"type"`
+	ID          string       `json:"id,omitempty"`
+	Cwd         string       `json:"cwd,omitempty"`
+	Cmd         []string     `json:"cmd,omitempty"`
+	AgentID     string       `json:"agentId,omitempty"`
+	Orientation string       `json:"orientation,omitempty"`
 	Children    []LayoutNode `json:"children,omitempty"`
-	Sizes       []float64   `json:"sizes,omitempty"`
+	Sizes       []float64    `json:"sizes,omitempty"`
 }
 
 type TabLayout struct {

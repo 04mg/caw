@@ -4,9 +4,10 @@ import { attachTerminal, detachTerminal, type TerminalInstance } from '@/lib/ter
 interface TerminalPanelProps {
   terminalId: string
   cwd: string
+  cmd?: string[]
 }
 
-export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ terminalId, cwd, cmd }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -35,7 +36,7 @@ export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
     }
 
     ;(async () => {
-      inst = await attachTerminal(terminalId, el, cwd)
+      inst = await attachTerminal(terminalId, el, cwd, cmd)
       if (cancelled) return
 
       const ro = new ResizeObserver(() => {
@@ -56,7 +57,7 @@ export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
       resizeObsRef.current = null
       detachTerminal(terminalId)
     }
-  }, [terminalId, cwd])
+  }, [terminalId, cwd, cmd])
 
   return (
     <div className="relative h-full w-full overflow-hidden">

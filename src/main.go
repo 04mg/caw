@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -62,6 +63,7 @@ func main() {
 	mux.HandleFunc("/ws/terminal/", handleTerminalWS)
 	mux.HandleFunc("/api/workspaces", handleWorkspaces)
 	mux.HandleFunc("/ws/state", handleStateWS)
+	mux.HandleFunc("/api/agents/available", handleAgentsAvailable)
 	mux.Handle("/", http.FileServer(http.FS(distFS)))
 
 	addr := ":" + port
@@ -150,8 +152,9 @@ func buildTree(dir string, depth int) (FileNode, error) {
 }
 
 type CreateTerminalRequest struct {
-	Cwd string `json:"cwd"`
-	ID  string `json:"id"`
+	Cwd string   `json:"cwd"`
+	ID  string   `json:"id"`
+	Cmd []string `json:"cmd,omitempty"`
 }
 
 func handleTerminalCreate(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +187,7 @@ func handleTerminalCreate(w http.ResponseWriter, r *http.Request) {
 		id = uuid.New().String()
 	}
 
-	ps, err := startPty(cwd)
+	ps, err := startPty(cwd, req.Cmd)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -410,5 +413,26 @@ func readAll(r *http.Request) ([]byte, error) {
 		}
 	}
 	return buf, nil
+}
+
+type AgentInfo struct {
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Cmd   []string `json:"cmd"`
+}
+
+func handleAgentsAvailable(w http.ResponseWriter, r *http.Request) {
+	agentsList := []AgentInfo{
+		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode"}},
+		{ID: "agy", Label: "agy", Cmd: []string{"agy"}},
+		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
+	}
+	available := []AgentInfo{}
+	for _, a := range agentsList {
+		if _, err := exec.LookPath(a.Cmd[0]); err == nil {
+			available = append(available, a)
+		}
+	}
+	writeJSON(w, available)
 }
 

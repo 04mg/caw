@@ -44,7 +44,7 @@ export function TerminalGrid({
         onClick={() => onFocus(node.id)}
         onPointerDown={() => onFocus(node.id)}
       >
-        <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} />
+        <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} />
 
         <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
           <button
