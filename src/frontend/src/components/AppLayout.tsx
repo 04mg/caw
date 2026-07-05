@@ -26,6 +26,7 @@ import { Settings, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { CommandPalette } from '@/components/CommandPalette'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -52,6 +53,7 @@ export function AppLayout() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
@@ -473,6 +475,7 @@ export function AppLayout() {
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
     'Alt+C': () => { if (activePaneId) handleClosePane(activePaneId) },
+    'Alt+P': () => setCommandPaletteOpen(true),
   })
 
   if (!loaded) {
@@ -672,6 +675,16 @@ export function AppLayout() {
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        workspacePath={activeWorkspace?.path || ''}
+        onOpenFile={openFile}
+        onAddTerminal={addTab}
+        onAddAgent={(cmd, agentId, label) => addTab(cmd, agentId, label)}
+        onOpenWorkspacePicker={() => setPickerOpen(true)}
+      />
     </div>
   )
 }
