@@ -369,7 +369,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         Antigravity Configuration
                       </h4>
                       <div className="flex flex-col gap-1 mt-1">
-                        <label className="text-[10px] font-medium text-muted-foreground">API Key</label>
+                        <label className="text-[10px] font-medium text-muted-foreground">Refresh Token / Access Token</label>
                         <input
                           type="password"
                           value={antigravityKey}
@@ -378,7 +378,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                             setAntigravityKey(val)
                             saveSettings(val, opencodeCookie, opencodeWorkspace)
                           }}
-                          placeholder="Enter Antigravity API key..."
+                          placeholder="Enter Antigravity refresh token or access token..."
                           className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors animate-none"
                         />
                       </div>
