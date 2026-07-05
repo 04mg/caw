@@ -45,6 +45,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
     cursorBlink: true,
     fontSize,
     fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace",
+    scrollback: 10000,
     theme: {
       background: '#0a0a0a',
       foreground: '#f0f0f0',
@@ -104,7 +105,9 @@ function connectWs(inst: TerminalInstance, backendId: string) {
     try {
       const msg = JSON.parse(event.data)
       if (msg.type === 'output') {
-        inst.term.write(msg.data)
+        inst.term.write(msg.data, () => {
+          inst.term.scrollToBottom()
+        })
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
       } else if (msg.type === 'exit') {
@@ -140,11 +143,14 @@ export async function attachTerminal(
     existing.term = term
     existing.fit = fit
     term.open(el)
+    // Fit first so the terminal dimensions are correct before writing.
+    fit.fit()
     // Replay buffered output so the terminal isn't blank after re-attach.
     if (existing.buffer.length > 0) {
-      term.write(existing.buffer.join(''))
+      term.write(existing.buffer.join(''), () => {
+        term.scrollToBottom()
+      })
     }
-    fit.fit()
 
     // Re-wire input handlers since the old term was disposed.
     wireInput(existing)
