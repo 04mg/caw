@@ -47,7 +47,7 @@ export function WorkspaceMenu({ onDelete, onEdit }: WorkspaceMenuProps) {
               setOpen(false)
               onDelete()
             }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-destructive-foreground hover:bg-destructive/80"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete workspace

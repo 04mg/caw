@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string; filePath?: string; isDiff?: boolean }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 

@@ -17,6 +17,8 @@ type LayoutNode struct {
 	Orientation string       `json:"orientation,omitempty"`
 	Children    []LayoutNode `json:"children,omitempty"`
 	Sizes       []float64    `json:"sizes,omitempty"`
+	FilePath    string       `json:"filePath,omitempty"`
+	IsDiff      bool         `json:"isDiff,omitempty"`
 }
 
 type TabLayout struct {
