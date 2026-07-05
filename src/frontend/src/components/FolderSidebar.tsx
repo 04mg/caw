@@ -38,6 +38,7 @@ export function FolderSidebar({
   noHeader,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; path: string; name: string; isDir: boolean
   } | null>(null)
@@ -64,6 +65,10 @@ export function FolderSidebar({
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
 
+  const triggerRefresh = useCallback(() => {
+    setRefreshCounter((c) => c + 1)
+  }, [])
+
   const handleRefresh = async () => {
     setLoading(true)
     await onRefresh()
@@ -71,11 +76,8 @@ export function FolderSidebar({
     setLoading(false)
   }
 
-  const triggerRefresh = useCallback(() => {
-    setRefreshCounter((c) => c + 1)
-  }, [])
-
   const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+    setBusy(true)
     const sep = oldPath.includes('\\') ? '\\' : '/'
     const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
     const newPath = parentDir + sep + newName
@@ -91,9 +93,11 @@ export function FolderSidebar({
         onRefresh()
       }
     } catch { /* ignore */ }
+    setBusy(false)
   }, [triggerRefresh, onRefresh])
 
   const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
+    setBusy(true)
     const sep = parentPath.includes('\\') ? '\\' : '/'
     const newPath = parentPath + sep + name
     setCreateTarget(null)
@@ -106,12 +110,14 @@ export function FolderSidebar({
     } catch { /* ignore */ }
     triggerRefresh()
     onRefresh()
+    setBusy(false)
   }, [triggerRefresh, onRefresh])
 
   const handleDeleteConfirm = useCallback(async () => {
     const target = deleteTarget
     if (!target) return
     setDeleteTarget(null)
+    setBusy(true)
     try {
       await fetch('/api/workspace/file/delete', {
         method: 'POST',
@@ -121,6 +127,7 @@ export function FolderSidebar({
     } catch { /* ignore */ }
     triggerRefresh()
     onRefresh()
+    setBusy(false)
   }, [deleteTarget, triggerRefresh, onRefresh])
 
   const handleCopy = useCallback((path: string) => {
@@ -132,6 +139,7 @@ export function FolderSidebar({
     const src = clipboard?.path
     if (!src) return
     setContextMenu(null)
+    setBusy(true)
     try {
       await fetch('/api/workspace/file/paste', {
         method: 'POST',
@@ -141,9 +149,11 @@ export function FolderSidebar({
     } catch { /* ignore */ }
     triggerRefresh()
     onRefresh()
+    setBusy(false)
   }, [clipboard, triggerRefresh, onRefresh])
 
   const handleUpload = useCallback(async (targetDir: string, files: FileList) => {
+    setBusy(true)
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       const formData = new FormData()
@@ -154,6 +164,7 @@ export function FolderSidebar({
       } catch { /* ignore */ }
     }
     triggerRefresh()
+    setBusy(false)
   }, [triggerRefresh])
 
   const handleDragOver = useCallback((e: React.DragEvent, path: string) => {
@@ -216,7 +227,7 @@ export function FolderSidebar({
       )}
 
       <ScrollArea
-        className="flex-1"
+        className="relative flex-1"
         onContextMenu={(e) => {
           if (!workspacePath) return
           e.preventDefault()
@@ -231,6 +242,11 @@ export function FolderSidebar({
           if (workspacePath) handleDrop(e, workspacePath)
         }}
       >
+        {busy && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
         <div className={dragOverPath === workspacePath ? 'ring-1 ring-primary rounded-sm' : ''}>
           {workspacePath ? (
             <LazyFileNode
