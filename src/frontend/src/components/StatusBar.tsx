@@ -6,6 +6,7 @@ import {
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp } from 'lucide-react'
+import { Antigravity, OpenCode } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
 interface Quota {
@@ -108,10 +109,10 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
-			return { text: 'Configure Quotas', isError: false }
+			return { text: 'Configure Limits', isError: false }
 		}
 		if (isLoading && !quotas) {
-			return { text: 'Loading Quotas...', isError: false }
+			return { text: 'Loading Limits...', isError: false }
 		}
 		if (!quotas) {
 			return { text: 'No Data', isError: false }
@@ -121,7 +122,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		const providerData = quotas[provider as keyof AllQuotas]
 
 		if (!providerData) {
-			return { text: 'Select Quota', isError: false }
+			return { text: 'Select Limit', isError: false }
 		}
 
 		if (providerData.error) {
@@ -134,7 +135,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 
 		const q = providerData.data[type as keyof QuotaResponse]
 		if (!q) {
-			return { text: 'Select Quota', isError: false }
+			return { text: 'Select Limit', isError: false }
 		}
 
 		const providerLabel = provider === 'antigravity' ? 'Antigravity' : 'OpenCode'
@@ -154,7 +155,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		const pct = isPercentageOnly ? used : limit > 0 ? (used / limit) * 100 : 0
 		return (
 			<div className="flex flex-col gap-1 w-full mt-1.5 animate-none">
-				<div className="flex justify-between text-[10px] text-muted-foreground select-none">
+				<div className="flex justify-between text-[10px] text-muted-foreground select-none font-sans">
 					<span>{isPercentageOnly ? `${used}%` : `${used} / ${limit}`}</span>
 					<span>{Math.round(pct)}%</span>
 				</div>
@@ -172,9 +173,9 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 	}
 
 	return (
-		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none">
+		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans">
 			<div className="flex items-center gap-2">
-				<div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+				<div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
 				<span className="font-medium text-foreground/80">
 					{workspaceName ? `Workspace: ${workspaceName}` : 'Ready'}
 				</span>
@@ -190,21 +191,30 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 						) : (
 							<div className={cn(
 								"h-1.5 w-1.5 rounded-full",
-								activeDisplay.text === 'Configure Quotas' 
+								activeDisplay.text === 'Configure Limits' 
 									? 'bg-amber-400' 
 									: activeDisplay.percentage !== undefined
 										? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
 										: 'bg-muted-foreground'
 							)} />
 						)}
-						<span className="font-mono text-[11px] shrink-0">{activeDisplay.text}</span>
+						{isConfigured && !isLoading && !activeDisplay.isError && (
+							<>
+								{selectedView.startsWith('antigravity') ? (
+									<Antigravity className="h-3.5 w-3.5 shrink-0" />
+								) : selectedView.startsWith('opencode') ? (
+									<OpenCode className="h-3.5 w-3.5 shrink-0" />
+								) : null}
+							</>
+						)}
+						<span className="text-[11px] shrink-0 font-sans">{activeDisplay.text}</span>
 						<ChevronUp className="h-3 w-3 opacity-60 shrink-0" />
 					</button>
 				</DropdownMenuTrigger>
 
-				<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none">
+				<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none font-sans">
 					<div className="flex items-center justify-between px-2 py-1.5">
-						<span className="text-xs font-semibold text-foreground">Coding Plan Quotas</span>
+						<span className="text-xs font-semibold text-foreground">Usage limits</span>
 						<button
 							onClick={(e) => {
 								e.stopPropagation()
@@ -212,7 +222,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 							}}
 							disabled={isLoading}
 							className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
-							title="Refresh Quotas"
+							title="Refresh Limits"
 						>
 							<RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
 						</button>
@@ -223,7 +233,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 					<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
 						{!isConfigured ? (
 							<div className="px-2 py-4 text-center text-xs text-muted-foreground">
-								No quota providers configured.
+								No providers configured.
 								<button
 									onClick={() => {
 										onOpenSettings()
@@ -237,11 +247,14 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 							<>
 								{hasAntigravity && (
 									<div className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase">Antigravity</span>
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<Antigravity className="h-3.5 w-3.5 shrink-0" />
+											Antigravity
+										</span>
 										{quotas?.antigravity?.error ? (
-											<span className="text-[10px] text-red-400 italic">Error: {quotas.antigravity.error}</span>
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.antigravity.error}</span>
 										) : !quotas?.antigravity?.data ? (
-											<span className="text-[10px] text-muted-foreground italic">Loading or no connection...</span>
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
 												{[
@@ -261,7 +274,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 																isActive && "bg-accent/20 border-border"
 															)}
 														>
-															<div className="flex justify-between items-center text-[11px] font-medium">
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
@@ -278,11 +291,14 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 
 								{hasOpenCode && (
 									<div className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase">OpenCode</span>
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<OpenCode className="h-3.5 w-3.5 shrink-0" />
+											OpenCode
+										</span>
 										{quotas?.opencode?.error ? (
-											<span className="text-[10px] text-red-400 italic">Error: {quotas.opencode.error}</span>
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.opencode.error}</span>
 										) : !quotas?.opencode?.data ? (
-											<span className="text-[10px] text-muted-foreground italic">Loading or no connection...</span>
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
 												{[
@@ -302,7 +318,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 																isActive && "bg-accent/20 border-border"
 															)}
 														>
-															<div className="flex justify-between items-center text-[11px] font-medium">
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
@@ -326,7 +342,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 									onClick={() => {
 										onOpenSettings()
 									}}
-									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer"
+									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer font-sans"
 								>
 									<Key className="h-3 w-3" />
 									Configure Providers...
