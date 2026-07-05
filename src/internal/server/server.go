@@ -13,7 +13,7 @@ import (
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
 	"github.com/04mg/caw/internal/quota"
-	_ "github.com/04mg/caw/internal/quota/agents"
+	_ "github.com/04mg/caw/internal/quota/providers"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
 	"github.com/04mg/caw/internal/workspace"
