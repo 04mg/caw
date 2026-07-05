@@ -133,7 +133,7 @@ function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusP
         ) : (
           <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate">{name}</span>
+        <span className="truncate text-muted-foreground">{name}</span>
         {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
       </button>
       {expanded && loaded && (
