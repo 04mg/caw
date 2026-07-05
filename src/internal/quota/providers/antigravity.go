@@ -54,6 +54,7 @@ type QuotaSummaryResponse struct {
 	Code         interface{}   `json:"code"`
 	Message      string        `json:"message"`
 	QuotaSummary *QuotaSummary `json:"quotaSummary"`
+	Response     *QuotaSummary `json:"response"`
 }
 
 type AntigravityProvider struct{}
@@ -342,26 +343,35 @@ func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 				lastErr = err
 				continue
 			}
-			defer resp.Body.Close()
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				lastErr = readErr
+				continue
+			}
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
 				lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 				continue
 			}
 
 			var qResp QuotaSummaryResponse
-			if err := json.NewDecoder(resp.Body).Decode(&qResp); err != nil {
+			if err := json.Unmarshal(body, &qResp); err != nil {
 				lastErr = err
 				continue
 			}
 
-			if qResp.QuotaSummary == nil {
+			summary := qResp.QuotaSummary
+			if summary == nil {
+				summary = qResp.Response
+			}
+
+			if summary == nil {
 				lastErr = fmt.Errorf("quotaSummary missing in response")
 				continue
 			}
 
-			return mapQuotaSummaryToResponse(qResp.QuotaSummary), nil
+			return mapQuotaSummaryToResponse(summary), nil
 		}
 	}
 
