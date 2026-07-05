@@ -349,12 +349,17 @@ export function AppLayout() {
 
   const handleSplitVert = useCallback(
     (id: string) => {
-      if (!activeWorkspace) return
-      updateActiveLayout((layout) =>
-        splitLeaf(layout, id, 'vertical', activeWorkspace.path || ''),
-      )
+      if (!activeWorkspace || !activeTab) return
+      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'vertical', activeWorkspace.path || '')
+      patchWorkspace(activeWorkspace.id, (ws) => ({
+        ...ws,
+        layouts: ws.layouts.map((t) =>
+          t.id === activeTab.id ? { ...t, layout: node } : t,
+        ),
+        activePaneId: newLeafId,
+      }))
     },
-    [activeWorkspace, updateActiveLayout],
+    [activeWorkspace, activeTab, patchWorkspace],
   )
 
   const handleSizesChange = useCallback(
@@ -367,12 +372,17 @@ export function AppLayout() {
 
   const handleSplitHoriz = useCallback(
     (id: string) => {
-      if (!activeWorkspace) return
-      updateActiveLayout((layout) =>
-        splitLeaf(layout, id, 'horizontal', activeWorkspace.path || ''),
-      )
+      if (!activeWorkspace || !activeTab) return
+      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'horizontal', activeWorkspace.path || '')
+      patchWorkspace(activeWorkspace.id, (ws) => ({
+        ...ws,
+        layouts: ws.layouts.map((t) =>
+          t.id === activeTab.id ? { ...t, layout: node } : t,
+        ),
+        activePaneId: newLeafId,
+      }))
     },
-    [activeWorkspace, updateActiveLayout],
+    [activeWorkspace, activeTab, patchWorkspace],
   )
 
   const handleClosePane = useCallback(
