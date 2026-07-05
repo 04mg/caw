@@ -123,7 +123,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		const [provider, type] = selectedView.split(':')
 		const providerData = quotas[provider as keyof AllQuotas]
 
-		const providerLabel = provider === 'antigravity' ? 'Antigravity' : provider === 'opencode' ? 'OpenCode' : 'Ollama'
+		const providerLabel = provider === 'antigravity' ? 'Antigravity' : provider === 'opencode' ? 'OpenCode Go' : 'Ollama'
 		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
 
 		if (!providerData) {
@@ -297,7 +297,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 									<div className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<OpenCode className="h-3.5 w-3.5 shrink-0" />
-											OpenCode
+											OpenCode Go
 										</span>
 										{quotas?.opencode?.error ? (
 											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.opencode.error}</span>

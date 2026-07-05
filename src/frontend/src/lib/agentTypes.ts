@@ -17,7 +17,7 @@ export const agentTypes: Record<string, AgentType> = {
   },
   opencode: {
     id: 'opencode',
-    label: 'OpenCode',
+    label: 'OpenCode Go',
     cmd: ['opencode', '--dangerously-skip-permissions'],
     icon: OpenCode,
   },
