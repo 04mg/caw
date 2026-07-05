@@ -46,6 +46,7 @@ func (s *Server) ListenAndServe(port string) {
 	state.RegisterHTTP(mux, s.store)
 	state.RegisterWS(mux, s.store)
 	workspace.Register(mux)
+	workspace.RegisterWS(mux)
 	git.Register(mux)
 	agent.Register(mux)
 

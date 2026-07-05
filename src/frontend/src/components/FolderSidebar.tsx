@@ -13,6 +13,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
+import { subscribeToFileTree, type FileTreeEvent } from '@/lib/fileTreeWs'
 
 interface FileNode {
   name: string
@@ -188,11 +189,19 @@ export function FolderSidebar({
     setContextMenu({ x, y, path, name, isDir })
   }, [])
 
-  // Poll for file changes every 3s while the component is mounted (visible)
+  // Subscribe to file system events via WebSocket while mounted (visible)
   useEffect(() => {
-    const interval = setInterval(() => triggerRefresh(), 3000)
-    return () => clearInterval(interval)
-  }, [triggerRefresh])
+    if (!workspacePath) return
+
+    const handleEvent = (_event: FileTreeEvent) => {
+      triggerRefresh()
+    }
+
+    const unsub = subscribeToFileTree(workspacePath, handleEvent)
+    return () => {
+      unsub()
+    }
+  }, [workspacePath, triggerRefresh])
 
   return (
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
