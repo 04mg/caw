@@ -30,18 +30,18 @@ From the repository root:
 cd src
 
 # Linux / macOS
-go build -o ../caw .
+go build -o ../caw ./cmd/caw/
 
 # Windows
-go build -o ../caw.exe .
+go build -o ../caw.exe ./cmd/caw/
 ```
 
 Cross-compile from any platform:
 ```sh
 cd src
-GOOS=linux GOARCH=amd64 go build -o ../caw .
-GOOS=windows GOARCH=amd64 go build -o ../caw.exe .
-GOOS=darwin GOARCH=amd64 go build -o ../caw-macos .
+GOOS=linux GOARCH=amd64 go build -o ../caw ./cmd/caw/
+GOOS=windows GOARCH=amd64 go build -o ../caw.exe ./cmd/caw/
+GOOS=darwin GOARCH=amd64 go build -o ../caw-macos ./cmd/caw/
 ```
 
 ## Contributing
