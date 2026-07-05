@@ -11,7 +11,12 @@ go.work.sum
 
 # Node / Vite
 src/frontend/node_modules/
-src/frontend/dist/
+src/internal/embed/frontend/dist/
+
+# Go build artifacts
+src/caw
+src/caw.exe
+src/caw-*
 
 # IDE
 .idea/
