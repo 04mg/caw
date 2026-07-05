@@ -55,6 +55,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
 	mux.HandleFunc("/api/workspace/search-all", handleSearchAll)
 	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
+	mux.HandleFunc("/api/workspace/file/download", handleFileDownload)
 	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
 	mux.HandleFunc("/api/workspace/file/upload", handleFileUpload)
 	mux.HandleFunc("/api/workspace/file/rename", handleFileRename)
@@ -348,6 +349,40 @@ func handleFileRead(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(content)
+}
+
+func handleFileDownload(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "cannot download directory", http.StatusBadRequest)
+		return
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	name := filepath.Base(abs)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+	io.Copy(w, f)
 }
 
 func handleFileWrite(w http.ResponseWriter, r *http.Request) {

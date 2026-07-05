@@ -16,32 +16,16 @@
 - [Go](https://go.dev/dl/) 1.21+
 - [Node.js](https://nodejs.org/) 20+
 - npm
+- [Make](https://www.gnu.org/software/make/)
 
-### Frontend
+### Build
 ```sh
-cd src/frontend
-npm install
-npm run build
+make build
 ```
 
-### Backend
-From the repository root:
+### Lint
 ```sh
-cd src
-
-# Linux / macOS
-go build -o ../caw ./cmd/caw/
-
-# Windows
-go build -o ../caw.exe ./cmd/caw/
-```
-
-Cross-compile from any platform:
-```sh
-cd src
-GOOS=linux GOARCH=amd64 go build -o ../caw ./cmd/caw/
-GOOS=windows GOARCH=amd64 go build -o ../caw.exe ./cmd/caw/
-GOOS=darwin GOARCH=amd64 go build -o ../caw-macos ./cmd/caw/
+make lint
 ```
 
 ## Contributing

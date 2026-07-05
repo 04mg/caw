@@ -14,6 +14,7 @@ type Session struct {
 	mu         sync.Mutex
 	conns      map[*websocket.Conn]bool
 	scrollback []byte
+	onExit     func()
 }
 
 func (s *Session) ReadLoop() {
@@ -39,5 +40,16 @@ func (s *Session) ReadLoop() {
 		if err != nil {
 			break
 		}
+	}
+
+	s.mu.Lock()
+	for c := range s.conns {
+		msg, _ := json.Marshal(map[string]any{"type": "exit"})
+		c.WriteMessage(websocket.TextMessage, msg)
+	}
+	s.mu.Unlock()
+
+	if s.onExit != nil {
+		s.onExit()
 	}
 }

@@ -56,6 +56,12 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			Cwd:        cwd,
 			conns:      make(map[*websocket.Conn]bool),
 			scrollback: []byte{},
+			onExit: func() {
+				sessionsMu.Lock()
+				delete(sessions, id)
+				sessionsMu.Unlock()
+				ps.Close()
+			},
 		}
 		sessionsMu.Lock()
 		sessions[id] = sess

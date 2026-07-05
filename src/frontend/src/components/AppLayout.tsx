@@ -20,7 +20,7 @@ import {
   subscribeRemoteState,
 } from '@/lib/workspaceStore'
 import { DraggableTabBar } from '@/components/DraggableTabBar'
-import { destroyTerminal } from '@/lib/terminalRegistry'
+import { destroyTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Settings, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -378,6 +378,7 @@ export function AppLayout() {
   const handleClosePane = useCallback(
     (id: string) => {
       if (!activeWorkspace || !activeTab) return
+      destroyTerminal(id)
       const newLayout = removeLeaf(activeTab.layout, id)
       const remaining = collectLeafIds(newLayout)
       if (remaining.length === 0) {
@@ -477,6 +478,11 @@ export function AppLayout() {
     'Alt+C': () => { if (activePaneId) handleClosePane(activePaneId) },
     'Alt+P': () => setCommandPaletteOpen(true),
   })
+
+  useEffect(() => {
+    setOnTerminalExit((leafId) => handleClosePane(leafId))
+    return () => setOnTerminalExit(null)
+  }, [handleClosePane])
 
   if (!loaded) {
     return <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">Loading…</div>

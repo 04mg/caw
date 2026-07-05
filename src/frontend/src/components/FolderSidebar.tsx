@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, Loader2,
-  RefreshCw, FileCode, Pencil, Trash2, Copy,
+  RefreshCw, FileCode, Pencil, Trash2, Copy, Download,
   ClipboardPaste, FolderPlus, MoreVertical
 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -321,6 +321,17 @@ export function FolderSidebar({
               Paste
             </button>
           )}
+          {!contextMenu.isDir && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspace/file/download?path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </button>
+            </>
+          )}
           {!contextMenu.isRoot && (
             <>
               <div className="border-t border-border my-0.5" />
@@ -592,20 +603,23 @@ function LazyFileNode({
   let statusBadge = null
   let textClass = ''
   if (isModified) {
+    textClass = 'text-yellow-500'
     statusBadge = (
-      <span className="text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1 rounded shrink-0" title="Modified">
+      <span className="text-[9px] font-bold text-yellow-600 bg-yellow-500/15 border border-yellow-500/30 px-1 rounded shrink-0" title="Modified">
         M
       </span>
     )
   } else if (isAdded) {
+    textClass = 'text-green-500'
     statusBadge = (
-      <span className="text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1 rounded shrink-0" title="Added">
+      <span className="text-[9px] font-bold text-green-600 bg-green-500/15 border border-green-500/30 px-1 rounded shrink-0" title="Added">
         A
       </span>
     )
   } else if (isUntracked) {
+    textClass = 'text-red-400'
     statusBadge = (
-      <span className="text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1 rounded shrink-0" title="Untracked">
+      <span className="text-[9px] font-bold text-red-500 bg-red-500/15 border border-red-500/30 px-1 rounded shrink-0" title="Untracked">
         U
       </span>
     )

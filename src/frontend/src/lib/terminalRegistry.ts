@@ -13,6 +13,11 @@ export interface TerminalInstance {
 
 const registry = new Map<string, TerminalInstance>()
 const subscribers = new Set<() => void>()
+let onTerminalExit: ((leafId: string) => void) | null = null
+
+export function setOnTerminalExit(cb: ((leafId: string) => void) | null) {
+  onTerminalExit = cb
+}
 
 function notify() {
   for (const s of subscribers) s()
@@ -83,6 +88,8 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         inst.term.write(msg.data)
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
+      } else if (msg.type === 'exit') {
+        onTerminalExit?.(inst.leafId)
       }
     } catch { /* skip */ }
   }
@@ -90,8 +97,13 @@ function connectWs(inst: TerminalInstance, backendId: string) {
     if (inst.ws === ws) inst.ws = null
   }
 
-  inst.term.onData((data) => {
-    if (inst.ws?.readyState === WebSocket.OPEN) inst.ws.send(JSON.stringify({ type: 'input', data }))
+  inst.term.onKey(({ key, domEvent }) => {
+    if (inst.ws?.readyState !== WebSocket.OPEN) return
+    if (domEvent.ctrlKey && !domEvent.altKey && !domEvent.metaKey && (domEvent.key === 'Enter' || domEvent.key === 'Return')) {
+      inst.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
+      return
+    }
+    inst.ws.send(JSON.stringify({ type: 'input', data: key }))
   })
 }
 
@@ -116,9 +128,14 @@ export async function attachTerminal(
     }
     fit.fit()
 
-    // Re-wire onData since the old term was disposed.
-    term.onData((data) => {
-      if (existing.ws?.readyState === WebSocket.OPEN) existing.ws.send(JSON.stringify({ type: 'input', data }))
+    // Re-wire onKey since the old term was disposed.
+    term.onKey(({ key, domEvent }) => {
+      if (existing.ws?.readyState !== WebSocket.OPEN) return
+      if (domEvent.ctrlKey && !domEvent.altKey && !domEvent.metaKey && (domEvent.key === 'Enter' || domEvent.key === 'Return')) {
+        existing.ws.send(JSON.stringify({ type: 'input', data: '\x1b[13;5u' }))
+        return
+      }
+      existing.ws.send(JSON.stringify({ type: 'input', data: key }))
     })
 
     // Send a resize for the new dimensions.

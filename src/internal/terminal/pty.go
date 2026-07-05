@@ -13,6 +13,10 @@ type Pty struct {
 	cmd  *pty.Cmd
 }
 
+func (p *Pty) Close() error {
+	return p.ptmx.Close()
+}
+
 func startPty(cwd string, cmdArgs []string) (*Pty, error) {
 	ptmx, err := pty.New()
 	if err != nil {
