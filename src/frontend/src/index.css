@@ -172,14 +172,34 @@ html, body, #root {
   display: none !important;
 }
 
-@keyframes lava-lamp {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+@keyframes lava-stop-anim {
+  0% {
+    stop-color: #a855f7;
+  }
+  33% {
+    stop-color: #ec4899;
+  }
+  66% {
+    stop-color: #3b82f6;
+  }
+  100% {
+    stop-color: #a855f7;
+  }
 }
 
-.lava-lamp-bg {
-  background: linear-gradient(135deg, #a855f7, #ec4899, #3b82f6, #10b981);
-  background-size: 300% 300%;
-  animation: lava-lamp 6s ease infinite;
+.lava-stop-1 {
+  animation: lava-stop-anim 6s infinite alternate;
+}
+.lava-stop-2 {
+  animation: lava-stop-anim 6s infinite alternate;
+  animation-delay: -2s;
+}
+.lava-stop-3 {
+  animation: lava-stop-anim 6s infinite alternate;
+  animation-delay: -4s;
+}
+
+.lava-lamp-icon {
+  stroke: url(#lava-gradient) !important;
+  filter: drop-shadow(0 0 2px rgba(168, 85, 247, 0.4));
 }
