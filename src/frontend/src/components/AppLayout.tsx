@@ -12,6 +12,8 @@ import {
   countLeaves,
   setSplitSizes,
   findAgentId,
+  findAgentLeaves,
+  getLeafCwd,
 } from '@/lib/layout'
 import {
   type Workspace,
@@ -22,11 +24,12 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder } from 'lucide-react'
+import { Settings, Folder, Workflow } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { CommandPalette } from '@/components/CommandPalette'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -54,6 +57,14 @@ export function AppLayout() {
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [closeConfirm, setCloseConfirm] = useState<{
+    type: 'tab' | 'pane';
+    targetId: string;
+    index?: number;
+    agentBranch: string;
+    hasUncommitted: boolean;
+    hasUnmergedCommits: boolean;
+  } | null>(null)
 
   useEffect(() => {
     const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
@@ -125,14 +136,15 @@ export function AppLayout() {
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
+  const currentWorkspacePath = (activeTab && activePaneId && getLeafCwd(activeTab.layout, activePaneId)) || activeWorkspace?.path || ''
 
   const fetchGitStatus = useCallback(async () => {
-    if (!activeWorkspace?.path) {
+    if (!currentWorkspacePath) {
       setGitStatuses({})
       return
     }
     try {
-      const res = await fetch(`/api/git/status?path=${encodeURIComponent(activeWorkspace.path)}`)
+      const res = await fetch(`/api/git/status?path=${encodeURIComponent(currentWorkspacePath)}`)
       if (res.ok) {
         const data = await res.json()
         setGitStatuses(data)
@@ -142,7 +154,7 @@ export function AppLayout() {
     } catch {
       setGitStatuses({})
     }
-  }, [activeWorkspace?.path])
+  }, [currentWorkspacePath])
 
   useEffect(() => {
     fetchGitStatus()
@@ -240,22 +252,59 @@ export function AppLayout() {
     [activeWorkspace, patchWorkspace],
   )
 
-  const addTab = useCallback((cmd?: string[], agentId?: string, label?: string) => {
+  const addTab = useCallback(async (cmd?: string[], agentId?: string, label?: string) => {
     if (!activeWorkspace) return
+    let cwd = activeWorkspace.path || ''
+    let agentBranch: string | undefined = undefined
+    let baseBranch: string | undefined = undefined
+
+    if (agentId) {
+      try {
+        const res = await fetch('/api/agents/setup-workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectPath: cwd,
+            agentId,
+            enableWorktrees: activeWorkspace.enableWorktrees !== false,
+          }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.isGit) {
+            cwd = data.worktreePath
+            agentBranch = data.branchName
+            baseBranch = data.baseBranch
+          }
+        }
+      } catch (err) {
+        console.error('Failed to setup agent workspace:', err)
+      }
+    }
+
+    const leafId = crypto.randomUUID()
     const newTab = {
       id: crypto.randomUUID(),
       name: label || 'Terminal',
-      layout: createLeaf(activeWorkspace.path || '', cmd, agentId),
+      layout: {
+        type: 'leaf' as const,
+        id: leafId,
+        cwd,
+        cmd,
+        agentId,
+        agentBranch,
+        baseBranch,
+      },
     }
     patchWorkspace(activeWorkspace.id, (ws) => ({
       ...ws,
       layouts: [...ws.layouts, newTab],
       activeTabIndex: ws.layouts.length,
-      activePaneId: collectLeafIds(newTab.layout)[0],
+      activePaneId: leafId,
     }))
   }, [activeWorkspace, patchWorkspace])
 
-  const closeTab = useCallback(
+  const forceCloseTab = useCallback(
     (index: number) => {
       if (!activeWorkspace) return
       const tab = activeWorkspace.layouts[index]
@@ -282,6 +331,65 @@ export function AppLayout() {
       })
     },
     [activeWorkspace, patchWorkspace],
+  )
+
+  const closeTab = useCallback(
+    async (index: number) => {
+      if (!activeWorkspace) return
+      const tab = activeWorkspace.layouts[index]
+      if (!tab) return
+
+      const agentLeaves = findAgentLeaves(tab.layout)
+      let hasChanges = false
+      let changeInfo: any = null
+
+      for (const leaf of agentLeaves) {
+        if (leaf.agentBranch && leaf.cwd) {
+          try {
+            const res = await fetch('/api/agents/check-changes', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                worktreePath: leaf.cwd,
+                branchName: leaf.agentBranch,
+                baseBranch: leaf.baseBranch,
+              }),
+            })
+            if (res.ok) {
+              const data = await res.json()
+              if (data.hasUncommitted || data.hasUnmergedCommits) {
+                hasChanges = true
+                changeInfo = {
+                  agentBranch: leaf.agentBranch,
+                  hasUncommitted: data.hasUncommitted,
+                  hasUnmergedCommits: data.hasUnmergedCommits,
+                  targetId: tab.id,
+                  index,
+                }
+                break
+              }
+            }
+          } catch (err) {
+            console.error('Failed to check agent changes:', err)
+          }
+        }
+      }
+
+      if (hasChanges && changeInfo) {
+        setCloseConfirm({
+          type: 'tab',
+          targetId: changeInfo.targetId,
+          index: changeInfo.index,
+          agentBranch: changeInfo.agentBranch,
+          hasUncommitted: changeInfo.hasUncommitted,
+          hasUnmergedCommits: changeInfo.hasUnmergedCommits,
+        })
+        return
+      }
+
+      forceCloseTab(index)
+    },
+    [activeWorkspace, forceCloseTab],
   )
 
   const openFile = useCallback((filePath: string) => {
@@ -350,7 +458,8 @@ export function AppLayout() {
   const handleSplitVert = useCallback(
     (id: string) => {
       if (!activeWorkspace || !activeTab) return
-      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'vertical', activeWorkspace.path || '')
+      const paneCwd = getLeafCwd(activeTab.layout, id) || activeWorkspace.path || ''
+      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'vertical', paneCwd)
       patchWorkspace(activeWorkspace.id, (ws) => ({
         ...ws,
         layouts: ws.layouts.map((t) =>
@@ -373,7 +482,8 @@ export function AppLayout() {
   const handleSplitHoriz = useCallback(
     (id: string) => {
       if (!activeWorkspace || !activeTab) return
-      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'horizontal', activeWorkspace.path || '')
+      const paneCwd = getLeafCwd(activeTab.layout, id) || activeWorkspace.path || ''
+      const { node, newLeafId } = splitLeaf(activeTab.layout, id, 'horizontal', paneCwd)
       patchWorkspace(activeWorkspace.id, (ws) => ({
         ...ws,
         layouts: ws.layouts.map((t) =>
@@ -385,7 +495,7 @@ export function AppLayout() {
     [activeWorkspace, activeTab, patchWorkspace],
   )
 
-  const handleClosePane = useCallback(
+  const forceClosePane = useCallback(
     (id: string) => {
       destroyTerminal(id)
       if (!activeWorkspace || !activeTab) return
@@ -393,7 +503,7 @@ export function AppLayout() {
       const remaining = collectLeafIds(newLayout)
       if (remaining.length === 0) {
         const tabIndex = activeWorkspace.layouts.findIndex((t) => t.id === activeTab.id)
-        if (tabIndex >= 0) closeTab(tabIndex)
+        if (tabIndex >= 0) forceCloseTab(tabIndex)
         return
       }
       updateActiveLayout(() => newLayout)
@@ -402,7 +512,57 @@ export function AppLayout() {
         return { ...ws, activePaneId: remaining[0] }
       })
     },
-    [activeWorkspace, activeTab, updateActiveLayout, patchWorkspace, closeTab],
+    [activeWorkspace, activeTab, updateActiveLayout, patchWorkspace, forceCloseTab],
+  )
+
+  const handleClosePane = useCallback(
+    async (id: string) => {
+      if (!activeWorkspace || !activeTab) return
+
+      const findLeafById = (node: LayoutNode, targetId: string): LayoutNode | null => {
+        if (node.type === 'leaf' && node.id === targetId) return node
+        if (node.type === 'split') {
+          for (const child of node.children) {
+            const res = findLeafById(child, targetId)
+            if (res) return res
+          }
+        }
+        return null
+      }
+
+      const leaf = findLeafById(activeTab.layout, id)
+      if (leaf && leaf.type === 'leaf' && leaf.agentBranch && leaf.cwd) {
+        try {
+          const res = await fetch('/api/agents/check-changes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              worktreePath: leaf.cwd,
+              branchName: leaf.agentBranch,
+              baseBranch: leaf.baseBranch,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.hasUncommitted || data.hasUnmergedCommits) {
+              setCloseConfirm({
+                type: 'pane',
+                targetId: id,
+                agentBranch: leaf.agentBranch,
+                hasUncommitted: data.hasUncommitted,
+                hasUnmergedCommits: data.hasUnmergedCommits,
+              })
+              return
+            }
+          }
+        } catch (err) {
+          console.error('Failed to check agent changes:', err)
+        }
+      }
+
+      forceClosePane(id)
+    },
+    [activeWorkspace, activeTab, forceClosePane],
   )
 
   const handleAddWorkspace = useCallback(
@@ -425,6 +585,7 @@ export function AppLayout() {
         layouts: [{ id: crypto.randomUUID(), name: 'Terminal', layout }],
         activeTabIndex: 0,
         activePaneId: collectLeafIds(layout)[0],
+        enableWorktrees: true,
       }
       setWorkspaces((prev) => [...prev, ws])
       setActiveWorkspaceId(ws.id)
@@ -461,6 +622,14 @@ export function AppLayout() {
     },
     [activeWorkspaceId],
   )
+
+  const toggleWorktrees = useCallback(() => {
+    if (!activeWorkspace) return
+    patchWorkspace(activeWorkspace.id, (ws) => ({
+      ...ws,
+      enableWorktrees: !ws.enableWorktrees,
+    }))
+  }, [activeWorkspace, patchWorkspace])
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((v) => {
@@ -654,15 +823,31 @@ export function AppLayout() {
                       </Button>
                     </div>
                     <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                        onClick={toggleFolderSidebar}
-                        title="Workspace Files"
-                      >
-                        <Folder className="h-3.5 w-3.5" />
-                      </Button>
+                      {folderSidebarCollapsed ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                          onClick={toggleFolderSidebar}
+                          title="Workspace Files"
+                        >
+                          <Folder className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-5 w-5 shrink-0 rounded transition-all duration-300 ${
+                            activeWorkspace?.enableWorktrees
+                              ? 'lava-lamp-bg text-white shadow-[0_0_10px_rgba(168,85,247,0.5)]'
+                              : 'text-muted-foreground opacity-50 hover:opacity-100'
+                          }`}
+                          onClick={toggleWorktrees}
+                          title={activeWorkspace?.enableWorktrees ? '✓ Worktrees' : '✕ Worktrees'}
+                        >
+                          <Workflow className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -681,10 +866,13 @@ export function AppLayout() {
                   maxSize="50%"
                 >
                   <FolderSidebar
-                    workspacePath={activeWorkspace?.path || ''}
+                    workspacePath={currentWorkspacePath}
+                    mainWorkspacePath={activeWorkspace?.path || ''}
+                    activeTabName={activeTab?.name || ''}
                     onOpenFile={openFile}
                     gitStatuses={gitStatuses}
                     onRefresh={fetchGitStatus}
+                    onClose={() => setFolderSidebarCollapsed(true)}
                   />
                 </Panel>
               </>
@@ -704,6 +892,43 @@ export function AppLayout() {
         onAddAgent={(cmd, agentId, label) => addTab(cmd, agentId, label)}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
       />
+
+      <Dialog open={closeConfirm !== null} onOpenChange={(open) => { if (!open) setCloseConfirm(null) }}>
+        <DialogContent className="max-w-md p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-foreground">
+              Unmerged Changes in Agent Workspace
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground mt-2">
+              This agent's workspace has uncommitted changes or unmerged commits on branch <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">{closeConfirm?.agentBranch}</code>.
+              <br /><br />
+              Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will permanently delete the worktree directory, and any uncommitted changes will be lost. The Git branch will remain intact for manual merging.
+              <br /><br />
+              Are you sure you want to close?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" onClick={() => setCloseConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (closeConfirm) {
+                  if (closeConfirm.type === 'tab') {
+                    if (closeConfirm.index !== undefined) forceCloseTab(closeConfirm.index)
+                  } else {
+                    forceClosePane(closeConfirm.targetId)
+                  }
+                  setCloseConfirm(null)
+                }
+              }}
+            >
+              Confirm Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

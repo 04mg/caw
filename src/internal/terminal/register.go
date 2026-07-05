@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -64,6 +68,25 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 				sessionsMu.Lock()
 				delete(sessions, id)
 				sessionsMu.Unlock()
+
+				// Clean up Git worktree if cwd is an agent worktree
+				home, err := os.UserHomeDir()
+				if err == nil {
+					worktreesBase := filepath.Clean(filepath.Join(home, ".caw", "worktrees"))
+					cleanCwd := filepath.Clean(cwd)
+					if strings.HasPrefix(cleanCwd, worktreesBase) && cleanCwd != worktreesBase {
+						go func() {
+							time.Sleep(500 * time.Millisecond)
+							mainRepo := getMainRepoPath(cleanCwd)
+							if mainRepo != "" {
+								cmdRemove := exec.Command("git", "worktree", "remove", "--force", cleanCwd)
+								cmdRemove.Dir = mainRepo
+								_ = cmdRemove.Run()
+							}
+							_ = os.RemoveAll(cleanCwd)
+						}()
+					}
+				}
 			},
 		}
 		sessionsMu.Lock()
@@ -164,4 +187,27 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		sess.Pty.Kill()
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func getMainRepoPath(worktreePath string) string {
+	gitFile := filepath.Join(worktreePath, ".git")
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if !strings.HasPrefix(content, "gitdir:") {
+		return ""
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(content, "gitdir:"))
+
+	// gitdir points to <main-repo>/.git/worktrees/<name>
+	idx := strings.Index(gitdir, "/.git/worktrees/")
+	if idx == -1 {
+		idx = strings.Index(gitdir, "\\.git\\worktrees\\")
+	}
+	if idx != -1 {
+		return filepath.Clean(gitdir[:idx])
+	}
+	return ""
 }

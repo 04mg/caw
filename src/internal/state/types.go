@@ -27,6 +27,7 @@ type Workspace struct {
 	Layouts         []TabLayout `json:"layouts"`
 	ActiveTabIndex  int         `json:"activeTabIndex"`
 	ActivePaneID    string      `json:"activePaneId"`
+	EnableWorktrees bool        `json:"enableWorktrees"`
 }
 
 type AppState struct {
