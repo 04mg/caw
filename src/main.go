@@ -57,6 +57,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/workspace/tree", handleFileTree)
 	mux.HandleFunc("/api/workspace/list", handleListDir)
+	mux.HandleFunc("/api/workspace/list-all", handleListAll)
+	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
+	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
+	mux.HandleFunc("/api/git/status", handleGitStatus)
+	mux.HandleFunc("/api/git/diff", handleGitDiff)
+	mux.HandleFunc("/api/git/original", handleGitOriginal)
 	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
 	mux.HandleFunc("/api/workspace/open", handleOpenDir)
 	mux.HandleFunc("/api/terminal/create", handleTerminalCreate)
@@ -424,7 +430,7 @@ type AgentInfo struct {
 func handleAgentsAvailable(w http.ResponseWriter, r *http.Request) {
 	agentsList := []AgentInfo{
 		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode"}},
-		{ID: "agy", Label: "agy", Cmd: []string{"agy"}},
+		{ID: "agy", Label: "Antigravity", Cmd: []string{"agy"}},
 		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
 	}
 	available := []AgentInfo{}
@@ -434,5 +440,217 @@ func handleAgentsAvailable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, available)
+}
+
+func handleListAll(w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("path")
+	if dir == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !info.IsDir() {
+		http.Error(w, "not a directory", http.StatusBadRequest)
+		return
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		writeJSON(w, []FileNode{})
+		return
+	}
+	var children []FileNode
+	for _, e := range entries {
+		name := e.Name()
+		if name[0] == '.' && name != "." && name != ".." {
+			continue
+		}
+		isDir := e.IsDir()
+		info, err := e.Info()
+		if err == nil {
+			isDir = info.IsDir()
+		}
+		children = append(children, FileNode{
+			Name:  name,
+			Path:  filepath.Join(abs, name),
+			IsDir: isDir,
+		})
+	}
+	writeJSON(w, children)
+}
+
+func handleFileRead(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "cannot read directory", http.StatusBadRequest)
+		return
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(content)
+}
+
+type WriteFileRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func handleFileWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req WriteFileRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = os.WriteFile(abs, []byte(req.Content), 0644)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cmd := exec.Command("git", "status", "--porcelain", "-u")
+	cmd.Dir = abs
+	output, err := cmd.Output()
+	if err != nil {
+		writeJSON(w, map[string]string{})
+		return
+	}
+
+	statuses := make(map[string]string)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		statusXY := line[:2]
+		filePath := line[3:]
+		filePath = strings.Trim(filePath, "\"")
+		absFilePath := filepath.Join(abs, filePath)
+		statuses[absFilePath] = statusXY
+	}
+	writeJSON(w, statuses)
+}
+
+func handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = abs
+	output, err := cmd.Output()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(output)
+}
+
+func handleGitOriginal(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	dir := filepath.Dir(abs)
+	var gitRoot string
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			gitRoot = dir
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	
+	if gitRoot == "" {
+		http.Error(w, "not a git repository", http.StatusBadRequest)
+		return
+	}
+	
+	relPath, err := filepath.Rel(gitRoot, abs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	relPath = filepath.ToSlash(relPath)
+	
+	cmd := exec.Command("git", "show", "HEAD:"+relPath)
+	cmd.Dir = gitRoot
+	output, err := cmd.Output()
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(""))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(output)
 }
 

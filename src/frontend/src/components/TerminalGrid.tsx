@@ -3,6 +3,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels'
 import { X, Columns2, Rows2 } from 'lucide-react'
 import { type LayoutNode } from '@/lib/layout'
 import { TerminalPanel } from '@/components/TerminalPanel'
+import { EditorPanel } from '@/components/EditorPanel'
 import { destroyTerminal } from '@/lib/terminalRegistry'
 
 interface TerminalGridProps {
@@ -38,19 +39,26 @@ export function TerminalGrid({
 
   if (node.type === 'leaf') {
     const isActive = activePaneId === node.id
+    const isEditor = !!node.filePath || node.isDiff
     return (
       <div
         className={`relative h-full overflow-hidden ${isActive ? 'ring-1 ring-inset ring-border' : ''}`}
         onClick={() => onFocus(node.id)}
         onPointerDown={() => onFocus(node.id)}
       >
-        <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} />
+        {isEditor ? (
+          <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} />
+        ) : (
+          <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} />
+        )}
 
         <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
               e.stopPropagation()
-              destroyTerminal(node.id)
+              if (!isEditor) {
+                destroyTerminal(node.id)
+              }
               onClose(node.id)
             }}
             className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"

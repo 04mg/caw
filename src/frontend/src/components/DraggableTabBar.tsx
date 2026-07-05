@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type PointerEvent } from 'react'
-import { Terminal, Plus, X } from 'lucide-react'
+import { Terminal, Plus, X, GitBranch, FileCode } from 'lucide-react'
 import { agentTypes } from '@/lib/agentTypes'
 import {
   DropdownMenu,
@@ -13,6 +13,8 @@ interface TabItem {
   id: string
   name: string
   agentId?: string
+  filePath?: string
+  isDiff?: boolean
 }
 
 interface DraggableTabBarProps {
@@ -133,6 +135,12 @@ export function DraggableTabBar({
             }}
           >
             {(() => {
+              if (tab.isDiff) {
+                return <GitBranch className="h-3.5 w-3.5 text-primary shrink-0" />
+              }
+              if (tab.filePath) {
+                return <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              }
               const agent = tab.agentId ? agentTypes[tab.agentId] : null
               if (agent && agent.icon) {
                 const IconComponent = agent.icon
@@ -162,24 +170,37 @@ export function DraggableTabBar({
             <Terminal className="h-4 w-4" />
             <span>New Terminal</span>
           </DropdownMenuItem>
-          {availableAgents.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              {availableAgents.map((agentInfo) => {
-                const agent = agentTypes[agentInfo.id]
-                const IconComponent = agent?.icon || Terminal
-                return (
-                  <DropdownMenuItem
-                    key={agentInfo.id}
-                    onClick={() => onAdd(agentInfo.cmd, agentInfo.id, agentInfo.label)}
-                  >
-                    <IconComponent size={16} className="h-4 w-4" />
-                    <span>{agentInfo.label}</span>
-                  </DropdownMenuItem>
-                )
-              })}
-            </>
-          )}
+          {(() => {
+            const savedDisabled = localStorage.getItem('caw:disabledAgents')
+            let disabledList: string[] = []
+            if (savedDisabled) {
+              try {
+                disabledList = JSON.parse(savedDisabled)
+              } catch {}
+            }
+
+            const visibleAgents = availableAgents.filter((a) => !disabledList.includes(a.id))
+            if (visibleAgents.length === 0) return null
+
+            return (
+              <>
+                <DropdownMenuSeparator />
+                {visibleAgents.map((agentInfo) => {
+                  const agent = agentTypes[agentInfo.id]
+                  const IconComponent = agent?.icon || Terminal
+                  return (
+                    <DropdownMenuItem
+                      key={agentInfo.id}
+                      onClick={() => onAdd(agentInfo.cmd, agentInfo.id, agentInfo.label)}
+                    >
+                      <IconComponent size={16} className="h-4 w-4" />
+                      <span>{agentInfo.label}</span>
+                    </DropdownMenuItem>
+                  )
+                })}
+              </>
+            )
+          })()}
         </DropdownMenuContent>
       </DropdownMenu>
     </>

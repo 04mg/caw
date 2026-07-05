@@ -23,7 +23,7 @@ export const agentTypes: Record<string, AgentType> = {
   },
   agy: {
     id: 'agy',
-    label: 'agy',
+    label: 'Antigravity',
     cmd: ['agy'],
     icon: Antigravity,
   },

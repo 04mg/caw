@@ -22,6 +22,10 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
+import { Settings, Folder } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { FolderSidebar } from '@/components/FolderSidebar'
+import { SettingsDialog } from '@/components/SettingsDialog'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -44,9 +48,30 @@ export function AppLayout() {
   const skipPersistRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
 
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
+    const root = window.document.documentElement
+    if (savedTheme === 'system') {
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      if (systemTheme === 'light') root.classList.add('light')
+      else root.classList.remove('light')
+    } else if (savedTheme === 'light') {
+      root.classList.add('light')
+    } else {
+      root.classList.remove('light')
+    }
+  }, [])
+
   useEffect(() => {
     const savedCollapsed = localStorage.getItem('caw:sidebarCollapsed')
     if (savedCollapsed === '1') setSidebarCollapsed(true)
+
+    const savedFolderCollapsed = localStorage.getItem('caw:folderSidebarCollapsed')
+    if (savedFolderCollapsed === '0') setFolderSidebarCollapsed(false)
   }, [])
 
   const sidebarDefaultSize = (() => {
@@ -97,6 +122,37 @@ export function AppLayout() {
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
+
+  const fetchGitStatus = useCallback(async () => {
+    if (!activeWorkspace?.path) {
+      setGitStatuses({})
+      return
+    }
+    try {
+      const res = await fetch(`/api/git/status?path=${encodeURIComponent(activeWorkspace.path)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setGitStatuses(data)
+      } else {
+        setGitStatuses({})
+      }
+    } catch {
+      setGitStatuses({})
+    }
+  }, [activeWorkspace?.path])
+
+  useEffect(() => {
+    fetchGitStatus()
+  }, [fetchGitStatus])
+
+
+  const toggleFolderSidebar = useCallback(() => {
+    setFolderSidebarCollapsed((v) => {
+      const next = !v
+      localStorage.setItem('caw:folderSidebarCollapsed', next ? '0' : '1') // 0 = false, 1 = true
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     if (activeWorkspace) {
@@ -224,6 +280,69 @@ export function AppLayout() {
     },
     [activeWorkspace, patchWorkspace],
   )
+
+  const openFile = useCallback((filePath: string) => {
+    if (!activeWorkspace) return
+    const name = filePath.split(/[\\/]/).pop() || filePath
+    
+    const existingIndex = activeWorkspace.layouts.findIndex(
+      (t) => t.layout.type === 'leaf' && t.layout.filePath === filePath
+    )
+    if (existingIndex >= 0) {
+      switchTab(existingIndex)
+      return
+    }
+
+    const newTab = {
+      id: crypto.randomUUID(),
+      name,
+      layout: {
+        type: 'leaf' as const,
+        id: crypto.randomUUID(),
+        cwd: activeWorkspace.path || '',
+        filePath,
+      },
+    }
+
+    patchWorkspace(activeWorkspace.id, (ws) => ({
+      ...ws,
+      layouts: [...ws.layouts, newTab],
+      activeTabIndex: ws.layouts.length,
+      activePaneId: newTab.layout.id,
+    }))
+  }, [activeWorkspace, patchWorkspace, switchTab])
+
+  const openDiff = useCallback((filePath?: string) => {
+    if (!activeWorkspace) return
+    const name = filePath ? `Diff: ${filePath.split(/[\\/]/).pop()}` : 'Git Diff'
+
+    const existingIndex = activeWorkspace.layouts.findIndex(
+      (t) => t.layout.type === 'leaf' && t.layout.isDiff === true && t.layout.filePath === filePath
+    )
+    if (existingIndex >= 0) {
+      switchTab(existingIndex)
+      return
+    }
+
+    const newTab = {
+      id: crypto.randomUUID(),
+      name,
+      layout: {
+        type: 'leaf' as const,
+        id: crypto.randomUUID(),
+        cwd: activeWorkspace.path || '',
+        filePath,
+        isDiff: true,
+      },
+    }
+
+    patchWorkspace(activeWorkspace.id, (ws) => ({
+      ...ws,
+      layouts: [...ws.layouts, newTab],
+      activeTabIndex: ws.layouts.length,
+      activePaneId: newTab.layout.id,
+    }))
+  }, [activeWorkspace, patchWorkspace, switchTab])
 
   const handleSplitVert = useCallback(
     (id: string) => {
@@ -367,6 +486,8 @@ export function AppLayout() {
         id: t.id,
         name: t.name,
         agentId: findAgentId(t.layout),
+        filePath: t.layout.type === 'leaf' ? t.layout.filePath : undefined,
+        isDiff: t.layout.type === 'leaf' ? t.layout.isDiff : undefined,
       }))}
       activeIndex={activeWorkspace.activeTabIndex}
       onSwitch={switchTab}
@@ -380,6 +501,30 @@ export function AppLayout() {
     <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
       <div className="flex flex-1 overflow-x-auto h-full">
         {tabs}
+      </div>
+      <div className="flex items-center shrink-0 h-full">
+        <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={toggleFolderSidebar}
+            title="Workspace Files"
+          >
+            <Folder className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -446,17 +591,11 @@ export function AppLayout() {
     </div>
   )
 
-  const mainContent = (
-    <div className="flex h-full flex-col">
-      {tabBar}
-      {terminalBody}
-    </div>
-  )
-
-  if (sidebarCollapsed) {
-    return (
-      <div key="collapsed" className="flex flex-col h-full w-full">
-        <div className="flex h-[33px] shrink-0">
+  return (
+    <div className="flex flex-col h-full w-full bg-background select-none">
+      {/* Header row when left sidebar is collapsed */}
+      {sidebarCollapsed && (
+        <div className="flex h-[33px] shrink-0 border-b border-border bg-background">
           <WorkspacePanel
             workspaces={workspaces}
             activeWorkspaceId={activeWorkspaceId}
@@ -471,46 +610,77 @@ export function AppLayout() {
           />
           <div className="flex-1 min-w-0">{tabBar}</div>
         </div>
-        <div className="flex-1 min-h-0 flex flex-col">
-          {terminalBody}
-        </div>
+      )}
+
+      {/* Tab bar when sidebar is expanded */}
+      {!sidebarCollapsed && tabBar}
+
+      {/* Main Resizable Body */}
+      <div className="flex-1 min-h-0 relative">
+        <Group orientation="horizontal" className="h-full w-full">
+          {/* Left Workspace Panel (only if expanded) */}
+          {!sidebarCollapsed && (
+            <>
+              <Panel
+                id="sidebar"
+                panelRef={sidebarRef}
+                defaultSize={sidebarDefaultSize}
+                minSize="15%"
+                maxSize="50%"
+                onResize={(size) => {
+                  if (size.asPercentage >= 15) {
+                    localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
+                  }
+                }}
+              >
+                <WorkspacePanel
+                  workspaces={workspaces}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSelectWorkspace={setActiveWorkspaceId}
+                  onAddWorkspace={handleAddWorkspace}
+                  onDeleteWorkspace={handleDeleteWorkspace}
+                  onEditWorkspace={handleEditWorkspace}
+                  onReorderWorkspaces={handleReorderWorkspaces}
+                  pickerTrigger={pickerTrigger}
+                  collapsed={false}
+                  onToggle={toggleSidebar}
+                />
+              </Panel>
+              <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+            </>
+          )}
+
+          {/* Main Terminals / Editors Content */}
+          <Panel>
+            <div className="flex h-full flex-col">
+              {terminalBody}
+            </div>
+          </Panel>
+
+          {/* Right Folder Explorer Panel (only if expanded) */}
+          {!folderSidebarCollapsed && (
+            <>
+              <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+              <Panel
+                id="folder-sidebar"
+                defaultSize="20%"
+                minSize="15%"
+                maxSize="50%"
+              >
+                <FolderSidebar
+                  workspacePath={activeWorkspace?.path || ''}
+                  onOpenFile={openFile}
+                  onOpenDiff={() => openDiff()}
+                  gitStatuses={gitStatuses}
+                  onRefresh={fetchGitStatus}
+                />
+              </Panel>
+            </>
+          )}
+        </Group>
       </div>
-    )
-  }
 
-  return (
-    <Group key="expanded" orientation="horizontal" className="h-full w-full">
-      <Panel
-        id="sidebar"
-        panelRef={sidebarRef}
-        defaultSize={sidebarDefaultSize}
-        minSize="15%"
-        maxSize="50%"
-        onResize={(size) => {
-          if (size.asPercentage >= 15) {
-            localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-          }
-        }}
-      >
-        <WorkspacePanel
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-          onSelectWorkspace={setActiveWorkspaceId}
-          onAddWorkspace={handleAddWorkspace}
-          onDeleteWorkspace={handleDeleteWorkspace}
-          onEditWorkspace={handleEditWorkspace}
-          onReorderWorkspaces={handleReorderWorkspaces}
-          pickerTrigger={pickerTrigger}
-          collapsed={false}
-          onToggle={toggleSidebar}
-        />
-      </Panel>
-
-      <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-
-      <Panel>
-        {mainContent}
-      </Panel>
-    </Group>
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+    </div>
   )
 }

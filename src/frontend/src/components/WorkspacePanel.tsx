@@ -115,7 +115,7 @@ export function WorkspacePanel({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col bg-black border-r border-b border-border overflow-hidden shrink-0" style={{ width: 44 }}>
+      <div className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0" style={{ width: 44 }}>
         <div className="flex items-center justify-center px-3 h-[33px] shrink-0">
           <Button
             variant="ghost"
@@ -143,7 +143,7 @@ export function WorkspacePanel({
         >
           <PanelLeftClose className="h-3.5 w-3.5" />
         </Button>
-        <span className="flex-1 text-xs font-medium text-muted-foreground tracking-wider">
+        <span className="flex-1 text-xs font-semibold text-muted-foreground">
           Workspaces
         </span>
         <Button
