@@ -189,18 +189,25 @@ export function FolderSidebar({
     setContextMenu({ x, y, path, name, isDir })
   }, [])
 
-  // Subscribe to file system events via WebSocket while mounted (visible)
+  // Debounce file tree re-fetch to avoid cascading refreshes
+  // when many files change rapidly (e.g. SQLite writes).
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
     if (!workspacePath) return
 
     const handleEvent = (_event: FileTreeEvent) => {
-      triggerRefresh()
-      onRefresh?.()
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = setTimeout(() => {
+        triggerRefresh()
+        onRefresh?.()
+      }, 400)
     }
 
     const unsub = subscribeToFileTree(workspacePath, handleEvent)
     return () => {
       unsub()
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
   }, [workspacePath, triggerRefresh, onRefresh])
 

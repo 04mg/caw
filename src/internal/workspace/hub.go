@@ -210,8 +210,35 @@ func (h *FileEventHub) watchPath(rootPath string, w *fsnotify.Watcher) {
 	}
 }
 
+func shouldIgnoreEvent(path string) bool {
+	name := filepath.Base(path)
+
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+
+	if strings.HasSuffix(name, "~") {
+		return true
+	}
+
+	ext := filepath.Ext(name)
+	if ext == ".db" || strings.HasSuffix(name, ".db-wal") || strings.HasSuffix(name, ".db-shm") || strings.HasSuffix(name, ".db-journal") {
+		return true
+	}
+
+	if strings.HasSuffix(name, ".swp") || strings.HasSuffix(name, ".swx") || strings.HasPrefix(name, ".#") {
+		return true
+	}
+
+	return false
+}
+
 func (h *FileEventHub) handleFSEvent(rootPath string, event fsnotify.Event, w *fsnotify.Watcher) {
 	path := event.Name
+
+	if shouldIgnoreEvent(path) {
+		return
+	}
 
 	if event.Has(fsnotify.Create) {
 		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
@@ -238,7 +265,10 @@ func (h *FileEventHub) handleFSEvent(rootPath string, event fsnotify.Event, w *f
 		return
 	}
 	ev.Path = path
-	if fi, err := os.Stat(path); err == nil {
+
+	if event.Has(fsnotify.Write) {
+		ev.IsDir = false
+	} else if fi, err := os.Stat(path); err == nil {
 		ev.IsDir = fi.IsDir()
 	}
 
