@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -60,6 +61,12 @@ func main() {
 	mux.HandleFunc("/api/workspace/list-all", handleListAll)
 	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
 	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
+	mux.HandleFunc("/api/workspace/file/upload", handleFileUpload)
+	mux.HandleFunc("/api/workspace/file/rename", handleFileRename)
+	mux.HandleFunc("/api/workspace/file/copy", handleFileCopy)
+	mux.HandleFunc("/api/workspace/file/delete", handleFileDelete)
+	mux.HandleFunc("/api/workspace/file/create", handleFileCreate)
+	mux.HandleFunc("/api/workspace/file/paste", handleFilePaste)
 	mux.HandleFunc("/api/git/status", handleGitStatus)
 	mux.HandleFunc("/api/git/diff", handleGitDiff)
 	mux.HandleFunc("/api/git/original", handleGitOriginal)
@@ -544,6 +551,286 @@ func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+type RenameRequest struct {
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+}
+
+type CopyRequest struct {
+	SourcePath string `json:"sourcePath"`
+	DestPath   string `json:"destPath"`
+}
+
+type DeleteRequest struct {
+	Path string `json:"path"`
+}
+
+type CreateRequest struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "file" or "dir"
+}
+
+type PasteRequest struct {
+	SourcePath string `json:"sourcePath"`
+	TargetDir  string `json:"targetDir"`
+}
+
+func handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	err := r.ParseMultipartForm(32 << 20)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	targetDir := r.FormValue("targetDir")
+	if targetDir == "" {
+		http.Error(w, "targetDir required", http.StatusBadRequest)
+		return
+	}
+	absDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	dest := filepath.Join(absDir, header.Filename)
+	dst, err := os.Create(dest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, file)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleFileRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req RenameRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.OldPath == "" || req.NewPath == "" {
+		http.Error(w, "oldPath and newPath required", http.StatusBadRequest)
+		return
+	}
+	absOld, err := filepath.Abs(req.OldPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	absNew, err := filepath.Abs(req.NewPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.Rename(absOld, absNew); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		return copyFile(path, target)
+	})
+}
+
+func handleFileCopy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req CopyRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourcePath == "" || req.DestPath == "" {
+		http.Error(w, "sourcePath and destPath required", http.StatusBadRequest)
+		return
+	}
+	absSrc, err := filepath.Abs(req.SourcePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	absDst, err := filepath.Abs(req.DestPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(absSrc)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if info.IsDir() {
+		if err := os.MkdirAll(absDst, 0755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := copyDir(absSrc, absDst); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := copyFile(absSrc, absDst); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleFileDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req DeleteRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.RemoveAll(abs); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleFileCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req CreateRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" || req.Type == "" {
+		http.Error(w, "path and type required", http.StatusBadRequest)
+		return
+	}
+	abs, err := filepath.Abs(req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Type == "dir" {
+		if err := os.MkdirAll(abs, 0755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := os.WriteFile(abs, []byte{}, 0644); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleFilePaste(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req PasteRequest
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourcePath == "" || req.TargetDir == "" {
+		http.Error(w, "sourcePath and targetDir required", http.StatusBadRequest)
+		return
+	}
+	absSrc, err := filepath.Abs(req.SourcePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	absTarget, err := filepath.Abs(req.TargetDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	srcName := filepath.Base(absSrc)
+	destPath := filepath.Join(absTarget, srcName)
+
+	info, err := os.Stat(absSrc)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if info.IsDir() {
+		if err := os.MkdirAll(destPath, 0755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := copyDir(absSrc, destPath); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := copyFile(absSrc, destPath); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }

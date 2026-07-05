@@ -1,7 +1,18 @@
-import { useEffect, useState, useCallback } from 'react'
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Loader2, GitBranch, RefreshCw, FileCode } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import {
+  ChevronRight, ChevronDown, Folder, FolderOpen, Loader2,
+  GitBranch, RefreshCw, FileCode, Pencil, Trash2, Copy,
+  ClipboardPaste, FolderPlus, MoreVertical
+} from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
 
 interface FileNode {
   name: string
@@ -27,6 +38,31 @@ export function FolderSidebar({
   noHeader,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number; y: number; path: string; name: string; isDir: boolean
+  } | null>(null)
+  const [clipboard, setClipboard] = useState<{ path: string } | null>(null)
+  const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [createTarget, setCreateTarget] = useState<{
+    parentPath: string; type: 'file' | 'dir'
+  } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    path: string; name: string; isDir: boolean
+  } | null>(null)
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [refreshCounter, setRefreshCounter] = useState(0)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [contextMenu])
 
   const handleRefresh = async () => {
     setLoading(true)
@@ -34,11 +70,121 @@ export function FolderSidebar({
     setLoading(false)
   }
 
+  const triggerRefresh = useCallback(() => {
+    setRefreshCounter((c) => c + 1)
+  }, [])
+
+  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+    const sep = oldPath.includes('\\') ? '\\' : '/'
+    const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
+    const newPath = parentDir + sep + newName
+    try {
+      const res = await fetch('/api/workspace/file/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPath, newPath }),
+      })
+      if (res.ok) {
+        setEditingPath(null)
+        triggerRefresh()
+        onRefresh()
+      }
+    } catch { /* ignore */ }
+  }, [triggerRefresh, onRefresh])
+
+  const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
+    const sep = parentPath.includes('\\') ? '\\' : '/'
+    const newPath = parentPath + sep + name
+    try {
+      const res = await fetch('/api/workspace/file/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath, type }),
+      })
+      if (res.ok) {
+        setCreateTarget(null)
+        triggerRefresh()
+        onRefresh()
+      }
+    } catch { /* ignore */ }
+  }, [triggerRefresh, onRefresh])
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return
+    try {
+      const res = await fetch('/api/workspace/file/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: deleteTarget.path }),
+      })
+      if (res.ok) {
+        setDeleteTarget(null)
+        triggerRefresh()
+      }
+    } catch { /* ignore */ }
+  }, [deleteTarget, triggerRefresh])
+
+  const handleCopy = useCallback((path: string) => {
+    setClipboard({ path })
+    setContextMenu(null)
+  }, [])
+
+  const handlePaste = useCallback(async (targetDir: string) => {
+    if (!clipboard) return
+    try {
+      const res = await fetch('/api/workspace/file/paste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourcePath: clipboard.path, targetDir }),
+      })
+      if (res.ok) {
+        setContextMenu(null)
+        triggerRefresh()
+        onRefresh()
+      }
+    } catch { /* ignore */ }
+  }, [clipboard, triggerRefresh, onRefresh])
+
+  const handleUpload = useCallback(async (targetDir: string, files: FileList) => {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const formData = new FormData()
+      formData.append('targetDir', targetDir)
+      formData.append('file', file)
+      try {
+        await fetch('/api/workspace/file/upload', { method: 'POST', body: formData })
+      } catch { /* ignore */ }
+    }
+    triggerRefresh()
+  }, [triggerRefresh])
+
+  const handleDragOver = useCallback((e: React.DragEvent, path: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverPath(path)
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverPath(null)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent, targetDir: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverPath(null)
+    if (e.dataTransfer.files.length > 0) {
+      handleUpload(targetDir, e.dataTransfer.files)
+    }
+  }, [handleUpload])
+
+  const showContextMenu = useCallback((path: string, name: string, isDir: boolean, x: number, y: number) => {
+    setContextMenu({ x, y, path, name, isDir })
+  }, [])
+
   const isGitRepo = Object.keys(gitStatuses).length > 0
 
   return (
     <div className="flex h-full flex-col bg-background select-none border-l border-border">
-      {/* Sidebar Header */}
       {!noHeader && (
       <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
         <span className="flex-1 text-xs font-medium text-muted-foreground truncate">
@@ -57,7 +203,6 @@ export function FolderSidebar({
       </div>
       )}
 
-      {/* Git Diff Bar */}
       {isGitRepo && (
         <div className="p-2 border-b border-border bg-muted/10 shrink-0">
           <Button
@@ -72,9 +217,17 @@ export function FolderSidebar({
         </div>
       )}
 
-      {/* File Tree */}
-      <ScrollArea className="flex-1">
-        <div>
+      <ScrollArea
+        className="flex-1"
+        onDragOver={(e) => {
+          if (workspacePath) handleDragOver(e, workspacePath)
+        }}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => {
+          if (workspacePath) handleDrop(e, workspacePath)
+        }}
+      >
+        <div className={dragOverPath === workspacePath ? 'ring-1 ring-primary rounded-sm' : ''}>
           {workspacePath ? (
             <LazyFileNode
               name={workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath}
@@ -84,6 +237,25 @@ export function FolderSidebar({
               startExpanded
               onOpenFile={onOpenFile}
               gitStatuses={gitStatuses}
+              editingPath={editingPath}
+              createTarget={createTarget}
+              clipboard={clipboard}
+              dragOverPath={dragOverPath}
+              refreshCounter={refreshCounter}
+              onShowContextMenu={showContextMenu}
+              onRenameSubmit={handleRenameSubmit}
+              onCancelRename={() => setEditingPath(null)}
+              onStartRename={(p) => setEditingPath(p)}
+              onCreateSubmit={handleCreateSubmit}
+              onCreateCancel={() => setCreateTarget(null)}
+              onStartCreate={(parentPath, type) => setCreateTarget({ parentPath, type })}
+              onCopy={handleCopy}
+              onPaste={handlePaste}
+              onDelete={(path, name, isDir) => { setContextMenu(null); setDeleteTarget({ path, name, isDir }) }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDropFiles={handleDrop}
+              onUpload={handleUpload}
             />
           ) : (
             <p className="text-xs text-muted-foreground italic text-center mt-4">
@@ -92,7 +264,104 @@ export function FolderSidebar({
           )}
         </div>
       </ScrollArea>
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextMenu.isDir && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'file' }) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <FileCode className="h-3.5 w-3.5" />
+                New File
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'dir' }) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                New Folder
+              </button>
+              <div className="border-t border-border my-0.5" />
+            </>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Rename
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCopy(contextMenu.path) }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            Copy
+          </button>
+          {clipboard && contextMenu.isDir && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handlePaste(contextMenu.path) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <ClipboardPaste className="h-3.5 w-3.5" />
+              Paste
+            </button>
+          )}
+          <div className="border-t border-border my-0.5" />
+          <button
+            onClick={() => { setContextMenu(null); setDeleteTarget({ path: contextMenu.path, name: contextMenu.name, isDir: contextMenu.isDir }) }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        </div>
+      )}
+
+      <DeleteDialog
+        target={deleteTarget}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
+  )
+}
+
+function DeleteDialog({
+  target,
+  onConfirm,
+  onCancel,
+}: {
+  target: { path: string; name: string; isDir: boolean } | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Dialog open={!!target} onOpenChange={(open) => { if (!open) onCancel() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Delete {target?.isDir ? 'Folder' : 'File'}</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete <span className="font-medium text-foreground">{target?.name}</span>?
+            {target?.isDir && <span className="block mt-1">All contents inside will be permanently removed.</span>}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="destructive" size="sm" onClick={onConfirm}>
+            Delete
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -104,6 +373,25 @@ interface LazyFileNodeProps {
   startExpanded?: boolean
   onOpenFile: (path: string) => void
   gitStatuses: Record<string, string>
+  editingPath: string | null
+  createTarget: { parentPath: string; type: 'file' | 'dir' } | null
+  clipboard: { path: string } | null
+  dragOverPath: string | null
+  refreshCounter: number
+  onShowContextMenu: (path: string, name: string, isDir: boolean, x: number, y: number) => void
+  onRenameSubmit: (oldPath: string, newName: string) => void
+  onCancelRename: () => void
+  onStartRename: (path: string) => void
+  onCreateSubmit: (parentPath: string, name: string, type: 'file' | 'dir') => void
+  onCreateCancel: () => void
+  onStartCreate: (parentPath: string, type: 'file' | 'dir') => void
+  onCopy: (path: string) => void
+  onPaste: (targetDir: string) => void
+  onDelete: (path: string, name: string, isDir: boolean) => void
+  onDragOver: (e: React.DragEvent, path: string) => void
+  onDragLeave: () => void
+  onDropFiles: (e: React.DragEvent, targetDir: string) => void
+  onUpload: (targetDir: string, files: FileList) => void
 }
 
 function LazyFileNode({
@@ -114,11 +402,34 @@ function LazyFileNode({
   startExpanded = false,
   onOpenFile,
   gitStatuses,
+  editingPath,
+  createTarget,
+  clipboard,
+  dragOverPath,
+  refreshCounter,
+  onShowContextMenu,
+  onRenameSubmit,
+  onCancelRename,
+  onStartRename,
+  onCreateSubmit,
+  onCreateCancel,
+  onStartCreate,
+  onCopy,
+  onPaste,
+  onDelete,
+  onDragOver,
+  onDragLeave,
+  onDropFiles,
+  onUpload,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
+  const [localEditValue, setLocalEditValue] = useState(name)
+  const [localCreateValue, setLocalCreateValue] = useState('')
+  const editInputRef = useRef<HTMLInputElement>(null)
+  const createInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (loaded || loading) return
@@ -127,7 +438,6 @@ function LazyFileNode({
       const res = await fetch(`/api/workspace/list-all?path=${encodeURIComponent(path)}`)
       if (res.ok) {
         const arr = (await res.json()) as FileNode[]
-        // Sort folders first, then files alphabetically
         const sorted = arr.sort((a, b) => {
           if (a.isDir && !b.isDir) return -1
           if (!a.isDir && b.isDir) return 1
@@ -147,6 +457,41 @@ function LazyFileNode({
     if (startExpanded) load()
   }, [startExpanded, load])
 
+  useEffect(() => {
+    if (loaded) {
+      setLoaded(false)
+      setChildren([])
+      if (expanded) load()
+    }
+  }, [refreshCounter])
+
+  const isCreating = createTarget?.parentPath === path
+  useEffect(() => {
+    if (isCreating && !expanded) {
+      setExpanded(true)
+      if (!loaded) load()
+    }
+  }, [isCreating, expanded, loaded, load])
+
+  useEffect(() => {
+    if (editingPath === path && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingPath, path])
+
+  useEffect(() => {
+    if (isCreating && createInputRef.current) {
+      createInputRef.current.focus()
+    }
+  }, [isCreating])
+
+  useEffect(() => {
+    if (editingPath === path) {
+      setLocalEditValue(name)
+    }
+  }, [editingPath, path, name])
+
   const toggle = () => {
     if (loading) return
     setExpanded((e) => {
@@ -156,7 +501,34 @@ function LazyFileNode({
     })
   }
 
-  // Get git status code for this node
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      onRenameSubmit(path, localEditValue)
+    } else if (e.key === 'Escape') {
+      onCancelRename()
+    }
+  }
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (localCreateValue.trim()) {
+        onCreateSubmit(path, localCreateValue.trim(), createTarget!.type)
+        setLocalCreateValue('')
+      }
+    } else if (e.key === 'Escape') {
+      onCreateCancel()
+      setLocalCreateValue('')
+    }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onShowContextMenu(path, name, isDir, e.clientX, e.clientY)
+  }
+
   const statusXY = gitStatuses[path] || ''
   const isModified = statusXY.includes('M')
   const isUntracked = statusXY.includes('?')
@@ -184,42 +556,77 @@ function LazyFileNode({
     )
   }
 
+  const isDragOver = dragOverPath === path && isDir
+
   return (
     <div className="w-full">
-      <button
-        onClick={() => {
-          if (isDir) {
-            toggle()
-          } else {
-            onOpenFile(path)
-          }
-        }}
-        className={`flex w-full items-center gap-1.5 px-2.5 py-1 text-xs hover:bg-accent/40 text-left select-none border-b border-transparent hover:border-accent/10 transition-colors ${textClass}`}
-        style={{ paddingLeft: `${depth * 12 + 10}px` }}
+      <div
+        className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
+        onContextMenu={handleContextMenu}
+        onDragOver={(e) => { if (isDir) onDragOver(e, path) }}
+        onDragLeave={onDragLeave}
+        onDrop={(e) => { if (isDir) onDropFiles(e, path) }}
       >
-        {isDir ? (
-          <>
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
-            )}
-            {expanded ? (
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-            ) : (
-              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-            )}
-          </>
-        ) : (
-          <>
-            <span className="w-3.5" />
-            <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-          </>
-        )}
-        <span className="truncate flex-1 font-medium">{name}</span>
-        {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50 shrink-0" />}
-        {statusBadge}
-      </button>
+        <button
+          onClick={() => {
+            if (isDir) {
+              toggle()
+            } else {
+              onOpenFile(path)
+            }
+          }}
+          className={`group flex w-full items-center gap-1.5 px-2.5 py-1 text-xs hover:bg-accent/40 text-left select-none border-b border-transparent hover:border-accent/10 transition-colors ${textClass} ${isDragOver ? 'bg-accent/20' : ''}`}
+          style={{ paddingLeft: `${depth * 12 + 10}px` }}
+        >
+          {isDir ? (
+            <>
+              {expanded ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
+              )}
+              {expanded ? (
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+              ) : (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+              )}
+            </>
+          ) : (
+            <>
+              <span className="w-3.5" />
+              <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+            </>
+          )}
+
+          {editingPath === path ? (
+            <input
+              ref={editInputRef}
+              value={localEditValue}
+              onChange={(e) => setLocalEditValue(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              onBlur={() => { if (localEditValue.trim() && localEditValue !== name) onRenameSubmit(path, localEditValue); else onCancelRename() }}
+              className="flex-1 min-w-0 bg-background border border-border rounded px-1 py-0 text-xs outline-none focus:ring-1 focus:ring-ring"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="truncate flex-1 font-medium">{name}</span>
+          )}
+
+          {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50 shrink-0" />}
+          {statusBadge}
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onShowContextMenu(path, name, isDir, e.currentTarget.getBoundingClientRect().right - 140, e.currentTarget.getBoundingClientRect().bottom + 2)
+            }}
+            className="h-5 w-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            title="More"
+          >
+            <MoreVertical className="h-3 w-3" />
+          </button>
+        </button>
+      </div>
 
       {isDir && expanded && loaded && (
         <div className="w-full">
@@ -232,9 +639,49 @@ function LazyFileNode({
               depth={depth + 1}
               onOpenFile={onOpenFile}
               gitStatuses={gitStatuses}
+              editingPath={editingPath}
+              createTarget={createTarget}
+              clipboard={clipboard}
+              dragOverPath={dragOverPath}
+              refreshCounter={refreshCounter}
+              onShowContextMenu={onShowContextMenu}
+              onRenameSubmit={onRenameSubmit}
+              onCancelRename={onCancelRename}
+              onStartRename={onStartRename}
+              onCreateSubmit={onCreateSubmit}
+              onCreateCancel={onCreateCancel}
+              onStartCreate={onStartCreate}
+              onCopy={onCopy}
+              onPaste={onPaste}
+              onDelete={onDelete}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDropFiles={onDropFiles}
+              onUpload={onUpload}
             />
           ))}
-          {children.length === 0 && (
+
+          {isCreating && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs" style={{ paddingLeft: `${(depth + 1) * 12 + 10}px` }}>
+              {createTarget?.type === 'dir' ? (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+              ) : (
+                <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+              )}
+              <input
+                ref={createInputRef}
+                value={localCreateValue}
+                onChange={(e) => setLocalCreateValue(e.target.value)}
+                onKeyDown={handleCreateKeyDown}
+                onBlur={() => { if (localCreateValue.trim()) onCreateSubmit(path, localCreateValue.trim(), createTarget!.type); else onCreateCancel() }}
+                placeholder={createTarget?.type === 'dir' ? 'folder name' : 'file name'}
+                className="flex-1 min-w-0 bg-background border border-border rounded px-1 py-0 text-xs outline-none focus:ring-1 focus:ring-ring"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+
+          {children.length === 0 && !isCreating && (
             <p
               className="text-[10px] text-muted-foreground/50 px-2 py-0.5 italic"
               style={{ paddingLeft: `${(depth + 1) * 12 + 10}px` }}
