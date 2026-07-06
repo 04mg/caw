@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, type PointerEvent } from 'react'
 import { Terminal, Plus, X, GitBranch, FileCode } from 'lucide-react'
-import { agentTypes } from '@/lib/agentTypes'
+import { agentTypes, getEffectiveAgentCmd } from '@/lib/agentTypes'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -192,7 +192,7 @@ export function DraggableTabBar({
                   return (
                     <DropdownMenuItem
                       key={agentInfo.id}
-                      onClick={() => onAdd(agentInfo.cmd, agentInfo.id, agentInfo.label)}
+                      onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label)}
                     >
                       <IconComponent size={16} className="h-4 w-4" />
                       <span>{agentInfo.label}</span>
