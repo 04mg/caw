@@ -32,3 +32,6 @@ Thumbs.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Tools
+graphify-out/

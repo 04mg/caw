@@ -34,7 +34,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [copilotVerificationURI, setCopilotVerificationURI] = useState('')
   const [copilotInterval, setCopilotInterval] = useState(5)
   const copilotIntervalRef = useRef(5)
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [copilotDeviceError, setCopilotDeviceError] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama'>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
