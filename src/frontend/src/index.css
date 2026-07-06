@@ -157,6 +157,7 @@ html, body, #root {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
+  background-color: transparent !important;
 }
 
 .xterm-viewport::-webkit-scrollbar {

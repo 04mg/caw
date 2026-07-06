@@ -646,7 +646,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+              <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
                     <div className="flex flex-col gap-1.5">
