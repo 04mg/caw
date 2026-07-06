@@ -14,6 +14,14 @@ export interface TerminalInstance {
   _replaying: boolean
   /** @internal messages queued during replay */
   _pendingQueue: string[]
+  /**
+   * @internal Last-set state of the DEC private modes that affect input
+   * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
+   * Tracked from the live WS stream so a re-attached xterm.js instance can
+   * re-enter the same mode the running TUI expects, even after the 10k
+   * buffer cap evicted the original mode-set sequence.
+   */
+  _modes: Map<number, boolean>
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -96,6 +104,35 @@ function wireInput(inst: TerminalInstance) {
   })
 }
 
+// DEC private modes whose state must be re-applied to a re-attached
+// xterm.js instance so mouse clicks / wheel scroll / bracketed paste keep
+// working. Mirrors the server-side syncModes set in session.go.
+const SYNC_MODES = new Set([1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004])
+// Matches a single DEC private mode set/reset, e.g. "\x1b[?1003h" or
+// "\x1b[?2004l". TUI apps emit one mode per sequence.
+const MODE_RE = /\x1b\[\?(\d+)([hl])/g
+
+function trackModes(inst: TerminalInstance, data: string) {
+  let m: RegExpExecArray | null
+  MODE_RE.lastIndex = 0
+  while ((m = MODE_RE.exec(data)) !== null) {
+    const n = parseInt(m[1], 10)
+    if (SYNC_MODES.has(n)) {
+      inst._modes.set(n, m[2] === 'h')
+    }
+  }
+}
+
+function syncModes(inst: TerminalInstance): string {
+  const set: number[] = []
+  for (const [n, on] of inst._modes) {
+    if (on) set.push(n)
+  }
+  set.sort((a, b) => a - b)
+  if (set.length === 0) return ''
+  return '\x1b[?' + set.join(';') + 'h'
+}
+
 function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
@@ -121,6 +158,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
     try {
       const msg = JSON.parse(event.data)
       if (msg.type === 'output') {
+        // Track mode state from the live stream so a later re-attach can
+        // re-apply it even if the original sequence was evicted from the
+        // 10k-entry buffer.
+        trackModes(inst, msg.data)
         if (inst._replaying) {
           inst._pendingQueue.push(msg.data)
           return
@@ -178,10 +219,20 @@ export async function attachTerminal(
       term.write(existing.buffer.join(''), () => {
         term.scrollToBottom()
         existing._replaying = false
+        // Re-apply the tracked DEC private modes (mouse tracking, SGR
+        // mouse, bracketed paste, etc.) so the fresh xterm.js instance
+        // enters the same input-routing mode the running TUI expects.
+        // Without this, clicks and wheel scroll break after switching
+        // tabs / remounting, because the new xterm.js starts with all
+        // private modes OFF even though the TUI still has them on.
+        const sync = syncModes(existing)
+        if (sync) term.write(sync)
         flushPending(existing)
       })
     } else {
       existing._replaying = false
+      const sync = syncModes(existing)
+      if (sync) term.write(sync)
       flushPending(existing)
     }
 
@@ -201,7 +252,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [] }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map() }
   registry.set(leafId, inst)
   wireInput(inst)
 
