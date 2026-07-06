@@ -3,7 +3,7 @@ import { Search, Terminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { agentTypes } from '@/lib/agentTypes'
+import { agentTypes, getEffectiveAgentCmd } from '@/lib/agentTypes'
 
 interface AgentInfo {
   id: string
@@ -131,7 +131,7 @@ export function CommandPalette({
         label: `Launch ${agent.label}`,
         type: 'command',
         icon: <IconComponent className="h-4 w-4" />,
-        action: () => { onAddAgent(agent.cmd, agent.id, agent.label); onOpenChange(false) },
+        action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label); onOpenChange(false) },
       })
     }
 

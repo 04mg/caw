@@ -16,6 +16,36 @@ export interface AgentType {
   icon: any
 }
 
+const AGENT_CMDS_KEY = 'caw:agentCmds'
+
+export function getAgentCmdOverrides(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(AGENT_CMDS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+export function setAgentCmdOverride(agentId: string, cmd: string[] | null) {
+  const overrides = getAgentCmdOverrides()
+  if (cmd && cmd.length > 0) {
+    overrides[agentId] = cmd
+  } else {
+    delete overrides[agentId]
+  }
+  localStorage.setItem(AGENT_CMDS_KEY, JSON.stringify(overrides))
+}
+
+export function getEffectiveAgentCmd(agentId: string, defaultCmd: string[]): string[] {
+  const overrides = getAgentCmdOverrides()
+  const override = overrides[agentId]
+  if (override && Array.isArray(override) && override.length > 0) return override
+  return defaultCmd
+}
+
 export const agentTypes: Record<string, AgentType> = {
   terminal: {
     id: 'terminal',

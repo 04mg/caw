@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
-import { agentTypes } from '@/lib/agentTypes'
+import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 
 interface SettingsDialogProps {
@@ -38,6 +38,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [copilotDeviceError, setCopilotDeviceError] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama'>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
+  const [agentStep, setAgentStep] = useState<1 | 2>(1)
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('')
+  const [agentCmdDraft, setAgentCmdDraft] = useState<string>('')
   const [agyInstalled, setAgyInstalled] = useState(true)
   const [claudeInstalled, setClaudeInstalled] = useState(true)
   const [codexInstalled, setCodexInstalled] = useState(true)
@@ -80,6 +83,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   // Reset limitStep when activeSection changes or dialog closes
   useEffect(() => {
     setLimitStep(1)
+    setAgentStep(1)
   }, [activeSection, open])
 
   // Load settings on open
@@ -353,44 +357,134 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
-          {activeSection === 'agents' && (
-            <div className="flex flex-col h-full gap-4">
+          {activeSection === 'agents' && agentStep === 1 && (
+            <div className="flex flex-col h-full gap-4 animate-in fade-in duration-200">
               <div>
                 <h3 className="text-sm font-medium mb-1">Agents</h3>
-                <p className="text-xs text-muted-foreground">Enable or disable agents visible in the terminal launcher.</p>
+                <p className="text-xs text-muted-foreground">Enable or disable agents visible in the terminal launcher. Configure the command each agent runs.</p>
               </div>
 
-              <div className="flex flex-col gap-2 mt-2 pb-4">
+              <div className="flex flex-col gap-2.5 mt-2 pb-4">
                 {Object.values(agentTypes)
                   .filter((agent) => agent.id !== 'terminal')
                   .map((agent) => {
                     const isEnabled = !disabledAgents.includes(agent.id)
                     const Icon = agent.icon
+                    const overrides = getAgentCmdOverrides()
+                    const effectiveCmd = overrides[agent.id] || agent.cmd
                     return (
                       <div
                         key={agent.id}
-                        onClick={() => toggleAgent(agent.id)}
-                        className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent/30 cursor-pointer select-none transition-colors"
+                        className="flex items-center justify-between p-3 rounded-xl border border-border bg-card select-none transition-all group duration-200"
                       >
-                        <div className="flex items-center gap-3">
+                        <div
+                          onClick={() => toggleAgent(agent.id)}
+                          className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-accent/30 rounded-lg transition-colors"
+                        >
                           <div className="h-7 w-7 rounded bg-muted flex items-center justify-center text-muted-foreground shrink-0">
                             {Icon && <Icon className="h-4 w-4" />}
                           </div>
                           <div>
                             <p className="text-xs font-medium">{agent.label}</p>
-                            <p className="text-[10px] text-muted-foreground font-mono">{agent.cmd.join(' ')}</p>
+                            <p className="text-[10px] text-muted-foreground font-mono">{effectiveCmd.join(' ')}</p>
                           </div>
                         </div>
-                        <div
-                          className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${
-                            isEnabled ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'
-                          }`}
-                        >
-                          {isEnabled && <Check className="h-3 w-3 stroke-[3]" />}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div
+                            onClick={() => toggleAgent(agent.id)}
+                            className={`h-4 w-4 rounded border flex items-center justify-center transition-all cursor-pointer ${
+                              isEnabled ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'
+                            }`}
+                          >
+                            {isEnabled && <Check className="h-3 w-3 stroke-[3]" />}
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedAgentId(agent.id)
+                              const existing = getAgentCmdOverrides()[agent.id]
+                              setAgentCmdDraft((existing || agent.cmd).join(' '))
+                              setAgentStep(2)
+                            }}
+                            className="text-muted-foreground group-hover:text-primary transition-colors text-xs font-semibold flex items-center gap-1.5 px-1.5 py-1 rounded-md hover:bg-accent/40 cursor-pointer outline-none focus:ring-1 focus:ring-ring"
+                            title={`Configure ${agent.label}`}
+                          >
+                            Configure &rarr;
+                          </button>
                         </div>
                       </div>
                     )
                   })}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'agents' && agentStep === 2 && (
+            <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
+              <div className="flex flex-col gap-2">
+                <div>
+                  <button
+                    onClick={() => setAgentStep(1)}
+                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring"
+                    title="Back to Agents"
+                  >
+                    <ArrowLeft className="h-4 w-4 shrink-0" />
+                  </button>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold select-none">
+                    {agentTypes[selectedAgentId]?.label || 'Agent'} Configuration
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Adjust the command that will be run when launching this agent. Use shell-style quoting for arguments containing spaces.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-1">
+                <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Default Command</label>
+                    <p className="text-[10px] text-muted-foreground font-mono leading-normal">
+                      {agentTypes[selectedAgentId]?.cmd.join(' ') || ''}
+                    </p>
+                  </div>
+                  <div className="border-t border-border pt-3 flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Custom Command (Optional)</label>
+                    <input
+                      type="text"
+                      value={agentCmdDraft}
+                      onChange={(e) => setAgentCmdDraft(e.target.value)}
+                      placeholder={agentTypes[selectedAgentId]?.cmd.join(' ') || 'e.g. claude --dangerously-skip-permissions'}
+                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                    />
+                    <p className="text-[10px] text-muted-foreground">Tokens are split on whitespace. Leave empty to restore the sane default.</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <button
+                        onClick={() => {
+                          const trimmed = agentCmdDraft.trim()
+                          if (!trimmed) {
+                            setAgentCmdOverride(selectedAgentId, null)
+                          } else {
+                            setAgentCmdOverride(selectedAgentId, trimmed.split(/\s+/))
+                          }
+                          setAgentStep(1)
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAgentCmdOverride(selectedAgentId, null)
+                          setAgentCmdDraft(agentTypes[selectedAgentId]?.cmd.join(' ') || '')
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                      >
+                        Reset to Default
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
