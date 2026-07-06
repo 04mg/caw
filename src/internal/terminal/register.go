@@ -26,6 +26,11 @@ type KillRequest struct {
 	DeleteBranch bool   `json:"deleteBranch"`
 }
 
+var (
+	OnSessionStart func(id string, cmd []string, cwd string)
+	OnSessionExit  func(id string)
+)
+
 func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader) {
 	mux.HandleFunc("/api/terminal/create", func(w http.ResponseWriter, r *http.Request) {
 		var req CreateRequest
@@ -82,9 +87,12 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			doCleanup := !stillInUse
 			sessionsMu.Unlock()
 
-			if !doCleanup {
-				return
-			}
+		if OnSessionExit != nil {
+			OnSessionExit(id)
+		}
+		if !doCleanup {
+			return
+		}
 
 			// Clean up Git worktree if cwd is an agent worktree
 			home, err := os.UserHomeDir()
@@ -123,6 +131,10 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		sessionsMu.Lock()
 		sessions[id] = sess
 		sessionsMu.Unlock()
+
+		if OnSessionStart != nil {
+			OnSessionStart(id, req.Cmd, cwd)
+		}
 
 		go sess.ReadLoop()
 
