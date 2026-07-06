@@ -60,12 +60,11 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		}
 
 		sess := &Session{
-			ID:           id,
-			Pty:          ps,
-			Cwd:          cwd,
-			conns:        make(map[*websocket.Conn]bool),
-			connDims:     make(map[*websocket.Conn]connDim),
-			scrollback:   []byte{},
+			ID:         id,
+			Pty:        ps,
+			Cwd:        cwd,
+			conns:      make(map[*websocket.Conn]bool),
+			scrollback: []byte{},
 		}
 		sess.onExit = func() {
 			sessionsMu.Lock()
@@ -136,6 +135,16 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		// so that xterm.js stays in the normal buffer (with scrollback).
 		scrollback := make([]byte, len(sess.scrollback))
 		copy(scrollback, sess.scrollback)
+		// If the PTY already has a size, push it to the new client so it
+		// fits its xterm.js to the shared size immediately.
+		if sess.cols > 0 && sess.rows > 0 {
+			msg, _ := json.Marshal(map[string]any{
+				"type": "resize",
+				"cols": sess.cols,
+				"rows": sess.rows,
+			})
+			c.WriteMessage(websocket.TextMessage, msg)
+		}
 		sess.mu.Unlock()
 
 		if len(scrollback) > 0 {
@@ -152,8 +161,6 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		defer func() {
 			sess.mu.Lock()
 			delete(sess.conns, c)
-			delete(sess.connDims, c)
-			sess.recomputeSize()
 			sess.mu.Unlock()
 			c.Close()
 		}()
@@ -184,8 +191,7 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 					continue
 				}
 				sess.mu.Lock()
-				sess.connDims[c] = connDim{cols: cols, rows: rows}
-				sess.recomputeSize()
+				sess.resizePTY(cols, rows)
 				sess.mu.Unlock()
 			}
 		}

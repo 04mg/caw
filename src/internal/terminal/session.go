@@ -8,11 +8,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type connDim struct {
-	cols int
-	rows int
-}
-
 type Session struct {
 	ID           string
 	Pty          *Pty
@@ -20,43 +15,46 @@ type Session struct {
 	DeleteBranch bool
 	mu           sync.Mutex
 	conns        map[*websocket.Conn]bool
-	connDims     map[*websocket.Conn]connDim
-	lastCols     int
-	lastRows     int
+	cols         int
+	rows         int
 	scrollback   []byte
 	onExit       func()
 }
 
-// recomputeSize resizes the PTY to the smallest cols/rows across all
-// connected clients so output stays readable for every viewer. A single
-// PTY can only have one size; using the min guarantees no client gets
-// output wrapped for a larger size than it can show.
-// Must be called with s.mu held.
-func (s *Session) recomputeSize() {
-	if len(s.connDims) == 0 {
+// resizePTY resizes the single PTY to cols/rows and notifies every
+// connected client of the new dimensions so each client can fit its
+// local xterm.js to match. A single PTY has only one size; keeping all
+// viewers at that size is what makes the terminal consistent across
+// clients. Must be called with s.mu held.
+func (s *Session) resizePTY(cols, rows int) {
+	if cols <= 0 || rows <= 0 {
 		return
 	}
-	minCols, minRows := -1, -1
-	for _, d := range s.connDims {
-		if d.cols <= 0 || d.rows <= 0 {
-			continue
-		}
-		if minCols < 0 || d.cols < minCols {
-			minCols = d.cols
-		}
-		if minRows < 0 || d.rows < minRows {
-			minRows = d.rows
-		}
-	}
-	if minCols <= 0 || minRows <= 0 {
+	if s.cols == cols && s.rows == rows && len(s.conns) > 0 {
 		return
 	}
-	if s.lastCols == minCols && s.lastRows == minRows {
+	s.cols = cols
+	s.rows = rows
+	_ = s.Pty.ptmx.Resize(cols, rows)
+	s.broadcastResize()
+}
+
+// broadcastResize sends the current PTY size to every connected client
+// so each one can fit its local xterm.js to match. Must be called with s.mu held.
+func (s *Session) broadcastResize() {
+	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
-	s.lastCols = minCols
-	s.lastRows = minRows
-	s.Pty.ptmx.Resize(minCols, minRows)
+	msg, _ := json.Marshal(map[string]any{
+		"type": "resize",
+		"cols": s.cols,
+		"rows": s.rows,
+	})
+	for c := range s.conns {
+		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+			delete(s.conns, c)
+		}
+	}
 }
 
 // stripAlternateScreen removes the alternate screen toggle sequences
