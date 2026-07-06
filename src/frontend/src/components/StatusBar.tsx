@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp } from 'lucide-react'
+import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp, Workflow } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
@@ -49,10 +49,11 @@ interface AllQuotas {
 
 interface StatusBarProps {
 	workspaceName?: string
+	worktreeBranch?: string
 	onOpenSettings: () => void
 }
 
-export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
 	const [isLoading, setIsLoading] = useState(false)
@@ -210,6 +211,15 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 				<span className="font-medium text-foreground/80">
 					{workspaceName ? `Workspace: ${workspaceName}` : 'Ready'}
 				</span>
+				{worktreeBranch && (
+					<>
+						<span className="text-border select-none">·</span>
+						<span className="flex items-center gap-1 text-foreground/70">
+							<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
+							<span className="font-mono text-[11px]">{worktreeBranch}</span>
+						</span>
+					</>
+				)}
 			</div>
 
 			<DropdownMenu>
