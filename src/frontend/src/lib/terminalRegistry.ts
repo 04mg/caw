@@ -138,10 +138,11 @@ function connectWs(inst: TerminalInstance, backendId: string) {
   }
   ws.onclose = () => {
     if (inst.ws === ws) {
+      // The WebSocket closed (page reload, navigation, network drop).
+      // Do NOT kill the backend PTY — it must keep running with no
+      // clients, so reconnecting later resumes the same session.
+      // Actual process exit is reported separately via the "exit" message.
       inst.ws = null
-      if (!inst.exited && registry.has(inst.leafId)) {
-        onTerminalExit?.(inst.leafId)
-      }
     }
   }
 }

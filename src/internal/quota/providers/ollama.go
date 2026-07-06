@@ -3,6 +3,7 @@ package providers
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -51,12 +52,14 @@ func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 	}
 	html := string(bodyBytes)
 
-	// Regex parsing of Session usage
+	// Regex parsing of Session usage. Ollama renders the value as a
+	// decimal percentage (e.g. "3.5%"), so match a floating-point number
+	// and round to the nearest integer.
 	sessionUsed := 0
-	sessionRegex := regexp.MustCompile(`aria-label="Session usage (\d+)% used"`)
+	sessionRegex := regexp.MustCompile(`aria-label="Session usage ([0-9]+(?:\.[0-9]+)?)% used"`)
 	if matches := sessionRegex.FindStringSubmatch(html); len(matches) >= 2 {
-		if val, err := strconv.Atoi(matches[1]); err == nil {
-			sessionUsed = val
+		if val, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			sessionUsed = int(math.Round(val))
 		}
 	} else if strings.Contains(html, "Weekly limit reached") {
 		// Fallback if weekly limit is reached (blocks sessions)
@@ -65,10 +68,10 @@ func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 
 	// Regex parsing of Weekly usage
 	weeklyUsed := 0
-	weeklyRegex := regexp.MustCompile(`aria-label="Weekly usage (\d+)% used"`)
+	weeklyRegex := regexp.MustCompile(`aria-label="Weekly usage ([0-9]+(?:\.[0-9]+)?)% used"`)
 	if matches := weeklyRegex.FindStringSubmatch(html); len(matches) >= 2 {
-		if val, err := strconv.Atoi(matches[1]); err == nil {
-			weeklyUsed = val
+		if val, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			weeklyUsed = int(math.Round(val))
 		}
 	}
 
