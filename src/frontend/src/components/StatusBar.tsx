@@ -287,7 +287,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 
 					<DropdownMenuSeparator className="bg-border" />
 
-					<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+					<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
 						{!isConfigured ? (
 							<div className="px-2 py-4 text-center text-xs text-muted-foreground">
 								No providers configured.

@@ -311,7 +311,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         </div>
 
         {/* Content Pane */}
-        <div className="flex-1 flex flex-col p-5 overflow-y-auto">
+        <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
           {activeSection === 'appearance' && (
             <div className="flex flex-col h-full gap-4">
               <div>
@@ -440,7 +440,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-1">
+              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                 <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Default Command</label>
@@ -626,7 +626,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto pr-1">
+              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
                     <div className="flex flex-col gap-1.5">

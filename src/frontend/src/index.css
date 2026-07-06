@@ -162,6 +162,17 @@ html, body, #root {
 .xterm-viewport::-webkit-scrollbar {
   width: 6px;
 }
+
+.thin-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
 .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }
