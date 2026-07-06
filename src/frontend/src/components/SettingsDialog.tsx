@@ -615,7 +615,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
           {activeSection === 'limits' && limitStep === 2 && (
             <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 shrink-0">
                 <div>
                   <button
                     onClick={() => setLimitStep(1)}
@@ -641,11 +641,12 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
 
               {quotas?.[selectedLimitProvider]?.error && (
-                <div className="px-4 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                <div className="px-4 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400 shrink-0">
                   Error: {quotas[selectedLimitProvider].error}
                 </div>
               )}
 
+              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
               <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
@@ -879,6 +880,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     </div>
                   </div>
                 )}
+              </div>
               </div>
             </div>
           )}

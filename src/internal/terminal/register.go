@@ -70,7 +70,21 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		sess.onExit = func() {
 			sessionsMu.Lock()
 			delete(sessions, id)
+
+			// Only clean up worktree if no other session still uses this cwd
+			stillInUse := false
+			for _, s := range sessions {
+				if s.Cwd == cwd {
+					stillInUse = true
+					break
+				}
+			}
+			doCleanup := !stillInUse
 			sessionsMu.Unlock()
+
+			if !doCleanup {
+				return
+			}
 
 			// Clean up Git worktree if cwd is an agent worktree
 			home, err := os.UserHomeDir()
