@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
-import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
+import { Monitor, Bot, Terminal, Moon, Sun, Key, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
+import { SettingsItem } from '@/components/SettingsItem'
 
 interface SettingsDialogProps {
   open: boolean
@@ -361,57 +362,26 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <div className="flex flex-col h-full gap-4 animate-in fade-in duration-200">
               <div>
                 <h3 className="text-sm font-medium mb-1">Agents</h3>
-                <p className="text-xs text-muted-foreground">Enable or disable agents visible in the terminal launcher. Configure the command each agent runs.</p>
+                <p className="text-xs text-muted-foreground">Configure the command each agent runs for launching in the terminal.</p>
               </div>
 
               <div className="flex flex-col gap-2.5 mt-2 pb-4">
                 {Object.values(agentTypes)
                   .filter((agent) => agent.id !== 'terminal')
                   .map((agent) => {
-                    const isEnabled = !disabledAgents.includes(agent.id)
                     const Icon = agent.icon
-                    const overrides = getAgentCmdOverrides()
-                    const effectiveCmd = overrides[agent.id] || agent.cmd
                     return (
-                      <div
+                      <SettingsItem
                         key={agent.id}
-                        className="flex items-center justify-between p-3 rounded-xl border border-border bg-card select-none transition-all group duration-200"
-                      >
-                        <div
-                          onClick={() => toggleAgent(agent.id)}
-                          className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-accent/30 rounded-lg transition-colors"
-                        >
-                          <div className="h-7 w-7 rounded bg-muted flex items-center justify-center text-muted-foreground shrink-0">
-                            {Icon && <Icon className="h-4 w-4" />}
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium">{agent.label}</p>
-                            <p className="text-[10px] text-muted-foreground font-mono">{effectiveCmd.join(' ')}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div
-                            onClick={() => toggleAgent(agent.id)}
-                            className={`h-4 w-4 rounded border flex items-center justify-center transition-all cursor-pointer ${
-                              isEnabled ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'
-                            }`}
-                          >
-                            {isEnabled && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                          <button
-                            onClick={() => {
-                              setSelectedAgentId(agent.id)
-                              const existing = getAgentCmdOverrides()[agent.id]
-                              setAgentCmdDraft((existing || agent.cmd).join(' '))
-                              setAgentStep(2)
-                            }}
-                            className="text-muted-foreground group-hover:text-primary transition-colors text-xs font-semibold flex items-center gap-1.5 px-1.5 py-1 rounded-md hover:bg-accent/40 cursor-pointer outline-none focus:ring-1 focus:ring-ring"
-                            title={`Configure ${agent.label}`}
-                          >
-                            Configure &rarr;
-                          </button>
-                        </div>
-                      </div>
+                        icon={Icon}
+                        label={agent.label}
+                        onClick={() => {
+                          setSelectedAgentId(agent.id)
+                          const existing = getAgentCmdOverrides()[agent.id]
+                          setAgentCmdDraft((existing || agent.cmd).join(' '))
+                          setAgentStep(2)
+                        }}
+                      />
                     )
                   })}
               </div>
@@ -483,6 +453,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         Reset to Default
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0 mt-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enable Agent</label>
+                      <p className="text-[10px] text-muted-foreground">Show in terminal launcher and command palette.</p>
+                    </div>
+                    <button
+                      onClick={() => toggleAgent(selectedAgentId)}
+                      className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring ${
+                        !disabledAgents.includes(selectedAgentId) ? 'bg-primary' : 'bg-muted-foreground/30'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                          !disabledAgents.includes(selectedAgentId) ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -557,36 +548,24 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
               <div className="grid grid-cols-1 gap-2.5 mt-2 pb-4">
                 {[
-                  { id: 'claude', label: 'Claude', description: 'Anthropic Claude Code OAuth usage', icon: Claude.Color, show: claudeInstalled },
-                  { id: 'codex', label: 'Codex', description: 'OpenAI Codex CLI OAuth usage', icon: Codex.Color, show: codexInstalled },
-                  { id: 'copilot', label: 'GitHub Copilot', description: 'Copilot internal usage API (GitHub OAuth token)', icon: GithubCopilot, show: true },
-                  { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity.Color, show: agyInstalled },
-                  { id: 'opencode', label: 'OpenCode Go', description: 'OpenCode Go workspace authorization', icon: OpenCode, show: true },
-                  { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama, show: true },
+                  { id: 'claude', label: 'Claude', icon: Claude.Color, show: claudeInstalled },
+                  { id: 'codex', label: 'Codex', icon: Codex.Color, show: codexInstalled },
+                  { id: 'copilot', label: 'GitHub Copilot', icon: GithubCopilot, show: true },
+                  { id: 'antigravity', label: 'Antigravity', icon: Antigravity.Color, show: agyInstalled },
+                  { id: 'opencode', label: 'OpenCode Go', icon: OpenCode, show: true },
+                  { id: 'ollama', label: 'Ollama', icon: Ollama, show: true },
                 ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
                   return (
-                    <button
+                    <SettingsItem
                       key={prov.id}
+                      icon={Icon}
+                      label={prov.label}
                       onClick={() => {
                         setSelectedLimitProvider(prov.id as any)
                         setLimitStep(2)
                       }}
-                      className="flex items-center justify-between p-3 rounded-xl border border-border bg-card hover:bg-accent/40 cursor-pointer select-none transition-all group duration-200 text-left w-full outline-none focus:ring-1 focus:ring-ring"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                          <Icon className="h-5 w-5 text-foreground" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold text-foreground">{prov.label}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{prov.description}</p>
-                        </div>
-                      </div>
-                      <div className="text-muted-foreground group-hover:text-primary transition-colors text-xs font-semibold flex items-center gap-1.5 pr-1">
-                        Configure &rarr;
-                      </div>
-                    </button>
+                    />
                   )
                 })}
               </div>
