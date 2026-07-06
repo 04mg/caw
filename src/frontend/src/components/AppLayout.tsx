@@ -23,7 +23,7 @@ import {
   subscribeRemoteState,
 } from '@/lib/workspaceStore'
 import { DraggableTabBar } from '@/components/DraggableTabBar'
-import { destroyTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
+import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Settings, Folder, Workflow, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -122,7 +122,16 @@ export function AppLayout() {
         for (const w of prev) for (const t of w.layouts) for (const id of collectLeafIds(t.layout)) prevLeafIds.add(id)
         const nextLeafIds = new Set<string>()
         for (const w of remote.workspaces) for (const t of w.layouts) for (const id of collectLeafIds(t.layout)) nextLeafIds.add(id)
-        for (const id of prevLeafIds) if (!nextLeafIds.has(id)) destroyTerminal(id)
+        // A leaf disappearing from the shared workspace state usually means
+        // another browser closed or reshaped a tab. Only release this
+        // client's local hold on the terminal (dispose xterm.js, drop the
+        // WebSocket) — do NOT kill the shared backend PTY, since another
+        // client may still be viewing it. Killing is the job of the client
+        // that actually closed the pane (forceClosePane/Tab), which calls
+        // destroyTerminal. Without this distinction, opening a second
+        // browser would kill OpenCode running in the first browser
+        // whenever the two clients' views of the workspace differ.
+        for (const id of prevLeafIds) if (!nextLeafIds.has(id)) releaseTerminal(id)
 
         return remote.workspaces.map((rw) => {
           const focus = localFocusRef.current[rw.id]
