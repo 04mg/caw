@@ -35,3 +35,8 @@ Thumbs.db
 
 # Tools
 graphify-out/
+.agents/
+.opencode/
+.serena/
+skills-lock.json
+AGENTS.md
