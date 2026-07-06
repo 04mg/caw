@@ -281,6 +281,27 @@ func findAgyPath() (string, error) {
 	return "", fmt.Errorf("agy binary not found")
 }
 
+func getDescendantPids(rootPid int) []int {
+	pids := []int{rootPid}
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("ParentProcessId=%d", rootPid), "get", "ProcessId", "/value")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err == nil {
+			for _, line := range strings.Split(out.String(), "\n") {
+				line = strings.TrimSpace(strings.ReplaceAll(line, "\r", ""))
+				if strings.HasPrefix(line, "ProcessId=") {
+					pidStr := strings.TrimPrefix(line, "ProcessId=")
+					if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
+						pids = append(pids, getDescendantPids(pid)...)
+					}
+				}
+			}
+		}
+	}
+	return pids
+}
+
 func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 	agyPath, err := findAgyPath()
 	if err != nil {
@@ -297,25 +318,26 @@ func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 		return nil, err
 	}
 
+	rootPid := cmd.Process.Pid
+
 	defer func() {
 		stdin.Close()
 		if runtime.GOOS == "windows" {
-			exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+			exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(rootPid)).Run()
 		} else {
 			cmd.Process.Kill()
 		}
 		cmd.Wait()
 	}()
 
+	// Poll for up to 10 seconds: scan the full process tree for listening ports
 	var ports []int
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 50; i++ {
 		time.Sleep(200 * time.Millisecond)
-		pids, err := findAgyPids()
-		if err == nil && len(pids) > 0 {
-			ports, err = findPortsForPids(pids)
-			if err == nil && len(ports) > 0 {
-				break
-			}
+		allPids := getDescendantPids(rootPid)
+		ports, err = findPortsForPids(allPids)
+		if err == nil && len(ports) > 0 {
+			break
 		}
 	}
 
