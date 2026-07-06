@@ -76,7 +76,7 @@ func Register(mux *http.ServeMux, store *state.Store) {
 
 			config, ok := settings[name]
 			if !ok {
-				if name == "antigravity" {
+				if name == "antigravity" || name == "claude" || name == "codex" || name == "copilot" {
 					config = make(map[string]string)
 				} else {
 					continue

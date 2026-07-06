@@ -46,9 +46,12 @@ type CheckChangesResponse struct {
 func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/available", func(w http.ResponseWriter, r *http.Request) {
 		agentsList := []Info{
-			{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--dangerously-skip-permissions"}},
-			{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},
 			{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}},
+			{ID: "codex", Label: "Codex CLI", Cmd: []string{"codex", "--sandbox", "workspace-write", "--ask-for-approval", "never"}},
+			{ID: "copilot", Label: "GitHub Copilot", Cmd: []string{"copilot", "--allow-all-tools", "--allow-all-paths"}},
+			{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},
+			{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--dangerously-skip-permissions"}},
+			{ID: "pi", Label: "Pi", Cmd: []string{"pi"}},
 		}
 		available := []Info{}
 		for _, a := range agentsList {

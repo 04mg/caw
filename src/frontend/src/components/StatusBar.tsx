@@ -6,7 +6,7 @@ import {
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
 interface Quota {
@@ -45,6 +45,9 @@ interface AllQuotas {
 	antigravity?: ProviderData
 	opencode?:    ProviderData
 	ollama?:      ProviderData
+	claude?:     ProviderData
+	codex?:      ProviderData
+	copilot?:    ProviderData
 }
 
 interface StatusBarProps {
@@ -111,7 +114,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		if (saved) {
 			setSelectedView(saved)
 		} else {
-			setSelectedView('antigravity:fiveHour')
+			setSelectedView('claude:fiveHour')
 		}
 	}, [])
 
@@ -120,10 +123,13 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		localStorage.setItem('caw:quota:selected_view', view)
 	}
 
+	const hasClaude = settings.claude?.installed !== 'false'
+	const hasCodex = settings.codex?.installed !== 'false'
+	const hasCopilot = !!settings.copilot?.token
 	const hasAntigravity = settings.antigravity?.installed !== 'false'
 	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
 	const hasOllama = !!settings.ollama?.cookie
-	const isConfigured = hasAntigravity || hasOpenCode || hasOllama
+	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
@@ -140,7 +146,12 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 		const provider = parts[0]
 		const providerData = quotas[provider as keyof AllQuotas]
 
-		const providerLabel = provider === 'antigravity' ? 'Antigravity' : provider === 'opencode' ? 'OpenCode Go' : 'Ollama'
+		const providerLabel =
+			provider === 'claude' ? 'Claude' :
+			provider === 'codex' ? 'Codex' :
+			provider === 'copilot' ? 'Copilot' :
+			provider === 'antigravity' ? 'Antigravity' :
+			provider === 'opencode' ? 'OpenCode Go' : 'Ollama'
 
 		if (!providerData) {
 			return { text: 'Select Limit', isError: false }
@@ -172,7 +183,7 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (provider === 'opencode' || provider === 'ollama' || provider === 'antigravity') {
+		if (provider === 'opencode' || provider === 'ollama' || provider === 'antigravity' || provider === 'claude' || provider === 'codex' || provider === 'copilot') {
 			return { text: `${providerLabel} (${typeLabel}): ${q.used}%`, isError: false, percentage: q.used }
 		}
 
@@ -231,7 +242,13 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 						)}
 						{isConfigured && !isLoading && !activeDisplay.isError && (
 							<>
-								{selectedView.startsWith('antigravity') ? (
+								{selectedView.startsWith('claude') ? (
+									<ClaudeCode className="h-3.5 w-3.5 shrink-0" />
+								) : selectedView.startsWith('codex') ? (
+									<Codex className="h-3.5 w-3.5 shrink-0" />
+								) : selectedView.startsWith('copilot') ? (
+									<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
+								) : selectedView.startsWith('antigravity') ? (
 									<Antigravity className="h-3.5 w-3.5 shrink-0" />
 								) : selectedView.startsWith('opencode') ? (
 									<OpenCode className="h-3.5 w-3.5 shrink-0" />
@@ -278,6 +295,136 @@ export function StatusBar({ workspaceName, onOpenSettings }: StatusBarProps) {
 							</div>
 						) : (
 							<>
+								{hasClaude && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<ClaudeCode className="h-3.5 w-3.5 shrink-0" />
+											Claude
+										</span>
+										{quotas?.claude?.error ? (
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.claude.error}</span>
+										) : !quotas?.claude?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: 'Session Limit' },
+													{ key: 'weekly', label: 'Weekly Limit' },
+													{ key: 'monthly', label: 'Monthly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.claude!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+													const viewKey = `claude:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, 100, true)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+
+								{hasClaude && hasCodex && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasCodex && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<Codex className="h-3.5 w-3.5 shrink-0" />
+											Codex
+										</span>
+										{quotas?.codex?.error ? (
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.codex.error}</span>
+										) : !quotas?.codex?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: '5h Limit' },
+													{ key: 'weekly', label: 'Weekly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.codex!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+													const viewKey = `codex:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, 100, true)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+
+								{(hasClaude || hasCodex) && hasCopilot && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasCopilot && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
+											Copilot
+										</span>
+										{quotas?.copilot?.error ? (
+											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.copilot.error}</span>
+										) : !quotas?.copilot?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: 'Premium Interactions' },
+													{ key: 'weekly', label: 'Chat Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.copilot!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+													const viewKey = `copilot:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, 100, true)}
+														</div>
+													)
+												})}
+											</div>
+										)}
+									</div>
+								)}
+
+								{(hasClaude || hasCodex || hasCopilot) && hasAntigravity && <DropdownMenuSeparator className="bg-border" />}
+
 								{hasAntigravity && (
 									<div className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">

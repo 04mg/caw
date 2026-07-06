@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 
@@ -23,9 +23,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [opencodeCookie, setOpencodeCookie] = useState('')
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
   const [ollamaCookie, setOllamaCookie] = useState('')
-  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'antigravity' | 'opencode' | 'ollama'>('antigravity')
+  const [claudeAccessToken, setClaudeAccessToken] = useState('')
+  const [codexAccessToken, setCodexAccessToken] = useState('')
+  const [copilotToken, setCopilotToken] = useState('')
+  const [copilotEnterpriseHost, setCopilotEnterpriseHost] = useState('')
+  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama'>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
   const [agyInstalled, setAgyInstalled] = useState(true)
+  const [claudeInstalled, setClaudeInstalled] = useState(true)
+  const [codexInstalled, setCodexInstalled] = useState(true)
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -36,7 +42,13 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         setOpencodeCookie(data.opencode?.cookie || '')
         setOpencodeWorkspace(data.opencode?.workspaceId || '')
         setOllamaCookie(data.ollama?.cookie || '')
+        setClaudeAccessToken(data.claude?.accessToken || '')
+        setCodexAccessToken(data.codex?.accessToken || '')
+        setCopilotToken(data.copilot?.token || '')
+        setCopilotEnterpriseHost(data.copilot?.enterpriseHost || '')
         setAgyInstalled(data.antigravity?.installed !== 'false')
+        setClaudeInstalled(data.claude?.installed !== 'false')
+        setCodexInstalled(data.codex?.installed !== 'false')
       }
     } catch (e) {
       console.error('Failed to load quota settings', e)
@@ -74,7 +86,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }, [open, loadQuotaSettings])
 
-  const saveSettings = async (agKey: string, ocCookie: string, ocWorkspace: string, olCookie: string) => {
+  const saveSettings = async (
+    agKey: string,
+    ocCookie: string,
+    ocWorkspace: string,
+    olCookie: string,
+    clToken: string,
+    cdToken: string,
+    cpToken: string,
+    cpHost: string,
+  ) => {
     try {
       await fetch('/api/quotas/settings', {
         method: 'POST',
@@ -83,6 +104,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           antigravity: { apiKey: agKey },
           opencode: { cookie: ocCookie, workspaceId: ocWorkspace },
           ollama: { cookie: olCookie },
+          claude: { accessToken: clToken },
+          codex: { accessToken: cdToken },
+          copilot: { token: cpToken, enterpriseHost: cpHost },
         }),
       })
     } catch (e) {
@@ -337,9 +361,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
               <div className="grid grid-cols-1 gap-2.5 mt-2">
                 {[
+                  { id: 'claude', label: 'Claude', description: 'Anthropic Claude Code OAuth usage', icon: ClaudeCode, show: claudeInstalled },
+                  { id: 'codex', label: 'Codex', description: 'OpenAI Codex CLI OAuth usage', icon: Codex, show: codexInstalled },
+                  { id: 'copilot', label: 'GitHub Copilot', description: 'Copilot internal usage API (GitHub OAuth token)', icon: GithubCopilot, show: true },
                   { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity, show: agyInstalled },
                   { id: 'opencode', label: 'OpenCode Go', description: 'OpenCode Go workspace authorization', icon: OpenCode, show: true },
-                  { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama, show: true }
+                  { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama, show: true },
                 ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
                   return (
@@ -384,6 +411,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold select-none">
+                    {selectedLimitProvider === 'claude' && 'Claude Configuration'}
+                    {selectedLimitProvider === 'codex' && 'Codex Configuration'}
+                    {selectedLimitProvider === 'copilot' && 'GitHub Copilot Configuration'}
                     {selectedLimitProvider === 'antigravity' && 'Antigravity Configuration'}
                     {selectedLimitProvider === 'opencode' && 'OpenCode Go Configuration'}
                     {selectedLimitProvider === 'ollama' && 'Ollama Configuration'}
@@ -395,6 +425,86 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               </div>
 
               <div className="flex-1 overflow-y-auto pr-1">
+                {selectedLimitProvider === 'claude' && (
+                  <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-normal">
+                        Usage limits are auto-resolved from <code>~/.claude/.credentials.json</code>. Optionally provide an OAuth access token override.
+                      </p>
+                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
+                      <input
+                        type="password"
+                        value={claudeAccessToken}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setClaudeAccessToken(val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, val, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                        }}
+                        placeholder="Enter Claude OAuth access token..."
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {selectedLimitProvider === 'codex' && (
+                  <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-normal">
+                        Usage limits are auto-resolved from <code>~/.codex/auth.json</code>. Optionally provide an OAuth access token override.
+                      </p>
+                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
+                      <input
+                        type="password"
+                        value={codexAccessToken}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setCodexAccessToken(val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, val, copilotToken, copilotEnterpriseHost)
+                        }}
+                        placeholder="Enter Codex OAuth access token..."
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {selectedLimitProvider === 'copilot' && (
+                  <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <p className="text-[10px] text-muted-foreground leading-normal">
+                      Provide a GitHub OAuth token (scope <code>read:user</code>) obtained via the device flow.
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">GitHub OAuth Token</label>
+                      <input
+                        type="password"
+                        value={copilotToken}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setCopilotToken(val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost)
+                        }}
+                        placeholder="gho_..."
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enterprise Host (Optional)</label>
+                      <input
+                        type="text"
+                        value={copilotEnterpriseHost}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setCopilotEnterpriseHost(val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val)
+                        }}
+                        placeholder="e.g. octocorp.ghe.com"
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {selectedLimitProvider === 'antigravity' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
                     <div className="flex flex-col gap-1.5">
@@ -408,7 +518,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         onChange={(e) => {
                           const val = e.target.value
                           setAntigravityKey(val)
-                          saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie)
+                          saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
                         }}
                         placeholder="Enter Antigravity refresh token or access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -431,7 +541,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           onChange={(e) => {
                             const val = e.target.value
                             setOpencodeCookie(val)
-                            saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie)
+                            saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
                           }}
                           placeholder="auth cookie value..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -445,7 +555,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           onChange={(e) => {
                             const val = e.target.value
                             setOpencodeWorkspace(val)
-                            saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie)
+                            saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
                           }}
                           placeholder="e.g. wrk_01KVB2..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -468,7 +578,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         onChange={(e) => {
                           const val = e.target.value
                           setOllamaCookie(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
                         }}
                         placeholder="Enter __Secure-session cookie..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
