@@ -65,6 +65,7 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			Cwd:        cwd,
 			conns:      make(map[*websocket.Conn]bool),
 			scrollback: []byte{},
+			modes:      make(map[int]bool),
 		}
 		sess.onExit = func() {
 			sessionsMu.Lock()
@@ -135,6 +136,12 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		// so that xterm.js stays in the normal buffer (with scrollback).
 		scrollback := make([]byte, len(sess.scrollback))
 		copy(scrollback, sess.scrollback)
+		// Capture the current DEC private mode state so we can re-apply it
+		// after the scrollback replay. A fresh xterm.js instance starts
+		// with mouse tracking / bracketed paste OFF; if the running TUI
+		// enabled them, we must resend the set sequences or clicks and
+		// wheel scroll silently break.
+		syncSeq := sess.syncMessage()
 		// If the PTY already has a size, push it to the new client so it
 		// fits its xterm.js to the shared size immediately.
 		if sess.cols > 0 && sess.rows > 0 {
@@ -156,6 +163,19 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 				})
 				c.WriteMessage(websocket.TextMessage, msg)
 			}
+		}
+
+		// Re-apply the tracked DEC private modes (mouse tracking, SGR
+		// mouse, bracketed paste, etc.) AFTER scrollback replay so the
+		// fresh xterm.js client enters the same mode the running TUI
+		// expects. Without this, clicks and wheel scroll break for
+		// clients that attach after the TUI emitted the mode-set sequence.
+		if syncSeq != "" {
+			msg, _ := json.Marshal(map[string]any{
+				"type": "output",
+				"data": syncSeq,
+			})
+			c.WriteMessage(websocket.TextMessage, msg)
 		}
 
 		defer func() {
