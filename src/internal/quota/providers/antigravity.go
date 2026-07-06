@@ -287,7 +287,7 @@ func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(agyPath)
+	cmd := exec.Command(agyPath, "--dangerously-skip-permissions")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -299,17 +299,23 @@ func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 
 	defer func() {
 		stdin.Close()
-		cmd.Process.Kill()
+		if runtime.GOOS == "windows" {
+			exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+		} else {
+			cmd.Process.Kill()
+		}
 		cmd.Wait()
 	}()
 
 	var ports []int
 	for i := 0; i < 20; i++ {
-		time.Sleep(100 * time.Millisecond)
-		pids := []int{cmd.Process.Pid}
-		ports, err = findPortsForPids(pids)
-		if err == nil && len(ports) > 0 {
-			break
+		time.Sleep(200 * time.Millisecond)
+		pids, err := findAgyPids()
+		if err == nil && len(pids) > 0 {
+			ports, err = findPortsForPids(pids)
+			if err == nil && len(ports) > 0 {
+				break
+			}
 		}
 	}
 
