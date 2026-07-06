@@ -8,6 +8,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type connDim struct {
+	cols int
+	rows int
+}
+
 type Session struct {
 	ID           string
 	Pty          *Pty
@@ -15,8 +20,43 @@ type Session struct {
 	DeleteBranch bool
 	mu           sync.Mutex
 	conns        map[*websocket.Conn]bool
+	connDims     map[*websocket.Conn]connDim
+	lastCols     int
+	lastRows     int
 	scrollback   []byte
 	onExit       func()
+}
+
+// recomputeSize resizes the PTY to the smallest cols/rows across all
+// connected clients so output stays readable for every viewer. A single
+// PTY can only have one size; using the min guarantees no client gets
+// output wrapped for a larger size than it can show.
+// Must be called with s.mu held.
+func (s *Session) recomputeSize() {
+	if len(s.connDims) == 0 {
+		return
+	}
+	minCols, minRows := -1, -1
+	for _, d := range s.connDims {
+		if d.cols <= 0 || d.rows <= 0 {
+			continue
+		}
+		if minCols < 0 || d.cols < minCols {
+			minCols = d.cols
+		}
+		if minRows < 0 || d.rows < minRows {
+			minRows = d.rows
+		}
+	}
+	if minCols <= 0 || minRows <= 0 {
+		return
+	}
+	if s.lastCols == minCols && s.lastRows == minRows {
+		return
+	}
+	s.lastCols = minCols
+	s.lastRows = minRows
+	s.Pty.ptmx.Resize(minCols, minRows)
 }
 
 // stripAlternateScreen removes the alternate screen toggle sequences
