@@ -9,11 +9,12 @@ import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  initialSection?: string
 }
 
 type Section = 'appearance' | 'agents' | 'terminal' | 'limits'
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
@@ -76,6 +77,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   // Load settings on open
   useEffect(() => {
     if (open) {
+      if (initialSection) {
+        setActiveSection(initialSection as Section)
+      }
+
       const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
       setTheme(savedTheme)
 
@@ -272,7 +277,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <p className="text-xs text-muted-foreground">Enable or disable agents visible in the terminal launcher.</p>
               </div>
 
-              <div className="flex flex-col gap-2 mt-2 mb-4">
+              <div className="flex flex-col gap-2 mt-2 pb-4">
                 {Object.values(agentTypes)
                   .filter((agent) => agent.id !== 'terminal')
                   .map((agent) => {
@@ -373,7 +378,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <p className="text-xs text-muted-foreground">Select a provider to configure credentials and view usage limits.</p>
               </div>
 
-              <div className="grid grid-cols-1 gap-2.5 mt-2 mb-4">
+              <div className="grid grid-cols-1 gap-2.5 mt-2 pb-4">
                 {[
                   { id: 'claude', label: 'Claude', description: 'Anthropic Claude Code OAuth usage', icon: Claude.Color, show: claudeInstalled },
                   { id: 'codex', label: 'Codex', description: 'OpenAI Codex CLI OAuth usage', icon: Codex.Color, show: codexInstalled },
