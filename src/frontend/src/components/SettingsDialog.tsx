@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
-import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft } from 'lucide-react'
+import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
@@ -28,6 +28,14 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [codexAccessToken, setCodexAccessToken] = useState('')
   const [copilotToken, setCopilotToken] = useState('')
   const [copilotEnterpriseHost, setCopilotEnterpriseHost] = useState('')
+  const [copilotDeviceFlow, setCopilotDeviceFlow] = useState<'idle' | 'waiting' | 'polling' | 'done' | 'error'>('idle')
+  const [copilotDeviceCode, setCopilotDeviceCode] = useState('')
+  const [copilotUserCode, setCopilotUserCode] = useState('')
+  const [copilotVerificationURI, setCopilotVerificationURI] = useState('')
+  const [copilotInterval, setCopilotInterval] = useState(5)
+  const copilotIntervalRef = useRef(5)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const [copilotDeviceError, setCopilotDeviceError] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama'>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
   const [agyInstalled, setAgyInstalled] = useState(true)
@@ -102,6 +110,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       loadQuotaSettings()
       loadQuotas()
+
+      // Reset device login state
+      setCopilotDeviceFlow('idle')
+      setCopilotDeviceCode('')
+      setCopilotUserCode('')
+      setCopilotVerificationURI('')
+      setCopilotInterval(5)
+      copilotIntervalRef.current = 5
+      setCopilotDeviceError('')
     }
   }, [open, loadQuotaSettings, loadQuotas])
 
@@ -132,6 +149,72 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       console.error('Failed to save quota settings', e)
     }
   }
+
+  const startCopilotDeviceLogin = async () => {
+    try {
+      setCopilotDeviceFlow('waiting')
+      setCopilotDeviceError('')
+      const res = await fetch('/api/quotas/copilot/device-login', { method: 'POST' })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || 'Failed to initiate device login')
+      }
+      const data = await res.json()
+      setCopilotDeviceCode(data.device_code)
+      setCopilotUserCode(data.user_code)
+      setCopilotVerificationURI(data.verification_uri)
+      const interval = data.interval || 5
+      setCopilotInterval(interval)
+      copilotIntervalRef.current = interval
+      setCopilotDeviceFlow('polling')
+    } catch (e: any) {
+      setCopilotDeviceError(e.message || 'Failed to start device login')
+      setCopilotDeviceFlow('error')
+    }
+  }
+
+  const pollCopilotDeviceToken = useCallback(async () => {
+    if (!copilotDeviceCode) return
+    try {
+      const res = await fetch('/api/quotas/copilot/device-poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: copilotDeviceCode }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || 'Poll failed')
+      }
+      const data = await res.json()
+      if (data.access_token) {
+        setCopilotToken(data.access_token)
+        setCopilotDeviceFlow('done')
+        saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, data.access_token, copilotEnterpriseHost)
+      } else if (data.error === 'authorization_pending') {
+        pollTimerRef.current = setTimeout(pollCopilotDeviceToken, copilotIntervalRef.current * 1000)
+      } else if (data.error === 'slow_down') {
+        copilotIntervalRef.current += 5
+        setCopilotInterval(copilotIntervalRef.current)
+        pollTimerRef.current = setTimeout(pollCopilotDeviceToken, copilotIntervalRef.current * 1000)
+      } else if (data.error) {
+        setCopilotDeviceError(data.error_description || data.error)
+        setCopilotDeviceFlow('error')
+      }
+    } catch (e: any) {
+      setCopilotDeviceError(e.message || 'Poll failed')
+      setCopilotDeviceFlow('error')
+    }
+  }, [copilotDeviceCode])
+
+  useEffect(() => {
+    if (copilotDeviceFlow !== 'polling' || !copilotDeviceCode) return
+    pollTimerRef.current = setTimeout(pollCopilotDeviceToken, 1000)
+    return () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current)
+      }
+    }
+  }, [copilotDeviceFlow, pollCopilotDeviceToken])
 
   const applyTheme = (newTheme: 'light' | 'dark' | 'system') => {
     setTheme(newTheme)
@@ -497,35 +580,106 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 {selectedLimitProvider === 'copilot' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
                     <p className="text-[10px] text-muted-foreground leading-normal">
-                      Provide a GitHub OAuth token (scope <code>read:user</code>) obtained via the device flow.
+                      Login with GitHub to automatically fetch a token, or manually paste one below.
                     </p>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">GitHub OAuth Token</label>
-                      <input
-                        type="password"
-                        value={copilotToken}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          setCopilotToken(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost)
-                        }}
-                        placeholder="gho_..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enterprise Host (Optional)</label>
-                      <input
-                        type="text"
-                        value={copilotEnterpriseHost}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          setCopilotEnterpriseHost(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val)
-                        }}
-                        placeholder="e.g. octocorp.ghe.com"
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                      />
+
+                    {copilotDeviceFlow === 'idle' || copilotDeviceFlow === 'error' ? (
+                      <div className="flex flex-col gap-2">
+                        {copilotDeviceFlow === 'error' && (
+                          <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                            {copilotDeviceError}
+                          </div>
+                        )}
+                        <button
+                          onClick={startCopilotDeviceLogin}
+                          className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                        >
+                          <LogIn className="h-3.5 w-3.5" />
+                          Login with GitHub
+                        </button>
+                      </div>
+                    ) : copilotDeviceFlow === 'waiting' ? (
+                      <div className="flex items-center justify-center gap-2 py-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">Starting device login...</span>
+                      </div>
+                    ) : copilotDeviceFlow === 'polling' ? (
+                      <div className="flex flex-col gap-3 p-3 rounded-lg border border-border bg-muted/20">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                          <span className="text-xs font-medium text-foreground">Waiting for authentication...</span>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-[10px] text-muted-foreground">
+                            1. Open <strong>GitHub Device Verification</strong> in your browser:
+                          </p>
+                          <a
+                            href={copilotVerificationURI}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs font-mono text-primary underline underline-offset-2 hover:text-primary/80"
+                          >
+                            {copilotVerificationURI}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-[10px] text-muted-foreground">
+                            2. Enter this code:
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="px-3 py-1.5 rounded-md bg-background border border-border text-sm font-bold tracking-widest select-all">
+                              {copilotUserCode}
+                            </code>
+                            <button
+                              onClick={() => navigator.clipboard.writeText(copilotUserCode)}
+                              className="px-2 py-1.5 rounded-md border border-border text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground italic">
+                          Polling every {copilotInterval}s...
+                        </p>
+                      </div>
+                    ) : copilotDeviceFlow === 'done' ? (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 text-xs text-emerald-400">
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        Token obtained and saved successfully!
+                      </div>
+                    ) : null}
+
+                    <div className="border-t border-border pt-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">GitHub OAuth Token</label>
+                        <input
+                          type="password"
+                          value={copilotToken}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setCopilotToken(val)
+                            setCopilotDeviceFlow('idle')
+                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost)
+                          }}
+                          placeholder="gho_..."
+                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5 mt-3">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enterprise Host (Optional)</label>
+                        <input
+                          type="text"
+                          value={copilotEnterpriseHost}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setCopilotEnterpriseHost(val)
+                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val)
+                          }}
+                          placeholder="e.g. octocorp.ghe.com"
+                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
