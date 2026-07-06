@@ -372,8 +372,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {activeSection === 'limits' && limitStep === 2 && (
             <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-semibold flex items-center gap-2 select-none">
+              <div className="flex flex-col gap-2">
+                <div>
                   <button
                     onClick={() => setLimitStep(1)}
                     className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring"
@@ -381,15 +381,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   >
                     <ArrowLeft className="h-4 w-4 shrink-0" />
                   </button>
-                  <span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold select-none">
                     {selectedLimitProvider === 'antigravity' && 'Antigravity Configuration'}
                     {selectedLimitProvider === 'opencode' && 'OpenCode Go Configuration'}
                     {selectedLimitProvider === 'ollama' && 'Ollama Configuration'}
-                  </span>
-                </h3>
-                <p className="text-xs text-muted-foreground mt-0.5 pl-7">
-                  Specify the details needed to authenticate limits tracking for this provider.
-                </p>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Specify the details needed to authenticate limits tracking for this provider.
+                  </p>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto pr-1">
