@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
-import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/lib/agentTypes'
-import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
+import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/lib/terminalRegistry'
 import { SettingsItem } from '@/components/SettingsItem'
 
 interface SettingsDialogProps {
@@ -18,6 +18,7 @@ type Section = 'appearance' | 'agents' | 'terminal' | 'limits'
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
+  const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
@@ -96,6 +97,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
       setTheme(savedTheme)
+
+      const savedTerminalTheme = (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
+      setTerminalTheme(savedTerminalTheme)
 
       const savedDisabled = localStorage.getItem('caw:disabledAgents')
       if (savedDisabled) {
@@ -273,7 +277,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
             }`}
           >
-            <Monitor className="h-3.5 w-3.5" />
+            <Palette className="h-3.5 w-3.5" />
             Appearance
           </button>
           <button
@@ -306,7 +310,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
             }`}
           >
-            <Key className="h-3.5 w-3.5" />
+            <ChartSpline className="h-3.5 w-3.5" />
             Limits
           </button>
         </div>
@@ -354,6 +358,43 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <Monitor className="h-5 w-5 mb-2 text-muted-foreground" />
                   <span className="text-xs font-medium">System</span>
                 </button>
+              </div>
+
+              <div className="border-t border-border pt-4 mt-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Terminal Theme</label>
+                  <p className="text-[10px] text-muted-foreground">Match the terminal background with the rest of the UI.</p>
+                  <div className="flex gap-2 mt-1">
+                    <button
+                      onClick={() => {
+                        setTerminalTheme('dark')
+                        setAllTerminalThemes('dark')
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                        terminalTheme === 'dark'
+                          ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                          : 'border-border hover:bg-accent/20'
+                      }`}
+                    >
+                      <Moon className="h-3.5 w-3.5 text-indigo-400" />
+                      Dark
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTerminalTheme('light')
+                        setAllTerminalThemes('light')
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                        terminalTheme === 'light'
+                          ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                          : 'border-border hover:bg-accent/20'
+                      }`}
+                    >
+                      <Sun className="h-3.5 w-3.5 text-amber-500" />
+                      Light
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
