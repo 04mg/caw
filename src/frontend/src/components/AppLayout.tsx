@@ -58,6 +58,7 @@ export function AppLayout() {
 
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
@@ -898,10 +899,13 @@ export function AppLayout() {
       <StatusBar
         workspaceName={activeWorkspace?.name}
         worktreeBranch={activeWorktreeBranch}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={(section) => {
+          setSettingsSection(section)
+          setSettingsOpen(true)
+        }}
       />
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setSettingsSection(undefined) }} initialSection={settingsSection} />
 
       <CommandPalette
         open={commandPaletteOpen}

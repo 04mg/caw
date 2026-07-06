@@ -53,7 +53,7 @@ interface AllQuotas {
 interface StatusBarProps {
 	workspaceName?: string
 	worktreeBranch?: string
-	onOpenSettings: () => void
+	onOpenSettings: (section?: string) => void
 }
 
 export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: StatusBarProps) {
@@ -124,8 +124,8 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 		localStorage.setItem('caw:quota:selected_view', view)
 	}
 
-	const hasClaude = settings.claude?.installed !== 'false'
-	const hasCodex = settings.codex?.installed !== 'false'
+	const hasClaude = settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
+	const hasCodex = settings.codex?.installed !== 'false' && !(quotas && quotas.codex?.error)
 	const hasCopilot = !!settings.copilot?.token
 	const hasAntigravity = settings.antigravity?.installed !== 'false'
 	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
@@ -158,7 +158,11 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (providerData.error || !providerData.data) {
+		if (providerData.error) {
+			return { text: 'Select Limit', isError: false }
+		}
+
+		if (!providerData.data) {
 			return { text: `${providerLabel}: Loading`, isError: false }
 		}
 
@@ -194,9 +198,8 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 		const pct = isPercentageOnly ? used : limit > 0 ? (used / limit) * 100 : 0
 		return (
 			<div className="flex flex-col gap-1 w-full mt-1.5 animate-none">
-				<div className="flex justify-between text-[10px] text-muted-foreground select-none font-sans">
+				<div className="text-[10px] text-muted-foreground select-none font-sans">
 					<span>{isPercentageOnly ? `${used}%` : `${used} / ${limit}`}</span>
-					<span>{Math.round(pct)}%</span>
 				</div>
 				<div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
 					<div
@@ -290,7 +293,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 								No providers configured.
 								<button
 									onClick={() => {
-										onOpenSettings()
+										onOpenSettings('limits')
 									}}
 									className="mt-2 block w-full px-2 py-1.5 text-center text-xs font-medium text-primary bg-secondary/40 border border-border rounded hover:bg-secondary transition-all"
 								>
@@ -585,7 +588,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 							<div className="px-1 py-1">
 								<button
 									onClick={() => {
-										onOpenSettings()
+										onOpenSettings('limits')
 									}}
 									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer font-sans"
 								>
