@@ -25,7 +25,7 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, Workflow, Check, X } from 'lucide-react'
+import { Settings, Folder, PanelRightOpen, Workflow, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -862,7 +862,7 @@ export function AppLayout() {
 
                     {/* Folder Button (Only Visible when Sidebar is Collapsed) */}
                     {folderSidebarCollapsed && (
-                      <div className="flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
+                      <div className="group flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -870,7 +870,8 @@ export function AppLayout() {
                           onClick={toggleFolderSidebar}
                           title="Workspace Files"
                         >
-                          <Folder className="h-3.5 w-3.5" />
+                          <Folder className="h-3.5 w-3.5 group-hover:hidden" />
+                          <PanelRightOpen className="h-3.5 w-3.5 hidden group-hover:block" />
                         </Button>
                       </div>
                     )}
