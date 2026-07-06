@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/04mg/caw/internal/quota"
@@ -58,6 +59,9 @@ type QuotaSummaryResponse struct {
 }
 
 type AntigravityProvider struct{}
+
+// agySpawnMu prevents concurrent temporary agy spawns
+var agySpawnMu sync.Mutex
 
 func init() {
 	quota.RegisterProvider("antigravity", &AntigravityProvider{})
@@ -281,28 +285,12 @@ func findAgyPath() (string, error) {
 	return "", fmt.Errorf("agy binary not found")
 }
 
-func getDescendantPids(rootPid int) []int {
-	pids := []int{rootPid}
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("ParentProcessId=%d", rootPid), "get", "ProcessId", "/value")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if err := cmd.Run(); err == nil {
-			for _, line := range strings.Split(out.String(), "\n") {
-				line = strings.TrimSpace(strings.ReplaceAll(line, "\r", ""))
-				if strings.HasPrefix(line, "ProcessId=") {
-					pidStr := strings.TrimPrefix(line, "ProcessId=")
-					if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
-						pids = append(pids, getDescendantPids(pid)...)
-					}
-				}
-			}
-		}
-	}
-	return pids
-}
 
 func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
+	// Only one spawn at a time — concurrent callers wait for the winner
+	agySpawnMu.Lock()
+	defer agySpawnMu.Unlock()
+
 	agyPath, err := findAgyPath()
 	if err != nil {
 		return nil, err
@@ -330,12 +318,19 @@ func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 		cmd.Wait()
 	}()
 
-	// Poll for up to 10 seconds: scan the full process tree for listening ports
+	// Poll up to 15 seconds: scan ALL agy.exe processes system-wide for listening ports.
+	// The spawned agy launcher itself (rootPid) binds the HTTPS port directly.
 	var ports []int
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 75; i++ {
 		time.Sleep(200 * time.Millisecond)
-		allPids := getDescendantPids(rootPid)
-		ports, err = findPortsForPids(allPids)
+		// Always scan by rootPid first (direct), then fall back to all agy pids
+		ports, err = findPortsForPids([]int{rootPid})
+		if err != nil || len(ports) == 0 {
+			pids, perr := findAgyPids()
+			if perr == nil && len(pids) > 0 {
+				ports, err = findPortsForPids(pids)
+			}
+		}
 		if err == nil && len(ports) > 0 {
 			break
 		}
