@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/04mg/caw/internal/agent"
+	_ "github.com/04mg/caw/internal/agent/agents"
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
 	"github.com/04mg/caw/internal/quota"
@@ -51,6 +52,7 @@ func (s *Server) ListenAndServe(port string) {
 	workspace.RegisterWS(mux)
 	git.Register(mux)
 	agent.Register(mux)
+	agent.RegisterStatusWS(mux)
 	quota.Register(mux, s.store)
 
 	mux.Handle("/", http.FileServer(http.FS(s.frontendFS)))
