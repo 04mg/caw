@@ -60,11 +60,12 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		}
 
 		sess := &Session{
-			ID:         id,
-			Pty:        ps,
-			Cwd:        cwd,
-			conns:      make(map[*websocket.Conn]bool),
-			scrollback: []byte{},
+			ID:           id,
+			Pty:          ps,
+			Cwd:          cwd,
+			conns:        make(map[*websocket.Conn]bool),
+			connDims:     make(map[*websocket.Conn]connDim),
+			scrollback:   []byte{},
 		}
 		sess.onExit = func() {
 			sessionsMu.Lock()
@@ -151,6 +152,8 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		defer func() {
 			sess.mu.Lock()
 			delete(sess.conns, c)
+			delete(sess.connDims, c)
+			sess.recomputeSize()
 			sess.mu.Unlock()
 			c.Close()
 		}()
@@ -175,7 +178,15 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 				if !okCols || !okRows {
 					continue
 				}
-				sess.Pty.ptmx.Resize(int(colsF), int(rowsF))
+				cols := int(colsF)
+				rows := int(rowsF)
+				if cols <= 0 || rows <= 0 {
+					continue
+				}
+				sess.mu.Lock()
+				sess.connDims[c] = connDim{cols: cols, rows: rows}
+				sess.recomputeSize()
+				sess.mu.Unlock()
 			}
 		}
 	})
