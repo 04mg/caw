@@ -14,6 +14,7 @@ import {
   findAgentId,
   findAgentLeaves,
   getLeafCwd,
+  getLeaf,
 } from '@/lib/layout'
 import {
   type Workspace,
@@ -141,6 +142,8 @@ export function AppLayout() {
   const activePaneId = activeWorkspace?.activePaneId ?? ''
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
   const currentWorkspacePath = (activeTab && activePaneId && getLeafCwd(activeTab.layout, activePaneId)) || activeWorkspace?.path || ''
+  const activeLeaf = activeTab && activePaneId ? getLeaf(activeTab.layout, activePaneId) : null
+  const activeWorktreeBranch = activeLeaf?.agentBranch ?? undefined
 
   const fetchGitStatus = useCallback(async () => {
     if (!currentWorkspacePath) {
@@ -894,6 +897,7 @@ export function AppLayout() {
 
       <StatusBar
         workspaceName={activeWorkspace?.name}
+        worktreeBranch={activeWorktreeBranch}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
