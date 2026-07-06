@@ -61,15 +61,20 @@ type QuotaSummaryResponse struct {
 
 type AntigravityProvider struct{}
 
-// agySpawnMu prevents concurrent temporary agy spawns
-var agySpawnMu sync.Mutex
+// bgAgy holds the state of a persistent background agy PTY instance
+var bgAgy struct {
+	sync.Mutex
+	ptmx   ptylib.Pty
+	pid    int
+	active bool
+}
 
 func init() {
 	quota.RegisterProvider("antigravity", &AntigravityProvider{})
 }
 
 func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
-	// 1. Try to find an already running agy process and probe it
+	// 1. Try to find an already running agy process (user-opened or our background one)
 	pids, err := findAgyPids()
 	if err == nil && len(pids) > 0 {
 		ports, err := findPortsForPids(pids)
@@ -80,47 +85,135 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 	}
 
-	// 2. If no running process was found or probe failed, try starting a temporary one-shot agy process
-	if res, err := fetchQuotaFromNewAgyInstance(); err == nil {
-		return res, nil
+	// 2. No running agy found — ensure our background instance is started
+	if err := ensureBgAgy(); err != nil {
+		// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
+		token := config["apiKey"]
+		if token != "" {
+			return fetchQuotaViaOAuth(token)
+		}
+		return nil, fmt.Errorf("agy is not running")
+	}
+
+	// Wait up to 15s for the background agy to bind a port
+	for i := 0; i < 75; i++ {
+		time.Sleep(200 * time.Millisecond)
+		pids, err := findAgyPids()
+		if err == nil && len(pids) > 0 {
+			ports, err := findPortsForPids(pids)
+			if err == nil && len(ports) > 0 {
+				if res, err := queryAgyPorts(ports); err == nil {
+					return res, nil
+				}
+			}
+		}
 	}
 
 	// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
 	token := config["apiKey"]
 	if token != "" {
-		accessToken, err := getAccessToken(token)
-		if err != nil {
-			return nil, fmt.Errorf("auth error: %w", err)
-		}
+		return fetchQuotaViaOAuth(token)
+	}
+	return nil, fmt.Errorf("agy is not running")
+}
 
-		modelsResponse, err := fetchAvailableModels(accessToken)
-		if err != nil {
-			return nil, fmt.Errorf("api error: %w", err)
-		}
+// ensureBgAgy starts a persistent background agy PTY instance if one isn't already running.
+func ensureBgAgy() error {
+	bgAgy.Lock()
+	defer bgAgy.Unlock()
 
-		fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3-pro-high", "gemini-3-pro-low")
-		if err != nil {
-			return nil, err
+	// If our background instance is still alive, nothing to do
+	if bgAgy.active && bgAgy.pid > 0 {
+		// Verify the process is still alive
+		pids, err := findAgyPids()
+		if err == nil {
+			for _, pid := range pids {
+				if pid == bgAgy.pid {
+					return nil // still running
+				}
+			}
 		}
-
-		weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-5-thinking", "claude-opus-4-5")
-		if err != nil {
-			return nil, err
+		// Process died — reset state
+		bgAgy.active = false
+		if bgAgy.ptmx != nil {
+			bgAgy.ptmx.Close()
+			bgAgy.ptmx = nil
 		}
-
-		monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3-pro-image")
-		if err != nil {
-			return nil, err
-		}
-
-		return &quota.QuotaResponse{
-			FiveHour: fiveHourQuota,
-			Weekly:   weeklyQuota,
-			Monthly:  monthlyQuota,
-		}, nil
 	}
 
-	return nil, fmt.Errorf("agy is not running")
+	agyPath, err := findAgyPath()
+	if err != nil {
+		return err
+	}
+
+	ptmx, err := ptylib.New()
+	if err != nil {
+		return fmt.Errorf("failed to create PTY: %w", err)
+	}
+
+	ptyCmd := ptmx.Command(agyPath, "--dangerously-skip-permissions")
+	ptyCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+
+	if err := ptyCmd.Start(); err != nil {
+		ptmx.Close()
+		return fmt.Errorf("failed to start agy in PTY: %w", err)
+	}
+
+	bgAgy.ptmx = ptmx
+	bgAgy.pid = ptyCmd.Process.Pid
+	bgAgy.active = true
+
+	// Drain PTY output in background to prevent blocking
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			_, err := ptmx.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	// Reap the process in background so it doesn't become a zombie
+	go func() {
+		ptyCmd.Wait()
+		bgAgy.Lock()
+		if bgAgy.pid == ptyCmd.Process.Pid {
+			bgAgy.active = false
+			bgAgy.pid = 0
+		}
+		bgAgy.Unlock()
+	}()
+
+	return nil
+}
+
+func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
+	accessToken, err := getAccessToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("auth error: %w", err)
+	}
+	modelsResponse, err := fetchAvailableModels(accessToken)
+	if err != nil {
+		return nil, fmt.Errorf("api error: %w", err)
+	}
+	fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3-pro-high", "gemini-3-pro-low")
+	if err != nil {
+		return nil, err
+	}
+	weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-5-thinking", "claude-opus-4-5")
+	if err != nil {
+		return nil, err
+	}
+	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3-pro-image")
+	if err != nil {
+		return nil, err
+	}
+	return &quota.QuotaResponse{
+		FiveHour: fiveHourQuota,
+		Weekly:   weeklyQuota,
+		Monthly:  monthlyQuota,
+	}, nil
 }
 
 func (p *AntigravityProvider) IsInstalled() bool {
@@ -287,61 +380,6 @@ func findAgyPath() (string, error) {
 }
 
 
-func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
-	// Only one spawn at a time — concurrent callers wait for the winner
-	agySpawnMu.Lock()
-	defer agySpawnMu.Unlock()
-
-	agyPath, err := findAgyPath()
-	if err != nil {
-		return nil, err
-	}
-
-	// agy only starts its language server when it detects a TTY.
-	// We must spawn it inside a PTY.
-	ptmx, err := ptylib.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create PTY: %w", err)
-	}
-	defer ptmx.Close()
-
-	ptyCmd := ptmx.Command(agyPath, "--dangerously-skip-permissions")
-	ptyCmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
-	if err := ptyCmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start agy in PTY: %w", err)
-	}
-
-	rootPid := ptyCmd.Process.Pid
-
-	defer func() {
-		if runtime.GOOS == "windows" {
-			exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(rootPid)).Run()
-		} else {
-			ptyCmd.Process.Kill()
-		}
-		ptyCmd.Wait()
-	}()
-
-	// Poll up to 15 seconds for any agy.exe process to bind a listening port
-	var ports []int
-	for i := 0; i < 75; i++ {
-		time.Sleep(200 * time.Millisecond)
-		pids, perr := findAgyPids()
-		if perr == nil && len(pids) > 0 {
-			ports, err = findPortsForPids(pids)
-			if err == nil && len(ports) > 0 {
-				break
-			}
-		}
-	}
-
-	if len(ports) == 0 {
-		return nil, fmt.Errorf("timeout waiting for agy process to listen on ports")
-	}
-
-	return queryAgyPorts(ports)
-}
 
 func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 	tr := &http.Transport{
