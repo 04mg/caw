@@ -11,6 +11,8 @@ type LayoutNode struct {
 	Sizes       []float64    `json:"sizes,omitempty"`
 	FilePath    string       `json:"filePath,omitempty"`
 	IsDiff      bool         `json:"isDiff,omitempty"`
+	AgentBranch string       `json:"agentBranch,omitempty"`
+	BaseBranch  string       `json:"baseBranch,omitempty"`
 }
 
 type TabLayout struct {
