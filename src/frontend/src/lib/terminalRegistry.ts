@@ -331,6 +331,23 @@ export function detachTerminal(leafId: string) {
   try { inst.term.dispose() } catch { /* ignore */ }
 }
 
+// releaseTerminal drops this client's hold on a terminal (disposes the
+// xterm.js instance, closes the WebSocket, removes the registry entry)
+// WITHOUT asking the backend to kill the PTY. Use this when a terminal
+// disappears from THIS client's view only because another browser
+// reshaped the shared workspace state — the shared backend PTY must
+// keep running so other clients (or this client, on re-open) can
+// reattach. destroyTerminal (which DOES kill) is reserved for explicit
+// user-initiated closes (X button, forceClosePane/Tab).
+export function releaseTerminal(leafId: string) {
+  const inst = registry.get(leafId)
+  if (!inst) return
+  try { inst.ws?.close() } catch { /* ignore */ }
+  try { inst.term.dispose() } catch { /* ignore */ }
+  registry.delete(leafId)
+  notify()
+}
+
 export function getTerminal(leafId: string): TerminalInstance | undefined {
   return registry.get(leafId)
 }
