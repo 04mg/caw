@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	ptylib "github.com/aymanbagabas/go-pty"
 	"github.com/04mg/caw/internal/quota"
 )
 
@@ -296,43 +297,42 @@ func fetchQuotaFromNewAgyInstance() (*quota.QuotaResponse, error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(agyPath, "--dangerously-skip-permissions")
-	stdin, err := cmd.StdinPipe()
+	// agy only starts its language server when it detects a TTY.
+	// We must spawn it inside a PTY.
+	ptmx, err := ptylib.New()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create PTY: %w", err)
+	}
+	defer ptmx.Close()
+
+	ptyCmd := ptmx.Command(agyPath, "--dangerously-skip-permissions")
+	ptyCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+
+	if err := ptyCmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start agy in PTY: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	rootPid := cmd.Process.Pid
+	rootPid := ptyCmd.Process.Pid
 
 	defer func() {
-		stdin.Close()
 		if runtime.GOOS == "windows" {
 			exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(rootPid)).Run()
 		} else {
-			cmd.Process.Kill()
+			ptyCmd.Process.Kill()
 		}
-		cmd.Wait()
+		ptyCmd.Wait()
 	}()
 
-	// Poll up to 15 seconds: scan ALL agy.exe processes system-wide for listening ports.
-	// The spawned agy launcher itself (rootPid) binds the HTTPS port directly.
+	// Poll up to 15 seconds for any agy.exe process to bind a listening port
 	var ports []int
 	for i := 0; i < 75; i++ {
 		time.Sleep(200 * time.Millisecond)
-		// Always scan by rootPid first (direct), then fall back to all agy pids
-		ports, err = findPortsForPids([]int{rootPid})
-		if err != nil || len(ports) == 0 {
-			pids, perr := findAgyPids()
-			if perr == nil && len(pids) > 0 {
-				ports, err = findPortsForPids(pids)
+		pids, perr := findAgyPids()
+		if perr == nil && len(pids) > 0 {
+			ports, err = findPortsForPids(pids)
+			if err == nil && len(ports) > 0 {
+				break
 			}
-		}
-		if err == nil && len(ports) > 0 {
-			break
 		}
 	}
 
