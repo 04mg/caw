@@ -1,5 +1,5 @@
-import { OpenCode, Antigravity, Claude } from '@lobehub/icons'
-import { Terminal } from 'lucide-react'
+import { OpenCode, Antigravity, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
+import { Terminal, Bot } from 'lucide-react'
 
 export interface AgentType {
   id: string
@@ -15,11 +15,23 @@ export const agentTypes: Record<string, AgentType> = {
     cmd: [],
     icon: Terminal,
   },
-  opencode: {
-    id: 'opencode',
-    label: 'OpenCode Go',
-    cmd: ['opencode', '--dangerously-skip-permissions'],
-    icon: OpenCode,
+  claude: {
+    id: 'claude',
+    label: 'Claude Code',
+    cmd: ['claude', '--dangerously-skip-permissions'],
+    icon: ClaudeCode,
+  },
+  codex: {
+    id: 'codex',
+    label: 'Codex CLI',
+    cmd: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
+    icon: Codex,
+  },
+  copilot: {
+    id: 'copilot',
+    label: 'GitHub Copilot',
+    cmd: ['copilot', '--allow-all-tools', '--allow-all-paths'],
+    icon: GithubCopilot,
   },
   agy: {
     id: 'agy',
@@ -27,10 +39,16 @@ export const agentTypes: Record<string, AgentType> = {
     cmd: ['agy', '--dangerously-skip-permissions'],
     icon: Antigravity,
   },
-  claude: {
-    id: 'claude',
-    label: 'Claude Code',
-    cmd: ['claude', '--dangerously-skip-permissions'],
-    icon: Claude,
+  opencode: {
+    id: 'opencode',
+    label: 'OpenCode',
+    cmd: ['opencode', '--dangerously-skip-permissions'],
+    icon: OpenCode,
+  },
+  pi: {
+    id: 'pi',
+    label: 'Pi',
+    cmd: ['pi'],
+    icon: Bot,
   },
 }
