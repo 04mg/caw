@@ -130,6 +130,12 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         })
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
+      } else if (msg.type === 'resize') {
+        const cols = Number(msg.cols)
+        const rows = Number(msg.rows)
+        if (cols > 0 && rows > 0) {
+          inst.term.resize(cols, rows)
+        }
       } else if (msg.type === 'exit') {
         inst.exited = true
         onTerminalExit?.(inst.leafId)
