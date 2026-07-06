@@ -131,6 +131,16 @@ export function countLeaves(root: LayoutNode): number {
   return root.children.reduce((sum, c) => sum + countLeaves(c), 0)
 }
 
+export function getLeaf(root: LayoutNode, id: string): Extract<LayoutNode, { type: 'leaf' }> | null {
+  if (root.type === 'empty') return null
+  if (root.type === 'leaf') return root.id === id ? root : null
+  for (const c of root.children) {
+    const v = getLeaf(c, id)
+    if (v !== null) return v
+  }
+  return null
+}
+
 export function getLeafCwd(root: LayoutNode, id: string): string | null {
   if (root.type === 'empty') return null
   if (root.type === 'leaf') return root.id === id ? root.cwd : null
