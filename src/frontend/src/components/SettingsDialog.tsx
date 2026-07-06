@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Monitor, Bot, Terminal, Check, Moon, Sun, Key, ArrowLeft } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { agentTypes } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes } from '@/lib/terminalRegistry'
 
@@ -32,6 +32,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [agyInstalled, setAgyInstalled] = useState(true)
   const [claudeInstalled, setClaudeInstalled] = useState(true)
   const [codexInstalled, setCodexInstalled] = useState(true)
+  const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -52,6 +53,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       }
     } catch (e) {
       console.error('Failed to load quota settings', e)
+    }
+  }, [])
+
+  const loadQuotas = useCallback(async () => {
+    try {
+      const res = await fetch('/api/quotas')
+      if (res.ok) {
+        const data = await res.json()
+        setQuotas(data)
+      }
+    } catch (e) {
+      console.error('Failed to load quotas', e)
     }
   }, [])
 
@@ -83,8 +96,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
 
       loadQuotaSettings()
+      loadQuotas()
     }
-  }, [open, loadQuotaSettings])
+  }, [open, loadQuotaSettings, loadQuotas])
 
   const saveSettings = async (
     agKey: string,
@@ -170,17 +184,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             Appearance
           </button>
           <button
-            onClick={() => setActiveSection('agents')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'agents'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <Bot className="h-3.5 w-3.5" />
-            Agents
-          </button>
-          <button
             onClick={() => setActiveSection('terminal')}
             className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
               activeSection === 'terminal'
@@ -190,6 +193,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           >
             <Terminal className="h-3.5 w-3.5" />
             Terminal
+          </button>
+          <button
+            onClick={() => setActiveSection('agents')}
+            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              activeSection === 'agents'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+            }`}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Agents
           </button>
           <button
             onClick={() => setActiveSection('limits')}
@@ -258,9 +272,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <p className="text-xs text-muted-foreground">Enable or disable agents visible in the terminal launcher.</p>
               </div>
 
-              <div className="flex flex-col gap-2 mt-2">
+              <div className="flex flex-col gap-2 mt-2 mb-4">
                 {Object.values(agentTypes)
-                  .filter((agent) => agent.id !== 'terminal') // Terminal is always enabled
+                  .filter((agent) => agent.id !== 'terminal')
                   .map((agent) => {
                     const isEnabled = !disabledAgents.includes(agent.id)
                     const Icon = agent.icon
@@ -268,7 +282,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       <div
                         key={agent.id}
                         onClick={() => toggleAgent(agent.id)}
-                        className="flex items-center justify-between p-2.5 rounded-lg border border-border hover:bg-accent/30 cursor-pointer select-none transition-colors"
+                        className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent/30 cursor-pointer select-none transition-colors"
                       >
                         <div className="flex items-center gap-3">
                           <div className="h-7 w-7 rounded bg-muted flex items-center justify-center text-muted-foreground shrink-0">
@@ -359,12 +373,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <p className="text-xs text-muted-foreground">Select a provider to configure credentials and view usage limits.</p>
               </div>
 
-              <div className="grid grid-cols-1 gap-2.5 mt-2">
+              <div className="grid grid-cols-1 gap-2.5 mt-2 mb-4">
                 {[
-                  { id: 'claude', label: 'Claude', description: 'Anthropic Claude Code OAuth usage', icon: ClaudeCode, show: claudeInstalled },
-                  { id: 'codex', label: 'Codex', description: 'OpenAI Codex CLI OAuth usage', icon: Codex, show: codexInstalled },
+                  { id: 'claude', label: 'Claude', description: 'Anthropic Claude Code OAuth usage', icon: Claude.Color, show: claudeInstalled },
+                  { id: 'codex', label: 'Codex', description: 'OpenAI Codex CLI OAuth usage', icon: Codex.Color, show: codexInstalled },
                   { id: 'copilot', label: 'GitHub Copilot', description: 'Copilot internal usage API (GitHub OAuth token)', icon: GithubCopilot, show: true },
-                  { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity, show: agyInstalled },
+                  { id: 'antigravity', label: 'Antigravity', description: 'Google Cloud & local agy integration', icon: Antigravity.Color, show: agyInstalled },
                   { id: 'opencode', label: 'OpenCode Go', description: 'OpenCode Go workspace authorization', icon: OpenCode, show: true },
                   { id: 'ollama', label: 'Ollama', description: 'Ollama session cookie limits', icon: Ollama, show: true },
                 ].filter(p => p.show).map((prov) => {
@@ -423,6 +437,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   </p>
                 </div>
               </div>
+
+              {quotas?.[selectedLimitProvider]?.error && (
+                <div className="px-4 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                  Error: {quotas[selectedLimitProvider].error}
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto pr-1">
                 {selectedLimitProvider === 'claude' && (

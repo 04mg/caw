@@ -5,8 +5,8 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { RefreshCw, Key, AlertCircle, Check, Loader2, ChevronUp, Workflow } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow } from 'lucide-react'
+import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
 interface Quota {
@@ -158,11 +158,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (providerData.error) {
-			return { text: `${providerLabel}: Error`, isError: true }
-		}
-
-		if (!providerData.data) {
+		if (providerData.error || !providerData.data) {
 			return { text: `${providerLabel}: Loading`, isError: false }
 		}
 
@@ -235,38 +231,36 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<button className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer">
-						{activeDisplay.isError ? (
-							<AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />
-						) : isLoading ? (
-							<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-						) : (
-							<div className={cn(
-								"h-1.5 w-1.5 rounded-full",
-								activeDisplay.text === 'Configure Limits' 
-									? 'bg-amber-400' 
-									: activeDisplay.percentage !== undefined
-										? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
-										: 'bg-muted-foreground'
-							)} />
-						)}
-						{isConfigured && !isLoading && !activeDisplay.isError && (
-							<>
-								{selectedView.startsWith('claude') ? (
-									<ClaudeCode className="h-3.5 w-3.5 shrink-0" />
-								) : selectedView.startsWith('codex') ? (
-									<Codex className="h-3.5 w-3.5 shrink-0" />
-								) : selectedView.startsWith('copilot') ? (
-									<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
-								) : selectedView.startsWith('antigravity') ? (
-									<Antigravity className="h-3.5 w-3.5 shrink-0" />
-								) : selectedView.startsWith('opencode') ? (
-									<OpenCode className="h-3.5 w-3.5 shrink-0" />
-								) : selectedView.startsWith('ollama') ? (
-									<Ollama className="h-3.5 w-3.5 shrink-0" />
-								) : null}
-							</>
-						)}
+				<button className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer">
+					{isLoading ? (
+						<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+					) : (
+						<div className={cn(
+							"h-1.5 w-1.5 rounded-full",
+							activeDisplay.text === 'Configure Limits' 
+								? 'bg-amber-400' 
+								: activeDisplay.percentage !== undefined
+									? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+									: 'bg-muted-foreground'
+						)} />
+					)}
+					{isConfigured && !isLoading && (
+						<>
+							{selectedView.startsWith('claude') ? (
+								<Claude.Color className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('codex') ? (
+								<Codex.Color className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('copilot') ? (
+								<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('antigravity') ? (
+								<Antigravity.Color className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('opencode') ? (
+								<OpenCode className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('ollama') ? (
+								<Ollama className="h-3.5 w-3.5 shrink-0" />
+							) : null}
+						</>
+					)}
 						<span className="text-[11px] shrink-0 font-sans">{activeDisplay.text}</span>
 						<ChevronUp className="h-3 w-3 opacity-60 shrink-0" />
 					</button>
@@ -308,12 +302,10 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 								{hasClaude && (
 									<div className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<ClaudeCode className="h-3.5 w-3.5 shrink-0" />
+											<Claude.Color className="h-3.5 w-3.5 shrink-0" />
 											Claude
 										</span>
-										{quotas?.claude?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.claude.error}</span>
-										) : !quotas?.claude?.data ? (
+										{!quotas?.claude?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
@@ -352,12 +344,10 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 								{hasCodex && (
 									<div className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Codex className="h-3.5 w-3.5 shrink-0" />
+											<Codex.Color className="h-3.5 w-3.5 shrink-0" />
 											Codex
 										</span>
-										{quotas?.codex?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.codex.error}</span>
-										) : !quotas?.codex?.data ? (
+										{!quotas?.codex?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
@@ -398,9 +388,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 											<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
 											Copilot
 										</span>
-										{quotas?.copilot?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.copilot.error}</span>
-										) : !quotas?.copilot?.data ? (
+										{!quotas?.copilot?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
@@ -438,12 +426,10 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 								{hasAntigravity && (
 									<div className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Antigravity className="h-3.5 w-3.5 shrink-0" />
+											<Antigravity.Color className="h-3.5 w-3.5 shrink-0" />
 											Antigravity
 										</span>
-										{quotas?.antigravity?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.antigravity.error}</span>
-										) : !quotas?.antigravity?.data ? (
+										{!quotas?.antigravity?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-3 pl-1.5 border-l border-border">
@@ -515,9 +501,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 											<OpenCode className="h-3.5 w-3.5 shrink-0" />
 											OpenCode Go
 										</span>
-										{quotas?.opencode?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.opencode.error}</span>
-										) : !quotas?.opencode?.data ? (
+										{!quotas?.opencode?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
@@ -559,9 +543,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 											<Ollama className="h-3.5 w-3.5 shrink-0" />
 											Ollama
 										</span>
-										{quotas?.ollama?.error ? (
-											<span className="text-[10px] text-red-400 italic font-sans">Error: {quotas.ollama.error}</span>
-										) : !quotas?.ollama?.data ? (
+										{!quotas?.ollama?.data ? (
 											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
 										) : (
 											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">

@@ -1,4 +1,4 @@
-import { OpenCode, Antigravity, ClaudeCode, Codex, GithubCopilot } from '@lobehub/icons'
+import { OpenCode, Antigravity, Claude, Codex, GithubCopilot } from '@lobehub/icons'
 import { Terminal, Bot } from 'lucide-react'
 
 export interface AgentType {
@@ -19,13 +19,13 @@ export const agentTypes: Record<string, AgentType> = {
     id: 'claude',
     label: 'Claude Code',
     cmd: ['claude', '--dangerously-skip-permissions'],
-    icon: ClaudeCode,
+    icon: Claude.Color,
   },
   codex: {
     id: 'codex',
     label: 'Codex CLI',
     cmd: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
-    icon: Codex,
+    icon: Codex.Color,
   },
   copilot: {
     id: 'copilot',
@@ -37,7 +37,7 @@ export const agentTypes: Record<string, AgentType> = {
     id: 'agy',
     label: 'Antigravity',
     cmd: ['agy', '--dangerously-skip-permissions'],
-    icon: Antigravity,
+    icon: Antigravity.Color,
   },
   opencode: {
     id: 'opencode',
