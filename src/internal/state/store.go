@@ -59,7 +59,9 @@ func (s *Store) migrate() {
 		orientation  TEXT DEFAULT '',
 		sizes        TEXT DEFAULT '[]',
 		file_path    TEXT DEFAULT '',
-		is_diff      INTEGER DEFAULT 0
+		is_diff      INTEGER DEFAULT 0,
+		agent_branch TEXT DEFAULT '',
+		base_branch  TEXT DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS quota_settings (
 		provider TEXT NOT NULL,
@@ -71,6 +73,8 @@ func (s *Store) migrate() {
 		log.Fatalf("failed to create schema: %v", err)
 	}
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN enable_worktrees INTEGER DEFAULT 1")
+	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN agent_branch TEXT DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
 }
 
 func (s *Store) Get() AppState {
@@ -137,17 +141,17 @@ func (s *Store) loadLayoutTree(tabID, parentID string) LayoutNode {
 	var row *sql.Row
 	if parentID == "" {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
 			tabID,
 		)
 	} else {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff FROM layout_nodes WHERE tab_id = ? AND parent_id = ?",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch FROM layout_nodes WHERE tab_id = ? AND parent_id = ?",
 			tabID, parentID,
 		)
 	}
 
-	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff)
+	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch)
 	if err != nil {
 		return ln
 	}
@@ -238,9 +242,9 @@ func (s *Store) saveLayoutTree(tx *sql.Tx, tabID, parentID string, ln LayoutNode
 	}
 
 	tx.Exec(
-		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff,
+		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff, ln.AgentBranch, ln.BaseBranch,
 	)
 
 	if ln.Children == nil {
