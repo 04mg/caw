@@ -25,7 +25,7 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRightOpen, Workflow, Check, X } from 'lucide-react'
+import { Settings, PanelLeft, Workflow, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -833,7 +833,7 @@ export function AppLayout() {
 
                     {/* Workflow Button (Always Visible) */}
                     <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-                      <Tooltip>
+                      <Tooltip delayDuration={0}>
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
@@ -847,7 +847,7 @@ export function AppLayout() {
                         <TooltipContent className="flex items-center select-none">
                           {activeWorkspace?.enableWorktrees ? (
                             <>
-                              <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0 animate-bounce" />
+                              <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0" />
                               <span>Worktrees</span>
                             </>
                           ) : (
@@ -870,8 +870,7 @@ export function AppLayout() {
                           onClick={toggleFolderSidebar}
                           title="Workspace Files"
                         >
-                          <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                          <PanelRightOpen className="h-3.5 w-3.5 hidden group-hover:block" />
+                          <PanelLeft className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     )}
