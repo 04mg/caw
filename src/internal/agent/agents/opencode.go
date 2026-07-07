@@ -30,21 +30,39 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 		}
 	}
 
+	walPath := dbPath + "-wal"
+
 	var lastCheck time.Time = time.Now().Add(-5 * time.Second)
 	var lastFileSize int64 = 0
+	var lastWalSize int64 = 0
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			changed := false
 			info, err := os.Stat(dbPath)
 			if err == nil {
-				if info.Size() > lastFileSize || info.ModTime().After(lastCheck) {
-					w.parseOpenCodeDB(dbPath, callback)
+				if info.Size() != lastFileSize || info.ModTime().After(lastCheck) {
+					changed = true
 					lastFileSize = info.Size()
+				}
+			}
+			walInfo, walErr := os.Stat(walPath)
+			if walErr == nil {
+				if walInfo.Size() != lastWalSize || walInfo.ModTime().After(lastCheck) {
+					changed = true
+					lastWalSize = walInfo.Size()
+				}
+			}
+			if changed {
+				if walErr == nil && walInfo.ModTime().After(lastCheck) {
+					lastCheck = walInfo.ModTime()
+				} else if err == nil {
 					lastCheck = info.ModTime()
 				}
+				w.parseOpenCodeDB(dbPath, callback)
 			}
 		}
 	}
