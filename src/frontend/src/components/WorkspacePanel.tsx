@@ -198,32 +198,28 @@ export function WorkspacePanel({
   return (
     <div className="flex h-full flex-col bg-background select-none">
       {!noHeader && (
-        <div className="flex items-center border-b border-border h-[33px] shrink-0 bg-secondary/20">
-          <div className="flex items-center justify-center border-r border-border h-full bg-background select-none" style={{ width: 44 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 text-muted-foreground hover:text-foreground"
-              onClick={onToggle}
-              title="Hide sidebar"
-            >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <span className="flex-1 pl-3 text-xs font-semibold text-muted-foreground truncate">
+        <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={onToggle}
+            title="Hide sidebar"
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          </Button>
+          <span className="flex-1 text-xs font-semibold text-muted-foreground truncate">
             Workspaces
           </span>
-          <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 text-muted-foreground hover:text-foreground"
-              onClick={() => setPickerOpen(true)}
-              title="Add workspace"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setPickerOpen(true)}
+            title="Add workspace"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
         </div>
       )}
 
