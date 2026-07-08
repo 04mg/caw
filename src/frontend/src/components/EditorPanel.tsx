@@ -1,7 +1,37 @@
 import { useEffect, useState, useRef } from 'react'
-import Editor, { DiffEditor } from '@monaco-editor/react'
+import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react'
 import { Save, AlertCircle, RefreshCw, Check, GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+
+function defineCawDarkTheme(monaco: Monaco) {
+  monaco.editor.defineTheme('caw-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [],
+    colors: {
+      'editor.background': '#000000',
+      'editorGutter.background': '#000000',
+      'editorLineNumber.foreground': '#3a3a3a',
+      'minimap.background': '#000000',
+      'diffEditor.insertedTextBackground': '#1a4a1a55',
+      'diffEditor.removedTextBackground': '#4a1a1a55',
+      'diffEditorGutter.insertedLineBackground': '#0a3d0a33',
+      'diffEditorGutter.removedLineBackground': '#3d0a0a33',
+      'editorGutter.modifiedBackground': '#3a3a3a',
+      'editorGutter.addedBackground': '#2a5a2a',
+      'editorGutter.deletedBackground': '#5a2a2a',
+      'editorWidget.background': '#000000',
+      'editorWidget.border': '#1a1a1a',
+      'editorSuggestWidget.background': '#000000',
+      'editorSuggestWidget.border': '#1a1a1a',
+      'editorHoverWidget.background': '#000000',
+      'editorHoverWidget.border': '#1a1a1a',
+      'peekViewResult.background': '#000000',
+      'peekViewEditor.background': '#000000',
+      'peekViewEditorGutter.background': '#000000',
+    },
+  })
+}
 
 interface EditorPanelProps {
   filePath?: string
@@ -247,9 +277,10 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           <DiffEditor
             height="100%"
             language={getLanguage(filePath)}
-            theme={isDarkTheme ? 'vs-dark' : 'light'}
+            theme={isDarkTheme ? 'caw-dark' : 'light'}
             original={originalContent}
             modified={editedContent}
+            beforeMount={defineCawDarkTheme}
             options={{
               readOnly: true,
               fontSize: 12,
@@ -264,7 +295,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           <Editor
             height="100%"
             language="diff"
-            theme={isDarkTheme ? 'vs-dark' : 'light'}
+            theme={isDarkTheme ? 'caw-dark' : 'light'}
+            beforeMount={defineCawDarkTheme}
             value={content}
             options={{
               readOnly: true,
@@ -278,7 +310,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           <Editor
             height="100%"
             language={getLanguage(filePath)}
-            theme={isDarkTheme ? 'vs-dark' : 'light'}
+            theme={isDarkTheme ? 'caw-dark' : 'light'}
+            beforeMount={defineCawDarkTheme}
             value={content}
             onChange={handleEditorChange}
             onMount={(editor) => {
