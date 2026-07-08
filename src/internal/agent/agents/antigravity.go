@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -169,14 +170,34 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 					`SELECT conversation_id, workspace_uris FROM conversation_summaries ORDER BY last_modified_time DESC`,
 				)
 				if qerr == nil {
-					targetURI := "file://" + filepath.ToSlash(cwd)
+					// Normalize the target cwd to an absolute, slash-separated
+					// path once. The DB stores workspace_uris as a JSON array
+					// of file:// URIs like
+					//   "file:///C:/Users/manur/OneDrive/Desktop/agents%20workspace/wterm"
+					// (three slashes, URL-encoded). We parse each URI back to a
+					// filesystem path and compare against the absolute cwd so
+					// differences in slash count, drive-letter case, or %20
+					// encoding don't break the match.
+					absCwd, _ := filepath.Abs(cwd)
+					absCwd = filepath.Clean(absCwd)
 					for rows.Next() {
 						var convID, uris string
 						if rows.Scan(&convID, &uris) != nil {
 							continue
 						}
-						if strings.Contains(uris, "\""+targetURI+"\"") {
-							workspaceMatch[convID] = true
+						var uriList []string
+						if json.Unmarshal([]byte(uris), &uriList) != nil {
+							continue
+						}
+						for _, u := range uriList {
+							p := uriToPath(u)
+							if p == "" {
+								continue
+							}
+							if filepath.Clean(p) == absCwd {
+								workspaceMatch[convID] = true
+								break
+							}
 						}
 					}
 					rows.Close()
@@ -210,9 +231,13 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 			}
 		}
 		// When cwd filtering is active and we successfully queried the db,
-		// skip transcripts that don't belong to the target workspace.
+		// skip transcripts that belong to a *different* workspace. A
+		// conversation that hasn't been recorded in the db yet (brand-new
+		// session) is kept, since its transcript is already newer than the
+		// watcher's start and most likely belongs to the agent we just
+		// launched.
 		if cwd != "" && workspaceQueried && convID != "" {
-			if !workspaceMatch[convID] {
+			if known, ok := workspaceMatch[convID]; ok && !known {
 				return nil
 			}
 		}
@@ -338,5 +363,30 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		// Unknown step type — stay thinking.
 		callback("thinking", "", "", sessionTitle)
 	}
+}
+
+// uriToPath converts a file:// URI as stored in the Antigravity
+// conversation_summaries.db workspace_uris column back into an OS filesystem
+// path. Handles the triple-slash form ("file:///C:/...") and URL-encoded
+// characters (e.g. "%20" for spaces) used by the CLI. Returns "" when the URI
+// is not a file:// URI or cannot be parsed.
+func uriToPath(uri string) string {
+	if !strings.HasPrefix(uri, "file:") {
+		return ""
+	}
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "file" {
+		return ""
+	}
+	p := u.Path
+	// On Windows, url.Parse leaves a leading slash before the drive letter
+	// (e.g. "/C:/Users/..."); strip it so the result is a valid drive path.
+	if len(p) > 2 && p[0] == '/' && (p[2] == ':' || p[2] == '|') {
+		p = p[1:]
+	}
+	// Restore any | that the URL encoder produced for colons on some
+	// platforms, then convert to the OS-native separator.
+	p = strings.ReplaceAll(p, "|", ":")
+	return filepath.FromSlash(p)
 }
 

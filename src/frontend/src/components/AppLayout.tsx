@@ -214,6 +214,52 @@ export function AppLayout() {
     }
   }, [activeWorkspace, workspaces.length])
 
+  // Global Undo/Redo key listener for File Explorer operations
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      const active = document.activeElement
+      const isInputActive = active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.hasAttribute('contenteditable') ||
+        active.getAttribute('contenteditable') === 'true' ||
+        active.classList.contains('inputarea')
+      )
+
+      if (isInputActive) {
+        return
+      }
+
+      const isCtrl = e.ctrlKey || e.metaKey
+      const key = e.key.toLowerCase()
+
+      if (isCtrl && key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          const res = await fetch('/api/workspace/undo', { method: 'POST' })
+          if (res.ok) {
+            fetchGitStatus()
+          }
+        } catch { /* ignore */ }
+      } else if ((isCtrl && key === 'y') || (isCtrl && key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          const res = await fetch('/api/workspace/redo', { method: 'POST' })
+          if (res.ok) {
+            fetchGitStatus()
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [fetchGitStatus])
+
   const patchWorkspace = useCallback(
     (id: string, fn: (ws: Workspace) => Workspace) => {
       setWorkspaces((prev) => prev.map((w) => (w.id === id ? fn(w) : w)))
