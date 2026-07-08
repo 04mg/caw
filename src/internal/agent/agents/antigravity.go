@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -77,7 +78,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
-	lastCheck := time.Now().Add(-10 * time.Second)
+	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -123,8 +124,36 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 
 // findAntigravityTranscript walks the brain directory looking for the most
 // recently modified transcript.jsonl. When cwd is non-empty it tries to match
-// the working directory embedded in the USER_INPUT step of each transcript.
+// the working directory using conversation_summaries.db.
 func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (string, time.Time, error) {
+	// 1. Try to query conversation_summaries.db first for a precise workspace match
+	if cwd != "" {
+		home, _ := os.UserHomeDir()
+		dbPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db")
+		if _, err := os.Stat(dbPath); err == nil {
+			db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+			if err == nil {
+				defer db.Close()
+				var convID string
+				targetURI := "file://" + filepath.ToSlash(cwd)
+				pattern := "%\"" + targetURI + "\"%"
+				err = db.QueryRow(
+					`SELECT conversation_id FROM conversation_summaries WHERE workspace_uris LIKE ? ORDER BY last_modified_time DESC LIMIT 1`,
+					pattern,
+				).Scan(&convID)
+				if err == nil && convID != "" {
+					filePath := filepath.Join(brainDir, convID, ".system_generated", "logs", "transcript.jsonl")
+					if info, err := os.Stat(filePath); err == nil {
+						if info.ModTime().After(after) {
+							return filePath, info.ModTime(), nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Fall back to recursive walk
 	var bestPath string
 	var bestMod time.Time
 
@@ -141,9 +170,6 @@ func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (st
 		if !info.ModTime().After(after) {
 			return nil
 		}
-		// Prefer the most recently modified transcript; CWD correlation is
-		// a best-effort hint rather than a hard filter because the transcript
-		// doesn't always contain the cwd explicitly.
 		if info.ModTime().After(bestMod) {
 			bestPath = path
 			bestMod = info.ModTime()

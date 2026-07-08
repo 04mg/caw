@@ -33,7 +33,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".codex", "sessions")
-	lastCheck := time.Now().Add(-10 * time.Second)
+	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -111,7 +111,13 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 				return
 			case "message":
 				status := "idle"
-				if strings.Contains(p.Message, "?") || strings.Contains(p.Message, "[y/n]") {
+				msgLower := strings.ToLower(p.Message)
+				if strings.Contains(msgLower, "[y/n]") ||
+					strings.Contains(msgLower, "[y/N]") ||
+					strings.Contains(msgLower, "[Y/n]") ||
+					strings.Contains(msgLower, "(y/n)") ||
+					strings.Contains(msgLower, "confirm") ||
+					strings.Contains(msgLower, "approve") {
 					status = "waiting_input"
 				}
 				callback(status, "", "", sessionTitle)

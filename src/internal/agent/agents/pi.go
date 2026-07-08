@@ -34,7 +34,15 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
-	lastCheck := time.Now().Add(-10 * time.Second)
+	if cwd != "" {
+		cleanCwd := filepath.Clean(cwd)
+		projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+		targetDir := filepath.Join(dir, projDir)
+		if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+			dir = targetDir
+		}
+	}
+	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -127,7 +135,13 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 			}
 			if hasText {
 				status := "idle"
-				if strings.Contains(textContent, "?") || strings.Contains(textContent, "[y/n]") {
+				textContentLower := strings.ToLower(textContent)
+				if strings.Contains(textContentLower, "[y/n]") ||
+					strings.Contains(textContentLower, "[y/N]") ||
+					strings.Contains(textContentLower, "[Y/n]") ||
+					strings.Contains(textContentLower, "(y/n)") ||
+					strings.Contains(textContentLower, "confirm") ||
+					strings.Contains(textContentLower, "approve") {
 					status = "waiting_input"
 				}
 				callback(status, "", "", sessionTitle)

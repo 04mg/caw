@@ -45,7 +45,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	baseDir := filepath.Join(home, ".claude", "projects")
 	searchDir := claudeProjectDir(baseDir, cwd)
 
-	lastCheck := time.Now().Add(-10 * time.Second)
+	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -169,9 +169,13 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 				}
 				if hasText {
 					status := "idle"
-					if strings.Contains(textContent, "?") ||
-						strings.Contains(textContent, "Confirm") ||
-						strings.Contains(textContent, "approve") {
+					textContentLower := strings.ToLower(textContent)
+					if strings.Contains(textContentLower, "[y/n]") ||
+						strings.Contains(textContentLower, "[y/N]") ||
+						strings.Contains(textContentLower, "[Y/n]") ||
+						strings.Contains(textContentLower, "(y/n)") ||
+						strings.Contains(textContentLower, "confirm") ||
+						strings.Contains(textContentLower, "approve") {
 						status = "waiting_input"
 					}
 					callback(status, "", textContent, sessionTitle)

@@ -96,7 +96,13 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 		callback("thinking", "", "", sessionTitle)
 	} else {
 		status := "idle"
-		if strings.Contains(content, "?") || strings.Contains(content, "approve") {
+		contentLower := strings.ToLower(content)
+		if strings.Contains(contentLower, "[y/n]") ||
+			strings.Contains(contentLower, "[y/N]") ||
+			strings.Contains(contentLower, "[Y/n]") ||
+			strings.Contains(contentLower, "(y/n)") ||
+			strings.Contains(contentLower, "confirm") ||
+			strings.Contains(contentLower, "approve") {
 			status = "waiting_input"
 		}
 		callback(status, "", "", sessionTitle)

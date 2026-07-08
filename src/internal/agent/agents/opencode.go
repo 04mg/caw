@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
@@ -233,21 +232,11 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 		}
 
 		// Otherwise, the assistant turn is complete (finish = "stop" or "completed").
-		// Check if the final text contains questions/approvals.
 		status := "idle"
 		var textContent string
 		for _, p := range parts {
 			if p.Type == "text" {
 				textContent = p.Text
-			}
-		}
-		if textContent != "" {
-			textContentLower := strings.ToLower(textContent)
-			if strings.Contains(textContentLower, "?") ||
-				strings.Contains(textContentLower, "approval") ||
-				strings.Contains(textContentLower, "confirm") ||
-				strings.Contains(textContentLower, "approve") {
-				status = "waiting_input"
 			}
 		}
 		callback(status, "", textContent, sessionTitle)
