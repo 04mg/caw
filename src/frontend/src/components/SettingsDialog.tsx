@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Slider } from '@/components/ui/slider'
 import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/lib/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/lib/terminalRegistry'
 import { SettingsItem } from '@/components/SettingsItem'
@@ -26,6 +26,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [opencodeCookie, setOpencodeCookie] = useState('')
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
   const [ollamaCookie, setOllamaCookie] = useState('')
+  const [openrouterApiKey, setOpenrouterApiKey] = useState('')
   const [claudeAccessToken, setClaudeAccessToken] = useState('')
   const [codexAccessToken, setCodexAccessToken] = useState('')
   const [copilotToken, setCopilotToken] = useState('')
@@ -38,7 +39,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const copilotIntervalRef = useRef(5)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [copilotDeviceError, setCopilotDeviceError] = useState('')
-  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama'>('claude')
+  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama' | 'openrouter'>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
   const [agentStep, setAgentStep] = useState<1 | 2>(1)
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
@@ -57,6 +58,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setOpencodeCookie(data.opencode?.cookie || '')
         setOpencodeWorkspace(data.opencode?.workspaceId || '')
         setOllamaCookie(data.ollama?.cookie || '')
+        setOpenrouterApiKey(data.openrouter?.apiKey || '')
         setClaudeAccessToken(data.claude?.accessToken || '')
         setCodexAccessToken(data.codex?.accessToken || '')
         setCopilotToken(data.copilot?.token || '')
@@ -140,6 +142,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     cdToken: string,
     cpToken: string,
     cpHost: string,
+    orKey: string,
   ) => {
     try {
       await fetch('/api/quotas/settings', {
@@ -152,6 +155,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           claude: { accessToken: clToken },
           codex: { accessToken: cdToken },
           copilot: { token: cpToken, enterpriseHost: cpHost },
+          openrouter: { apiKey: orKey },
         }),
       })
     } catch (e) {
@@ -198,7 +202,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       if (data.access_token) {
         setCopilotToken(data.access_token)
         setCopilotDeviceFlow('done')
-        saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, data.access_token, copilotEnterpriseHost)
+        saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, data.access_token, copilotEnterpriseHost, openrouterApiKey)
       } else if (data.error === 'authorization_pending') {
         pollTimerRef.current = setTimeout(pollCopilotDeviceToken, copilotIntervalRef.current * 1000)
       } else if (data.error === 'slow_down') {
@@ -595,6 +599,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   { id: 'antigravity', label: 'Antigravity', icon: Antigravity.Color, show: agyInstalled },
                   { id: 'opencode', label: 'OpenCode Go', icon: OpenCode, show: true },
                   { id: 'ollama', label: 'Ollama', icon: Ollama, show: true },
+                  { id: 'openrouter', label: 'OpenRouter', icon: OpenRouter, show: true },
                 ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
                   return (
@@ -633,6 +638,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     {selectedLimitProvider === 'antigravity' && 'Antigravity Configuration'}
                     {selectedLimitProvider === 'opencode' && 'OpenCode Go Configuration'}
                     {selectedLimitProvider === 'ollama' && 'Ollama Configuration'}
+                    {selectedLimitProvider === 'openrouter' && 'OpenRouter Configuration'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Specify the details needed to authenticate limits tracking for this provider.
@@ -661,7 +667,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         onChange={(e) => {
                           const val = e.target.value
                           setClaudeAccessToken(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, val, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, val, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                         }}
                         placeholder="Enter Claude OAuth access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -683,7 +689,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         onChange={(e) => {
                           const val = e.target.value
                           setCodexAccessToken(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, val, copilotToken, copilotEnterpriseHost)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, val, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                         }}
                         placeholder="Enter Codex OAuth access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -775,7 +781,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             const val = e.target.value
                             setCopilotToken(val)
                             setCopilotDeviceFlow('idle')
-                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost)
+                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost, openrouterApiKey)
                           }}
                           placeholder="gho_..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -789,7 +795,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           onChange={(e) => {
                             const val = e.target.value
                             setCopilotEnterpriseHost(val)
-                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val)
+                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val, openrouterApiKey)
                           }}
                           placeholder="e.g. octocorp.ghe.com"
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -812,7 +818,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         onChange={(e) => {
                           const val = e.target.value
                           setAntigravityKey(val)
-                          saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                          saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                         }}
                         placeholder="Enter Antigravity refresh token or access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -835,7 +841,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           onChange={(e) => {
                             const val = e.target.value
                             setOpencodeCookie(val)
-                            saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                            saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                           }}
                           placeholder="auth cookie value..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -849,7 +855,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           onChange={(e) => {
                             const val = e.target.value
                             setOpencodeWorkspace(val)
-                            saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                            saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                           }}
                           placeholder="e.g. wrk_01KVB2..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -872,9 +878,31 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         onChange={(e) => {
                           const val = e.target.value
                           setOllamaCookie(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey)
                         }}
                         placeholder="Enter __Secure-session cookie..."
+                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {selectedLimitProvider === 'openrouter' && (
+                  <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-normal">
+                        Provide your OpenRouter API key to fetch credit usage and remaining limits for your key.
+                      </p>
+                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">API Key</label>
+                      <input
+                        type="password"
+                        value={openrouterApiKey}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setOpenrouterApiKey(val)
+                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, val)
+                        }}
+                        placeholder="sk-or-v1-..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
                       />
                     </div>

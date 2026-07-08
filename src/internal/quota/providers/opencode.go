@@ -79,8 +79,8 @@ func (p *OpenCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResp
 	}
 
 	return &quota.QuotaResponse{
-		FiveHour: quota.Quota{Used: rollingVal, Limit: 100},
-		Weekly:   quota.Quota{Used: weeklyVal, Limit: 100},
-		Monthly:  quota.Quota{Used: monthlyVal, Limit: 100},
+		FiveHour: quota.Quota{Used: rollingVal, Limit: 100, Unit: "percentage"},
+		Weekly:   quota.Quota{Used: weeklyVal, Limit: 100, Unit: "percentage"},
+		Monthly:  quota.Quota{Used: monthlyVal, Limit: 100, Unit: "percentage"},
 	}, nil
 }

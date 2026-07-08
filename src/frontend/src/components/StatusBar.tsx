@@ -6,12 +6,13 @@ import {
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot } from '@lobehub/icons'
+import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
 interface Quota {
 	used:  number
 	limit: number
+	unit?: string // "" | "percentage" | "credits" | "count" | "info"
 }
 
 interface QuotaItem {
@@ -20,6 +21,7 @@ interface QuotaItem {
 	description: string
 	used:        number
 	limit:       number
+	unit?:       string
 	resetTime?:  string
 }
 
@@ -48,6 +50,7 @@ interface AllQuotas {
 	claude?:     ProviderData
 	codex?:      ProviderData
 	copilot?:    ProviderData
+	openrouter?: ProviderData
 }
 
 interface StatusBarProps {
@@ -130,7 +133,8 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 	const hasAntigravity = settings.antigravity?.installed !== 'false'
 	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
 	const hasOllama = !!settings.ollama?.cookie
-	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama
+	const hasOpenRouter = !!settings.openrouter?.apiKey
+	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
@@ -152,7 +156,8 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 			provider === 'codex' ? 'Codex' :
 			provider === 'copilot' ? 'Copilot' :
 			provider === 'antigravity' ? 'Antigravity' :
-			provider === 'opencode' ? 'OpenCode Go' : 'Ollama'
+			provider === 'opencode' ? 'OpenCode Go' :
+			provider === 'openrouter' ? 'OpenRouter' : 'Ollama'
 
 		if (!providerData) {
 			return { text: 'Select Limit', isError: false }
@@ -167,13 +172,14 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 		}
 
 		// Check for dynamic group selection: provider:groupName:itemName
-		if (provider === 'antigravity' && providerData.data.groups && parts.length === 3) {
+		if (providerData.data.groups && parts.length === 3) {
 			const groupName = parts[1]
 			const itemName = parts[2]
 			const group = providerData.data.groups.find(g => g.name === groupName)
 			const item = group?.items.find(i => i.name === itemName)
 			if (item) {
-				return { text: `${providerLabel} (${item.label}): ${item.used}%`, isError: false, percentage: item.used }
+				const display = formatQuotaValue(item.used, item.limit, item.unit)
+				return { text: `${providerLabel} (${item.label}): ${display.text}`, isError: false, percentage: display.percentage }
 			}
 		}
 
@@ -184,22 +190,35 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (provider === 'opencode' || provider === 'ollama' || provider === 'antigravity' || provider === 'claude' || provider === 'codex' || provider === 'copilot') {
-			return { text: `${providerLabel} (${typeLabel}): ${q.used}%`, isError: false, percentage: q.used }
-		}
-
-		const pct = q.limit > 0 ? Math.round((q.used / q.limit) * 100) : 0
-		return { text: `${providerLabel} (${typeLabel}): ${q.used}/${q.limit} (${pct}%)`, isError: false, percentage: pct }
+		const display = formatQuotaValue(q.used, q.limit, q.unit)
+		return { text: `${providerLabel} (${typeLabel}): ${display.text}`, isError: false, percentage: display.percentage }
 	}
 
 	const activeDisplay = getQuotaDisplay()
 
-	const renderProgressBar = (used: number, limit: number, isPercentageOnly: boolean) => {
-		const pct = isPercentageOnly ? used : limit > 0 ? (used / limit) * 100 : 0
+	const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
+		if (unit === 'info') {
+			return { text: '', percentage: 0 }
+		}
+		if (unit === 'percentage' || !unit) {
+			return { text: `${used}%`, percentage: used }
+		}
+		// credits / count
+		const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
+		return { text: `${used}/${limit}`, percentage: pct }
+	}
+
+	const renderProgressBar = (used: number, limit: number, unit?: string) => {
+		const isInfo = unit === 'info'
+		if (isInfo) {
+			return null
+		}
+		const display = formatQuotaValue(used, limit, unit)
+		const pct = display.percentage
 		return (
 			<div className="flex flex-col gap-1 w-full mt-1.5 animate-none">
 				<div className="text-[10px] text-muted-foreground select-none font-sans">
-					<span>{isPercentageOnly ? `${used}%` : `${used} / ${limit}`}</span>
+					<span>{display.text}</span>
 				</div>
 				<div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
 					<div
@@ -261,6 +280,8 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 								<OpenCode className="h-3.5 w-3.5 shrink-0" />
 							) : selectedView.startsWith('ollama') ? (
 								<Ollama className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('openrouter') ? (
+								<OpenRouter className="h-3.5 w-3.5 shrink-0" />
 							) : null}
 						</>
 					)}
@@ -333,7 +354,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, 100, true)}
+															{renderProgressBar(val.used, val.limit, val.unit)}
 														</div>
 													)
 												})}
@@ -374,7 +395,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, 100, true)}
+															{renderProgressBar(val.used, val.limit, val.unit)}
 														</div>
 													)
 												})}
@@ -415,7 +436,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, 100, true)}
+															{renderProgressBar(val.used, val.limit, val.unit)}
 														</div>
 													)
 												})}
@@ -458,7 +479,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																			<span className="text-foreground" title={item.description}>{item.label}</span>
 																			{isActive && <Check className="h-3 w-3 text-primary" />}
 																		</div>
-																		{renderProgressBar(item.used, 100, true)}
+																		{renderProgressBar(item.used, item.limit, item.unit)}
 																	</div>
 																)
 															})}
@@ -486,7 +507,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																	<span className="text-foreground">{label}</span>
 																	{isActive && <Check className="h-3 w-3 text-primary" />}
 																</div>
-																{renderProgressBar(val.used, 100, true)}
+																{renderProgressBar(val.used, val.limit, val.unit)}
 															</div>
 														)
 													})
@@ -529,7 +550,7 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, 100, true)}
+															{renderProgressBar(val.used, val.limit, val.unit)}
 														</div>
 													)
 												})}
@@ -570,10 +591,81 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, 100, true)}
+															{renderProgressBar(val.used, val.limit, val.unit)}
 														</div>
 													)
 												})}
+											</div>
+										)}
+									</div>
+								)}
+								{(hasAntigravity || hasOpenCode || hasOllama) && hasOpenRouter && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasOpenRouter && (
+									<div className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<OpenRouter className="h-3.5 w-3.5 shrink-0" />
+											OpenRouter
+										</span>
+										{!quotas?.openrouter?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'fiveHour', label: 'Daily Usage' },
+													{ key: 'weekly', label: 'Weekly Usage' },
+													{ key: 'monthly', label: 'Monthly Usage' }
+												].map(({ key, label }) => {
+													const val = quotas.openrouter!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+													const viewKey = `openrouter:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, val.limit, val.unit)}
+														</div>
+													)
+												})}
+												{quotas.openrouter.data.groups?.map((group) => (
+													<div key={group.name} className="flex flex-col gap-1.5">
+														<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
+															{group.name}
+														</span>
+														{group.items.map((item) => {
+															const viewKey = `openrouter:${group.name}:${item.name}`
+															const isActive = selectedView === viewKey
+															return (
+																<div
+																	key={item.name}
+																	onClick={() => selectView(viewKey)}
+																	className={cn(
+																		"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																		isActive && "bg-accent/20 border-border"
+																	)}
+																>
+																	<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																		<span className="text-foreground" title={item.description}>{item.label}</span>
+																		{isActive && <Check className="h-3 w-3 text-primary" />}
+																	</div>
+																	{renderProgressBar(item.used, item.limit, item.unit)}
+																	{item.resetTime && (
+																		<span className="text-[9px] text-muted-foreground/70 font-sans mt-0.5">Reset: {item.resetTime}</span>
+																	)}
+																</div>
+															)
+														})}
+													</div>
+												))}
 											</div>
 										)}
 									</div>
