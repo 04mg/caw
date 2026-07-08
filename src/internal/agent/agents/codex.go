@@ -27,7 +27,7 @@ type CodexPayload struct {
 	Message string `json:"message,omitempty"`
 }
 
-func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -36,7 +36,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
-	var lastPrompt string
+	var sessionTitle string
 
 	for {
 		select {
@@ -55,11 +55,11 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, prompt string) {
-							if prompt != "" {
-								lastPrompt = prompt
+						wrappedCallback := func(status, tool, details, title string) {
+							if title != "" {
+								sessionTitle = title
 							}
-							callback(status, tool, details, lastPrompt)
+							callback(status, tool, details, sessionTitle)
 						}
 						w.parseCodexLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
@@ -72,24 +72,26 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	}
 }
 
-func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback func(status, tool, details, prompt string)) {
+func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the most recent user message to use as the prompt.
-	var userPrompt string
+	// Forward pass: collect the first user prompt to use as the session title.
+	var sessionTitle string
 	for _, line := range lines {
 		var logLine CodexLogLine
 		if json.Unmarshal([]byte(line), &logLine) != nil {
 			continue
 		}
 		if logLine.Payload != nil && logLine.Payload.Type == "user_message" && logLine.Payload.Message != "" {
-			userPrompt = logLine.Payload.Message
+			if sessionTitle == "" {
+				sessionTitle = logLine.Payload.Message
+			}
 		}
 	}
-	userPrompt = CleanPrompt(userPrompt)
+	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -102,17 +104,17 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 			p := logLine.Payload
 			switch p.Type {
 			case "user_message":
-				callback("thinking", "", "", userPrompt)
+				callback("thinking", "", "", sessionTitle)
 				return
 			case "function_call":
-				callback("executing", p.Message, "", userPrompt)
+				callback("executing", p.Message, "", sessionTitle)
 				return
 			case "message":
 				status := "idle"
 				if strings.Contains(p.Message, "?") || strings.Contains(p.Message, "[y/n]") {
 					status = "waiting_input"
 				}
-				callback(status, "", "", userPrompt)
+				callback(status, "", "", sessionTitle)
 				return
 			}
 		}

@@ -4,7 +4,7 @@ export interface AgentStatus {
   status: string // "thinking", "executing", "waiting_input", "idle", "stopped"
   tool?: string
   details?: string
-  prompt?: string
+  title?: string
   timestamp: string
 }
 
@@ -16,7 +16,7 @@ export interface AgentStatusEvent {
   status?: string
   tool?: string
   details?: string
-  prompt?: string
+  title?: string
   timestamp: string
 }
 
@@ -53,7 +53,7 @@ function ensureWs() {
           status: data.status || 'idle',
           tool: data.tool,
           details: data.details,
-          prompt: data.prompt,
+          title: data.title,
           timestamp: data.timestamp || new Date().toISOString(),
         }
       }
