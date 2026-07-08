@@ -33,7 +33,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".codex", "sessions")
-	var lastCheck time.Time = time.Now().Add(-5 * time.Second)
+	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 
@@ -43,11 +43,11 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, mod, err := FindLatestFile(dir, ".jsonl", lastCheck)
+				fp, _, err := FindLatestFile(dir, ".jsonl", lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
 					lastFileSize = 0
-					lastCheck = mod.Add(-100 * time.Millisecond)
+					lastCheck = time.Now()
 				}
 			}
 			if watchedFilePath != "" {
