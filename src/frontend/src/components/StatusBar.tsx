@@ -5,9 +5,10 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 interface Quota {
 	used:  number
@@ -68,10 +69,12 @@ const formatQuotaValue = (used: number, limit: number, unit?: string): { text: s
 interface StatusBarProps {
 	workspaceName?: string
 	worktreeBranch?: string
+	agentBoardOpen?: boolean
+	onToggleAgentBoard?: () => void
 	onOpenSettings: (section?: string) => void
 }
 
-export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
 	const [isLoading, setIsLoading] = useState(false)
@@ -270,21 +273,41 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 
 	return (
 		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans">
-			<div className="flex items-center gap-2">
+		<div className="flex items-center gap-2">
+			<Tooltip delayDuration={0}>
+				<TooltipTrigger asChild>
+					<button
+						onClick={onToggleAgentBoard}
+						className={cn(
+							"shrink-0 transition-colors cursor-pointer",
+							agentBoardOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"
+						)}
+					>
+						<SquareKanban className="h-3.5 w-3.5" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top" className="select-none">
+					Control Center
+				</TooltipContent>
+			</Tooltip>
+			{workspaceName ? (
 				<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-				<span className="font-medium text-foreground/80">
-					{workspaceName || 'Ready'}
-				</span>
-				{worktreeBranch && (
-					<>
-						<span className="text-border select-none">·</span>
-						<span className="flex items-center gap-1 text-foreground/70">
-							<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
-							<span className="font-mono text-[11px]">{worktreeBranch}</span>
-						</span>
-					</>
-				)}
-			</div>
+			) : (
+				<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+			)}
+			<span className="font-medium text-foreground/80">
+				{workspaceName || 'Ready'}
+			</span>
+			{worktreeBranch && (
+				<>
+					<span className="text-border select-none">·</span>
+					<span className="flex items-center gap-1 text-foreground/70">
+						<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
+						<span className="font-mono text-[11px]">{worktreeBranch}</span>
+					</span>
+				</>
+			)}
+		</div>
 
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>

@@ -26,7 +26,7 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Workflow, Check, X, Home } from 'lucide-react'
+import { Settings, Folder, PanelRight, Workflow, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -63,6 +63,7 @@ export function AppLayout() {
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [agentBoardOpen, setAgentBoardOpen] = useState(false)
   const [closeConfirm, setCloseConfirm] = useState<{
     type: 'tab' | 'pane';
     targetId: string;
@@ -147,7 +148,7 @@ export function AppLayout() {
     return unsub
   }, [])
 
-  const activeWorkspace = activeWorkspaceId === '__home__' ? null : (workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null)
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
@@ -208,12 +209,10 @@ export function AppLayout() {
     if (activeWorkspace && workspaces.length > 0) {
       const e = activeWorkspace.emoji || '🐄'
       document.title = `Caw – ${e} ${activeWorkspace.name}`
-    } else if (activeWorkspaceId === '__home__') {
-      document.title = 'Caw – 🏠 Home'
     } else {
       document.title = 'Caw – 🐄 no workspace'
     }
-  }, [activeWorkspace, activeWorkspaceId, workspaces.length])
+  }, [activeWorkspace, workspaces.length])
 
   const patchWorkspace = useCallback(
     (id: string, fn: (ws: Workspace) => Workspace) => {
@@ -694,19 +693,7 @@ export function AppLayout() {
     />
   ) : null
 
-  const terminalBody = activeWorkspaceId === '__home__' ? (
-    <KanbanBoard
-      workspaces={workspaces}
-      onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-        setActiveWorkspaceId(workspaceId)
-        patchWorkspace(workspaceId, (ws) => ({
-          ...ws,
-          activeTabIndex: tabIndex,
-          activePaneId: paneId,
-        }))
-      }}
-    />
-  ) : activeTab && activeWorkspace && leafCount > 0 ? (
+  const terminalBody = activeTab && activeWorkspace && leafCount > 0 ? (
     <div className="relative flex-1 min-h-0">
       <TerminalGrid
         key={activeTab.id}
@@ -776,6 +763,20 @@ export function AppLayout() {
   return (
     <div className="flex flex-col h-full w-full bg-background select-none">
       <div className="flex-1 min-h-0">
+        {agentBoardOpen ? (
+          <KanbanBoard
+            workspaces={workspaces}
+            onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+              setActiveWorkspaceId(workspaceId)
+              patchWorkspace(workspaceId, (ws) => ({
+                ...ws,
+                activeTabIndex: tabIndex,
+                activePaneId: paneId,
+              }))
+              setAgentBoardOpen(false)
+            }}
+          />
+        ) : (
         <div className="flex h-full w-full">
           <Group orientation="horizontal" className="flex-1">
             {/* Left Workspace Panel */}
@@ -829,19 +830,6 @@ export function AppLayout() {
             <Panel>
               <div className="flex flex-col h-full">
                 <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
-                  <div className="flex items-center justify-center border-r border-border h-full bg-background select-none shrink-0" style={{ width: 44 }}>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={`h-5 w-5 shrink-0 transition-colors ${
-                        activeWorkspaceId === '__home__' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                      onClick={() => setActiveWorkspaceId('__home__')}
-                      title="Home / Agent Board"
-                    >
-                      <Home className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
                   <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
                     {tabs}
                   </div>
@@ -934,11 +922,14 @@ export function AppLayout() {
             )}
           </Group>
         </div>
+        )}
       </div>
 
       <StatusBar
         workspaceName={activeWorkspace?.name}
         worktreeBranch={activeWorktreeBranch}
+        agentBoardOpen={agentBoardOpen}
+        onToggleAgentBoard={() => setAgentBoardOpen((v) => !v)}
         onOpenSettings={(section) => {
           setSettingsSection(section)
           setSettingsOpen(true)
