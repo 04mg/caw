@@ -909,7 +909,7 @@ export function AppLayout() {
           </Group>
         </div>
         {agentBoardOpen && (
-          <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-xl backdrop-saturate-150">
+          <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-md backdrop-saturate-150">
             <KanbanBoard
               workspaces={workspaces}
               onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
