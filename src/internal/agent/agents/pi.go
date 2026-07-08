@@ -34,7 +34,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
-	var lastCheck time.Time // zero — finds ANY existing session file on first search
+	lastCheck := time.Now().Add(-10 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -45,7 +45,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, _, err := FindLatestFile(dir, "session.jsonl", lastCheck)
+				fp, _, err := FindLatestFile(dir, ".jsonl", lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
 					lastFileSize = 0
