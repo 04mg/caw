@@ -72,10 +72,6 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 
 	// Detailed breakdown as a group, mirroring the Antigravity approach.
 	totalUsed := int(key.Usage + 0.5)
-	remaining := 0
-	if key.LimitRemaining != nil {
-		remaining = int(*key.LimitRemaining + 0.5)
-	}
 	resetTime := ""
 	if key.LimitReset != nil {
 		resetTime = *key.LimitReset
@@ -86,13 +82,6 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 			Name:  "total",
 			Label: "Total Used",
 			Used:  totalUsed,
-			Limit: limit,
-			Unit:  "credits",
-		},
-		{
-			Name:  "remaining",
-			Label: "Remaining",
-			Used:  remaining,
 			Limit: limit,
 			Unit:  "credits",
 		},
