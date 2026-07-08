@@ -1,13 +1,13 @@
 import { useLayoutEffect, useRef, useEffect, useState } from 'react'
 import { 
-  Cpu, 
-  MessageSquareCode, 
   Coffee, 
   Folder, 
   Clock, 
   Terminal,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Construction,
+  Briefcase
 } from 'lucide-react'
 import { type Workspace } from '@/lib/workspaceStore'
 import { collectLeafIds } from '@/lib/layout'
@@ -40,14 +40,14 @@ const COLUMNS: Column[] = [
   {
     id: 'needs_input',
     title: 'Needs Input',
-    icon: MessageSquareCode,
+    icon: Construction,
     colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
     glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
   {
     id: 'working',
     title: 'Working',
-    icon: Cpu,
+    icon: Briefcase,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
   },
@@ -312,12 +312,12 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
           return (
             <div 
               key={col.id} 
-              className="flex flex-col min-w-[280px] flex-1 bg-secondary/5 border border-border/40 rounded-xl p-4 min-h-[400px]"
+              className="flex flex-col min-w-[280px] flex-1 bg-secondary/5 rounded-xl p-4 min-h-[400px]"
             >
               {/* Column Header */}
               <div className="flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0">
                 <div className="flex items-center gap-2">
-                  <ColIcon className={`w-4 h-4 ${col.colorClass.split(' ')[0]}`} />
+                  <ColIcon className="w-4 h-4 text-white" />
                   <span className="text-xs font-bold tracking-wider uppercase text-foreground/80">
                     {col.title}
                   </span>
@@ -334,7 +334,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
                     <div className="p-2.5 rounded-full bg-muted/40">
-                      <ColIcon className="w-4 h-4 text-muted-foreground/40" />
+                      <ColIcon className="w-4 h-4 text-white" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
