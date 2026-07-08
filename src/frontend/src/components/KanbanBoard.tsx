@@ -289,7 +289,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   }
 
   return (
-    <div className="flex flex-col h-full w-full bg-background overflow-hidden p-6 gap-6">
+    <div className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
       {/* Board Header */}
       <div className="flex items-center justify-between shrink-0">
         <div className="flex flex-col gap-1">

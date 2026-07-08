@@ -762,21 +762,7 @@ export function AppLayout() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background select-none">
-      <div className="flex-1 min-h-0">
-        {agentBoardOpen ? (
-          <KanbanBoard
-            workspaces={workspaces}
-            onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-              setActiveWorkspaceId(workspaceId)
-              patchWorkspace(workspaceId, (ws) => ({
-                ...ws,
-                activeTabIndex: tabIndex,
-                activePaneId: paneId,
-              }))
-              setAgentBoardOpen(false)
-            }}
-          />
-        ) : (
+      <div className="relative flex-1 min-h-0">
         <div className="flex h-full w-full">
           <Group orientation="horizontal" className="flex-1">
             {/* Left Workspace Panel */}
@@ -922,6 +908,21 @@ export function AppLayout() {
             )}
           </Group>
         </div>
+        {agentBoardOpen && (
+          <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-xl backdrop-saturate-150">
+            <KanbanBoard
+              workspaces={workspaces}
+              onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+                setActiveWorkspaceId(workspaceId)
+                patchWorkspace(workspaceId, (ws) => ({
+                  ...ws,
+                  activeTabIndex: tabIndex,
+                  activePaneId: paneId,
+                }))
+                setAgentBoardOpen(false)
+              }}
+            />
+          </div>
         )}
       </div>
 
