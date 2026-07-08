@@ -45,7 +45,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	baseDir := filepath.Join(home, ".claude", "projects")
 	searchDir := claudeProjectDir(baseDir, cwd)
 
-	var lastCheck time.Time = time.Now().Add(-5 * time.Second)
+	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 
@@ -55,11 +55,11 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, mod, err := FindLatestFile(searchDir, ".jsonl", lastCheck)
+				fp, _, err := FindLatestFile(searchDir, ".jsonl", lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
 					lastFileSize = 0
-					lastCheck = mod.Add(-100 * time.Millisecond)
+					lastCheck = time.Now()
 				}
 			}
 			if watchedFilePath != "" {
