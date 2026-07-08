@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-// FindLatestFile finds the most recently modified file with the given extension
+// FindLatestFile finds the most recently modified file whose name contains ext
+// (treated as a suffix) and whose modification time is after the given threshold.
+// It walks the entire baseDir tree recursively.
 func FindLatestFile(baseDir string, ext string, after time.Time) (string, time.Time, error) {
 	var latestPath string
 	var latestMod time.Time
@@ -20,8 +22,8 @@ func FindLatestFile(baseDir string, ext string, after time.Time) (string, time.T
 		if info.IsDir() {
 			return nil
 		}
-		name := strings.ToLower(info.Name())
-		if strings.HasSuffix(name, ext) {
+		name := info.Name()
+		if strings.HasSuffix(name, ext) || name == ext {
 			if info.ModTime().After(after) && info.ModTime().After(latestMod) {
 				latestPath = path
 				latestMod = info.ModTime()
@@ -33,7 +35,8 @@ func FindLatestFile(baseDir string, ext string, after time.Time) (string, time.T
 	return latestPath, latestMod, err
 }
 
-// ReadNewLines reads newly appended bytes of a file and returns them split by newline
+// ReadNewLines reads bytes appended to a file since the given byte offset and
+// returns them split into non-empty trimmed lines.
 func ReadNewLines(filePath string, fromOffset int64) ([]string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -41,7 +44,7 @@ func ReadNewLines(filePath string, fromOffset int64) ([]string, error) {
 	}
 	defer f.Close()
 
-	_, err = f.Seek(fromOffset, 0)
+	_, err = f.Seek(fromOffset, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
@@ -60,4 +63,21 @@ func ReadNewLines(filePath string, fromOffset int64) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// ReadFileHead reads the first maxBytes bytes of a file. Useful for
+// inspecting file headers / metadata without loading the entire file.
+func ReadFileHead(filePath string, maxBytes int64) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	buf := make([]byte, maxBytes)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", err
+	}
+	return string(buf[:n]), nil
 }

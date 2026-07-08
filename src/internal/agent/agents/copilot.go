@@ -23,8 +23,8 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 
 	home, _ := os.UserHomeDir()
 	dbPath := filepath.Join(home, ".copilot", "session-store.db")
-	var lastCheck time.Time = time.Now().Add(-5 * time.Second)
-	var lastFileSize int64 = 0
+
+	var lastDBMod time.Time
 
 	for {
 		select {
@@ -32,13 +32,14 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			return
 		case <-ticker.C:
 			info, err := os.Stat(dbPath)
-			if err == nil {
-				if info.Size() > lastFileSize || info.ModTime().After(lastCheck) {
-					w.parseCopilotDB(dbPath, cwd, callback)
-					lastFileSize = info.Size()
-					lastCheck = info.ModTime()
-				}
+			if err != nil {
+				continue
 			}
+			if info.ModTime() == lastDBMod {
+				continue
+			}
+			lastDBMod = info.ModTime()
+			w.parseCopilotDB(dbPath, cwd, callback)
 		}
 	}
 }
@@ -50,32 +51,50 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 	}
 	defer db.Close()
 
+	// Find the session that matches our cwd, falling back to the most recent one.
 	var copilotSessionID string
-	row := db.QueryRow("SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1", sessionCwd)
-	if err := row.Scan(&copilotSessionID); err != nil {
-		row = db.QueryRow("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1")
-		if err := row.Scan(&copilotSessionID); err != nil {
+	if sessionCwd != "" {
+		_ = db.QueryRow(
+			"SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1",
+			sessionCwd,
+		).Scan(&copilotSessionID)
+	}
+	if copilotSessionID == "" {
+		if err := db.QueryRow(
+			"SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1",
+		).Scan(&copilotSessionID); err != nil {
 			return
 		}
 	}
 
+	// Retrieve the most recent user message to use as the prompt.
+	var userPrompt string
+	_ = db.QueryRow(
+		"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1",
+		copilotSessionID,
+	).Scan(&userPrompt)
+	if len(userPrompt) > 200 {
+		userPrompt = userPrompt[:200] + "…"
+	}
+
+	// Determine status from the most recent turn.
 	var role, content string
 	err = db.QueryRow(
 		"SELECT role, content FROM turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
 		copilotSessionID,
 	).Scan(&role, &content)
-
 	if err != nil {
 		return
 	}
 
 	if role == "user" {
-		callback("thinking", "", "", "")
+		// User just sent a message — agent is processing.
+		callback("thinking", "", "", userPrompt)
 	} else {
 		status := "idle"
 		if strings.Contains(content, "?") || strings.Contains(content, "approve") {
 			status = "waiting_input"
 		}
-		callback(status, "", "", content)
+		callback(status, "", "", userPrompt)
 	}
 }
