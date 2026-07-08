@@ -77,7 +77,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
-	var lastCheck time.Time // zero — finds ANY existing transcript on first search
+	lastCheck := time.Now().Add(-10 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -89,8 +89,6 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		case <-ticker.C:
 			if watchedFilePath == "" {
 				// Search for the most recently modified transcript.jsonl.
-				// Use zero lastCheck on the first pass so we pick up agents
-				// that were already running before this watcher started.
 				fp, _, err := findAntigravityTranscript(dir, cwd, lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
