@@ -54,6 +54,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 	var lastDBMod time.Time
 	var lastWALMod time.Time
+	var lastReportedStatus string
 
 	for {
 		select {
@@ -75,8 +76,15 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				}
 			}
 
-			if changed {
-				w.parseOpenCodeDB(dbPath, cwd, callback)
+			// Always re-parse while waiting for user input even if the DB
+			// hasn't changed. This keeps lastActivity alive in the watchdog
+			// so the idle-timeout never fires while a question is pending.
+			if changed || lastReportedStatus == "waiting_input" {
+				wrappedCallback := func(status, tool, details, prompt string) {
+					lastReportedStatus = status
+					callback(status, tool, details, prompt)
+				}
+				w.parseOpenCodeDB(dbPath, cwd, wrappedCallback)
 			}
 		}
 	}
@@ -133,6 +141,13 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 					toolStatus = p.State.Status
 				}
 				if toolStatus == "running" || toolStatus == "pending" {
+					// The "question" tool is OpenCode's mechanism to ask the user
+					// a question and wait for a response. While it is running, the
+					// agent is blocked waiting for user input — not executing code.
+					if p.Tool == "question" {
+						callback("waiting_input", "question", "", userPrompt)
+						return
+					}
 					callback("executing", p.Tool, "", userPrompt)
 					return
 				}
