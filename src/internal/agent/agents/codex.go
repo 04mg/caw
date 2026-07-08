@@ -71,6 +71,22 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		return
 	}
 
+	// Forward pass: collect the most recent user message to use as the prompt.
+	var userPrompt string
+	for _, line := range lines {
+		var logLine CodexLogLine
+		if json.Unmarshal([]byte(line), &logLine) != nil {
+			continue
+		}
+		if logLine.Payload != nil && logLine.Payload.Type == "user_message" && logLine.Payload.Message != "" {
+			userPrompt = logLine.Payload.Message
+		}
+	}
+	if len(userPrompt) > 200 {
+		userPrompt = userPrompt[:200] + "…"
+	}
+
+	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine CodexLogLine
 		if err := json.Unmarshal([]byte(lines[i]), &logLine); err != nil {
@@ -81,17 +97,17 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 			p := logLine.Payload
 			switch p.Type {
 			case "user_message":
-				callback("thinking", "", "", "")
+				callback("thinking", "", "", userPrompt)
 				return
 			case "function_call":
-				callback("executing", p.Message, "", "")
+				callback("executing", p.Message, "", userPrompt)
 				return
 			case "message":
 				status := "idle"
 				if strings.Contains(p.Message, "?") || strings.Contains(p.Message, "[y/n]") {
 					status = "waiting_input"
 				}
-				callback(status, "", "", p.Message)
+				callback(status, "", "", userPrompt)
 				return
 			}
 		}

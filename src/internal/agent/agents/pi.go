@@ -72,6 +72,26 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		return
 	}
 
+	// Forward pass: collect the most recent user prompt.
+	var userPrompt string
+	for _, line := range lines {
+		var msg PiMessage
+		if json.Unmarshal([]byte(line), &msg) != nil {
+			continue
+		}
+		if msg.Role == "user" {
+			for _, b := range msg.Content {
+				if b.Type == "text" && b.Text != "" {
+					userPrompt = b.Text
+				}
+			}
+		}
+	}
+	if len(userPrompt) > 200 {
+		userPrompt = userPrompt[:200] + "…"
+	}
+
+	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
 		var msg PiMessage
 		if err := json.Unmarshal([]byte(lines[i]), &msg); err != nil {
@@ -79,7 +99,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		}
 
 		if msg.Role == "user" {
-			callback("thinking", "", "", "")
+			callback("thinking", "", "", userPrompt)
 			return
 		}
 
@@ -97,16 +117,15 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 			}
 
 			if lastToolName != "" {
-				callback("executing", lastToolName, "", "")
+				callback("executing", lastToolName, "", userPrompt)
 				return
 			}
-
 			if hasText {
 				status := "idle"
 				if strings.Contains(textContent, "?") || strings.Contains(textContent, "[y/n]") {
 					status = "waiting_input"
 				}
-				callback(status, "", "", textContent)
+				callback(status, "", "", userPrompt)
 				return
 			}
 		}
