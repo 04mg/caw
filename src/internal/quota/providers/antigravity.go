@@ -449,9 +449,9 @@ func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 
 func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 	res := &quota.QuotaResponse{
-		FiveHour: quota.Quota{Used: 0, Limit: 100},
-		Weekly:   quota.Quota{Used: 0, Limit: 100},
-		Monthly:  quota.Quota{Used: 0, Limit: 100},
+		FiveHour: quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
+		Weekly:   quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
+		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}
 
 	var groups []quota.QuotaGroup
@@ -476,14 +476,15 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 				used = 100
 			}
 
-			qg.Items = append(qg.Items, quota.QuotaItem{
-				Name:        bucket.BucketID,
-				Label:       bucket.DisplayName,
-				Description: bucket.ResetDescription,
-				Used:        used,
-				Limit:       100,
-				ResetTime:   bucket.ResetTime,
-			})
+		qg.Items = append(qg.Items, quota.QuotaItem{
+			Name:        bucket.BucketID,
+			Label:       bucket.DisplayName,
+			Description: bucket.ResetDescription,
+			Used:        used,
+			Limit:       100,
+			Unit:        "percentage",
+			ResetTime:   bucket.ResetTime,
+		})
 		}
 		groups = append(groups, qg)
 	}
@@ -516,13 +517,13 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 
 			if strings.Contains(groupName, "gemini") {
 				if is5h {
-					res.FiveHour = quota.Quota{Used: used, Limit: 100}
+					res.FiveHour = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
 				} else if isWeekly {
-					res.Monthly = quota.Quota{Used: used, Limit: 100}
+					res.Monthly = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
 				}
 			} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
 				if isWeekly {
-					res.Weekly = quota.Quota{Used: used, Limit: 100}
+					res.Weekly = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
 				}
 			}
 		}
@@ -616,14 +617,16 @@ func getModelQuota(modelsResponse *GoogleAvailableModelsResponse, keys ...string
 			if used > 100 {
 				used = 100
 			}
-			return quota.Quota{
-				Used:  used,
-				Limit: 100,
-			}, nil
-		}
+		return quota.Quota{
+			Used:  used,
+			Limit: 100,
+			Unit:  "percentage",
+		}, nil
+	}
 	}
 	return quota.Quota{
 		Used:  0,
 		Limit: 100,
+		Unit:  "percentage",
 	}, nil
 }
