@@ -3,6 +3,7 @@ import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/components/WorkspacePanel'
 import { TerminalGrid } from '@/components/TerminalGrid'
+import { KanbanBoard } from '@/components/KanbanBoard'
 import {
   type LayoutNode,
   createLeaf,
@@ -146,7 +147,7 @@ export function AppLayout() {
     return unsub
   }, [])
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
+  const activeWorkspace = activeWorkspaceId === '__home__' ? null : (workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null)
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
@@ -207,10 +208,12 @@ export function AppLayout() {
     if (activeWorkspace && workspaces.length > 0) {
       const e = activeWorkspace.emoji || '🐄'
       document.title = `Caw – ${e} ${activeWorkspace.name}`
+    } else if (activeWorkspaceId === '__home__') {
+      document.title = 'Caw – 🏠 Home'
     } else {
       document.title = 'Caw – 🐄 no workspace'
     }
-  }, [activeWorkspace, workspaces.length])
+  }, [activeWorkspace, activeWorkspaceId, workspaces.length])
 
   const patchWorkspace = useCallback(
     (id: string, fn: (ws: Workspace) => Workspace) => {
@@ -691,7 +694,19 @@ export function AppLayout() {
     />
   ) : null
 
-  const terminalBody = activeTab && activeWorkspace && leafCount > 0 ? (
+  const terminalBody = activeWorkspaceId === '__home__' ? (
+    <KanbanBoard
+      workspaces={workspaces}
+      onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+        setActiveWorkspaceId(workspaceId)
+        patchWorkspace(workspaceId, (ws) => ({
+          ...ws,
+          activeTabIndex: tabIndex,
+          activePaneId: paneId,
+        }))
+      }}
+    />
+  ) : activeTab && activeWorkspace && leafCount > 0 ? (
     <div className="relative flex-1 min-h-0">
       <TerminalGrid
         key={activeTab.id}
@@ -831,37 +846,39 @@ export function AppLayout() {
                       </Button>
                     </div>
 
-                    {/* Workflow Button (Always Visible) */}
-                    <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-                      <Tooltip delayDuration={0}>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                            onClick={toggleWorktrees}
-                          >
-                            <Workflow className={activeWorkspace?.enableWorktrees ? 'lava-lamp-icon h-3.5 w-3.5' : 'h-3.5 w-3.5 opacity-50'} />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="flex items-center select-none">
-                          {activeWorkspace?.enableWorktrees ? (
-                            <>
-                              <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0" />
-                              <span>Worktrees</span>
-                            </>
-                          ) : (
-                            <>
-                              <X className="h-3.5 w-3.5 text-red-500 mr-1.5 shrink-0" />
-                              <span>Worktrees</span>
-                            </>
-                          )}
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
+                    {/* Workflow Button (Always Visible when workspace is active) */}
+                    {activeWorkspace && (
+                      <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+                        <Tooltip delayDuration={0}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                              onClick={toggleWorktrees}
+                            >
+                              <Workflow className={activeWorkspace.enableWorktrees ? 'lava-lamp-icon h-3.5 w-3.5' : 'h-3.5 w-3.5 opacity-50'} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="flex items-center select-none">
+                            {activeWorkspace.enableWorktrees ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0" />
+                                <span>Worktrees</span>
+                              </>
+                            ) : (
+                              <>
+                                <X className="h-3.5 w-3.5 text-red-500 mr-1.5 shrink-0" />
+                                <span>Worktrees</span>
+                              </>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    )}
 
-                    {/* Folder Button (Only Visible when Sidebar is Collapsed) */}
-                    {folderSidebarCollapsed && (
+                    {/* Folder Button (Only Visible when Sidebar is Collapsed and workspace is active) */}
+                    {activeWorkspace && folderSidebarCollapsed && (
                       <div className="group flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
                         <Button
                           variant="ghost"
@@ -881,8 +898,8 @@ export function AppLayout() {
               </div>
             </Panel>
 
-            {/* Right Folder Explorer Panel (only if expanded) */}
-            {!folderSidebarCollapsed && (
+            {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
+            {activeWorkspace && !folderSidebarCollapsed && (
               <>
                 <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 <Panel
@@ -893,7 +910,7 @@ export function AppLayout() {
                 >
                   <FolderSidebar
                     workspacePath={currentWorkspacePath}
-                    mainWorkspacePath={activeWorkspace?.path || ''}
+                    mainWorkspacePath={activeWorkspace.path || ''}
                     onOpenFile={openFile}
                     gitStatuses={gitStatuses}
                     onRefresh={fetchGitStatus}
