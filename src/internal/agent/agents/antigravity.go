@@ -80,6 +80,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	var lastCheck time.Time // zero — finds ANY existing transcript on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
+	var lastPrompt string
 
 	for {
 		select {
@@ -104,7 +105,13 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						w.parseAntigravityLog(watchedFilePath, lastFileSize, callback)
+						wrappedCallback := func(status, tool, details, prompt string) {
+							if prompt != "" {
+								lastPrompt = prompt
+							}
+							callback(status, tool, details, lastPrompt)
+						}
+						w.parseAntigravityLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
