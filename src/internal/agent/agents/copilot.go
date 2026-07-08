@@ -25,6 +25,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	dbPath := filepath.Join(home, ".copilot", "session-store.db")
 
 	var lastDBMod time.Time
+	var copilotSessionID string
 
 	for {
 		select {
@@ -39,12 +40,12 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 				continue
 			}
 			lastDBMod = info.ModTime()
-			w.parseCopilotDB(dbPath, cwd, callback)
+			w.parseCopilotDB(dbPath, cwd, &copilotSessionID, callback)
 		}
 	}
 }
 
-func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callback func(status, tool, details, title string)) {
+func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilotSessionID *string, callback func(status, tool, details, title string)) {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return
@@ -52,18 +53,19 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 	defer db.Close()
 
 	// Find the session that matches our cwd, falling back to the most recent one.
-	var copilotSessionID string
-	if sessionCwd != "" {
-		_ = db.QueryRow(
-			"SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1",
-			sessionCwd,
-		).Scan(&copilotSessionID)
-	}
-	if copilotSessionID == "" {
-		if err := db.QueryRow(
-			"SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1",
-		).Scan(&copilotSessionID); err != nil {
-			return
+	if *copilotSessionID == "" {
+		if sessionCwd != "" {
+			_ = db.QueryRow(
+				"SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1",
+				sessionCwd,
+			).Scan(copilotSessionID)
+		}
+		if *copilotSessionID == "" {
+			if err := db.QueryRow(
+				"SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1",
+			).Scan(copilotSessionID); err != nil {
+				return
+			}
 		}
 	}
 
@@ -71,12 +73,12 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 	var sessionTitle string
 	_ = db.QueryRow(
 		"SELECT summary FROM sessions WHERE id = ?",
-		copilotSessionID,
+		*copilotSessionID,
 	).Scan(&sessionTitle)
 	if sessionTitle == "" {
 		_ = db.QueryRow(
 			"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC LIMIT 1",
-			copilotSessionID,
+			*copilotSessionID,
 		).Scan(&sessionTitle)
 	}
 	sessionTitle = CleanPrompt(sessionTitle)
@@ -85,7 +87,7 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 	var role, content string
 	err = db.QueryRow(
 		"SELECT role, content FROM turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-		copilotSessionID,
+		*copilotSessionID,
 	).Scan(&role, &content)
 	if err != nil {
 		return

@@ -34,14 +34,6 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
-	if cwd != "" {
-		cleanCwd := filepath.Clean(cwd)
-		projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
-		targetDir := filepath.Join(dir, projDir)
-		if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
-			dir = targetDir
-		}
-	}
 	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
@@ -53,7 +45,16 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, _, err := FindLatestFile(dir, ".jsonl", lastCheck)
+				searchDir := dir
+				if cwd != "" {
+					cleanCwd := filepath.Clean(cwd)
+					projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+					targetDir := filepath.Join(dir, projDir)
+					if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+						searchDir = targetDir
+					}
+				}
+				fp, _, err := FindLatestFile(searchDir, ".jsonl", lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
 					lastFileSize = 0
@@ -81,6 +82,25 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 	}
 }
 
+type PiLogLine struct {
+	Type    string     `json:"type"`
+	Message *PiMessage `json:"message,omitempty"`
+}
+
+func parseOnePiLogLine(line string) (PiMessage, bool) {
+	// 1. Try to parse as PiLogLine first (new format)
+	var l PiLogLine
+	if err := json.Unmarshal([]byte(line), &l); err == nil && l.Type == "message" && l.Message != nil {
+		return *l.Message, true
+	}
+	// 2. Try to parse directly as PiMessage (old format)
+	var msg PiMessage
+	if err := json.Unmarshal([]byte(line), &msg); err == nil && msg.Role != "" {
+		return msg, true
+	}
+	return PiMessage{}, false
+}
+
 func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
@@ -90,14 +110,12 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 	// Forward pass: collect the first user prompt.
 	var sessionTitle string
 	for _, line := range lines {
-		var msg PiMessage
-		if json.Unmarshal([]byte(line), &msg) != nil {
-			continue
-		}
-		if msg.Role == "user" {
-			for _, b := range msg.Content {
-				if b.Type == "text" && b.Text != "" && sessionTitle == "" {
-					sessionTitle = b.Text
+		if msg, ok := parseOnePiLogLine(line); ok {
+			if msg.Role == "user" {
+				for _, b := range msg.Content {
+					if b.Type == "text" && b.Text != "" && sessionTitle == "" {
+						sessionTitle = b.Text
+					}
 				}
 			}
 		}
@@ -106,22 +124,29 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
-		var msg PiMessage
-		if err := json.Unmarshal([]byte(lines[i]), &msg); err != nil {
+		msg, ok := parseOnePiLogLine(lines[i])
+		if !ok {
 			continue
 		}
 
-		if msg.Role == "user" {
+		roleLower := strings.ToLower(msg.Role)
+
+		if roleLower == "user" {
 			callback("thinking", "", "", sessionTitle)
 			return
 		}
 
-		if msg.Role == "assistant" || msg.Role == "agent" {
+		if roleLower == "toolresult" || roleLower == "tool" {
+			callback("thinking", "", "", sessionTitle)
+			return
+		}
+
+		if roleLower == "assistant" || roleLower == "agent" {
 			var lastToolName string
 			var hasText bool
 			var textContent string
 			for _, b := range msg.Content {
-				if b.Type == "tool_call" || b.Type == "tool_use" {
+				if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
 					lastToolName = b.Name
 				} else if b.Type == "text" {
 					hasText = true
