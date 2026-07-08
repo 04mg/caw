@@ -59,17 +59,17 @@ func (p *CodexProvider) GetQuotas(config map[string]string) (*quota.QuotaRespons
 	var fiveHour, weekly quota.Quota
 	if usage.RateLimit != nil {
 		if usage.RateLimit.PrimaryWindow != nil {
-			fiveHour = quota.Quota{Used: clampPercent(usage.RateLimit.PrimaryWindow.UsedPercent), Limit: 100}
+			fiveHour = quota.Quota{Used: clampPercent(usage.RateLimit.PrimaryWindow.UsedPercent), Limit: 100, Unit: "percentage"}
 		}
 		if usage.RateLimit.SecondaryWindow != nil {
-			weekly = quota.Quota{Used: clampPercent(usage.RateLimit.SecondaryWindow.UsedPercent), Limit: 100}
+			weekly = quota.Quota{Used: clampPercent(usage.RateLimit.SecondaryWindow.UsedPercent), Limit: 100, Unit: "percentage"}
 		}
 	}
 
 	return &quota.QuotaResponse{
 		FiveHour: fiveHour,
 		Weekly:   weekly,
-		Monthly:  quota.Quota{Used: 0, Limit: 100},
+		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}, nil
 }
 

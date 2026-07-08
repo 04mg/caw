@@ -72,28 +72,36 @@ func (p *CopilotProvider) GetQuotas(config map[string]string) (*quota.QuotaRespo
 	return &quota.QuotaResponse{
 		FiveHour: fiveHour,
 		Weekly:   weekly,
-		Monthly:  quota.Quota{Used: 0, Limit: 100},
+		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}, nil
 }
 
 func copilotWindow(s *CopilotQuotaSnapshot) quota.Quota {
 	if s.Unlimited {
-		return quota.Quota{Used: 0, Limit: 100}
+		return quota.Quota{Used: 0, Limit: 100, Unit: "percentage"}
+	}
+	// Prefer AI Credits / entitlement counts when available.
+	if s.Entitlement > 0 {
+		used := s.Entitlement - s.Remaining
+		if used < 0 {
+			used = 0
+		}
+		return quota.Quota{Used: used, Limit: s.Entitlement, Unit: "count"}
 	}
 	if s.PercentRemaining != nil {
-		used := 100 - int(*s.PercentRemaining + 0.5)
+		used := 100 - int(*s.PercentRemaining+0.5)
 		if used < 0 {
 			used = 0
 		}
 		if used > 100 {
 			used = 100
 		}
-		return quota.Quota{Used: used, Limit: 100}
+		return quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
 	}
 	if s.OverQuotaUsedPercent != nil {
-		return quota.Quota{Used: clampPercent(*s.OverQuotaUsedPercent), Limit: 100}
+		return quota.Quota{Used: clampPercent(*s.OverQuotaUsedPercent), Limit: 100, Unit: "percentage"}
 	}
-	return quota.Quota{Used: 0, Limit: 100}
+	return quota.Quota{Used: 0, Limit: 100, Unit: "percentage"}
 }
 
 func fetchCopilotUsage(token, enterpriseHost string) (*CopilotUsageResponse, error) {
