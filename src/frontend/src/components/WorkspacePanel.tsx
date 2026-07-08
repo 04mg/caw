@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
-import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2, Home } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspacePickerDialog } from '@/components/WorkspacePickerDialog'
@@ -126,31 +126,16 @@ export function WorkspacePanel({
   if (collapsed) {
     return (
       <div className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0" style={{ width: 44 }}>
-        <div className="flex items-center border-b border-border shrink-0 bg-background">
-          <div className="flex items-center justify-center h-[33px] w-[44px] select-none">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-              onClick={onToggle}
-              title="Show sidebar"
-            >
-              <PanelLeft className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <div className="flex items-center justify-center h-[33px] w-[44px] select-none">
-            <Button
-              variant="ghost"
-              size="icon"
-              className={`h-5 w-5 shrink-0 transition-colors ${
-                activeWorkspaceId === '__home__' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-              }`}
-              onClick={() => onSelectWorkspace('__home__')}
-              title="Home / Agent Board"
-            >
-              <Home className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+        <div className="flex items-center justify-center border-b border-border h-[33px] select-none bg-background">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={onToggle}
+            title="Show sidebar"
+          >
+            <PanelLeft className="h-3.5 w-3.5" />
+          </Button>
         </div>
         <div className="flex flex-col items-center flex-1 overflow-y-auto">
           {workspaces.map((ws, i) => (
@@ -213,48 +198,33 @@ export function WorkspacePanel({
   return (
     <div className="flex h-full flex-col bg-background select-none">
       {!noHeader && (
-        <>
-          <div className="flex items-center border-b border-border h-[33px] shrink-0 bg-secondary/20">
-            <div className="flex items-center justify-center border-r border-border h-full bg-background select-none" style={{ width: 44 }}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                onClick={onToggle}
-                title="Hide sidebar"
-              >
-                <PanelLeftClose className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-            <div className="flex items-center justify-center border-r border-border h-full bg-background select-none" style={{ width: 44 }}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-5 w-5 shrink-0 transition-colors ${
-                  activeWorkspaceId === '__home__' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={() => onSelectWorkspace('__home__')}
-                title="Home / Agent Board"
-              >
-                <Home className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-            <span className="flex-1 pl-3 text-xs font-semibold text-muted-foreground truncate">
-              Workspaces
-            </span>
-            <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                onClick={() => setPickerOpen(true)}
-                title="Add workspace"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+        <div className="flex items-center border-b border-border h-[33px] shrink-0 bg-secondary/20">
+          <div className="flex items-center justify-center border-r border-border h-full bg-background select-none" style={{ width: 44 }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-muted-foreground hover:text-foreground"
+              onClick={onToggle}
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </Button>
           </div>
-        </>
+          <span className="flex-1 pl-3 text-xs font-semibold text-muted-foreground truncate">
+            Workspaces
+          </span>
+          <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-muted-foreground hover:text-foreground"
+              onClick={() => setPickerOpen(true)}
+              title="Add workspace"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
       )}
 
       {workspaces.length === 0 ? (
