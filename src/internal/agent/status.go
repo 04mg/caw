@@ -18,6 +18,7 @@ import (
 type AgentStatus struct {
 	SessionID string    `json:"sessionId"`
 	AgentID   string    `json:"agentId"`
+	Cwd       string    `json:"cwd,omitempty"`
 	Status    string    `json:"status"` // "thinking", "executing", "waiting_input", "idle", "stopped"
 	Tool      string    `json:"tool,omitempty"`
 	Details   string    `json:"details,omitempty"`
@@ -151,7 +152,7 @@ func broadcastEvent(ev Event) {
 	}
 }
 
-func updateStatus(sessionID, agentID, status, tool, details, prompt string) {
+func updateStatus(sessionID, agentID, cwd, status, tool, details, prompt string) {
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
 	now := time.Now()
@@ -163,6 +164,7 @@ func updateStatus(sessionID, agentID, status, tool, details, prompt string) {
 	s := AgentStatus{
 		SessionID: sessionID,
 		AgentID:   agentID,
+		Cwd:       cwd,
 		Status:    status,
 		Tool:      tool,
 		Details:   details,
@@ -176,6 +178,7 @@ func updateStatus(sessionID, agentID, status, tool, details, prompt string) {
 		Type:      "agent_status",
 		SessionID: sessionID,
 		AgentID:   agentID,
+		Cwd:       cwd,
 		Status:    status,
 		Tool:      tool,
 		Details:   details,
@@ -231,7 +234,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		Timestamp: time.Now(),
 	})
 
-	updateStatus(id, agentID, "idle", "", "", "")
+	updateStatus(id, agentID, cwd, "idle", "", "", "")
 
 	go watchAgent(ctx, wCtx)
 }
@@ -259,6 +262,12 @@ func handleSessionExit(id string) {
 	}
 }
 
+// idleTimeout is the duration after which an agent stuck in a non-idle state
+// with no new updates will be automatically reverted to idle. This prevents
+// the KanbanBoard from showing "working" indefinitely if the agent crashes
+// without triggering a clean session exit.
+const idleTimeout = 30 * time.Second
+
 func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watchersMu.Lock()
 	watcher, ok := watchers[wCtx.agentId]
@@ -268,7 +277,35 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 		return
 	}
 
+	// lastActivity tracks when the watcher last received any status update so
+	// we can apply the idle timeout even if the watcher goroutine is still running.
+	lastActivity := time.Now()
+
+	// Idle-timeout watchdog: if the agent hasn't emitted a status change in
+	// idleTimeout seconds and the last known status is non-idle, revert to idle.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if time.Since(lastActivity) < idleTimeout {
+					continue
+				}
+				statusesMu.RLock()
+				s, exists := statuses[wCtx.sessionId]
+				statusesMu.RUnlock()
+				if exists && s.Status != "idle" && s.Status != "stopped" {
+					updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Prompt)
+				}
+			}
+		}
+	}()
+
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, func(status, tool, details, prompt string) {
-		updateStatus(wCtx.sessionId, wCtx.agentId, status, tool, details, prompt)
+		lastActivity = time.Now()
+		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, prompt)
 	})
 }
