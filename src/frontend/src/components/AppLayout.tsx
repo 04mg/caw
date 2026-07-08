@@ -26,7 +26,7 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Workflow, Check, X } from 'lucide-react'
+import { Settings, Folder, PanelRight, Workflow, Check, X, Home } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -829,6 +829,19 @@ export function AppLayout() {
             <Panel>
               <div className="flex flex-col h-full">
                 <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
+                  <div className="flex items-center justify-center border-r border-border h-full bg-background select-none shrink-0" style={{ width: 44 }}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`h-5 w-5 shrink-0 transition-colors ${
+                        activeWorkspaceId === '__home__' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      onClick={() => setActiveWorkspaceId('__home__')}
+                      title="Home / Agent Board"
+                    >
+                      <Home className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                   <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
                     {tabs}
                   </div>
