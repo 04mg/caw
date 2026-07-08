@@ -196,7 +196,42 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 		}
 
 		const type = parts[1]
-		const typeLabel = type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo'
+		const limitLabels: Record<string, Record<string, string>> = {
+			claude: {
+				fiveHour: 'Session Limit',
+				weekly: 'Weekly Limit',
+				monthly: 'Monthly Limit',
+			},
+			codex: {
+				fiveHour: '5h Limit',
+				weekly: 'Weekly Limit',
+			},
+			copilot: {
+				fiveHour: 'Premium Interactions',
+				weekly: 'Chat Limit',
+			},
+			antigravity: {
+				fiveHour: '5h Rolling Limit',
+				weekly: 'Weekly Limit',
+				monthly: 'Monthly Limit',
+			},
+			opencode: {
+				fiveHour: '5h Rolling Limit',
+				weekly: 'Weekly Limit',
+				monthly: 'Monthly Limit',
+			},
+			ollama: {
+				fiveHour: 'Session Limit',
+				weekly: 'Weekly Limit',
+			},
+			openrouter: {
+				fiveHour: 'Daily Usage',
+				weekly: 'Weekly Usage',
+				monthly: 'Monthly Usage',
+			},
+		}
+		const labelMap = limitLabels[provider]
+		const typeLabel = (labelMap && labelMap[type]) || (type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo')
 		const q = providerData.data[type as 'fiveHour' | 'weekly' | 'monthly']
 		if (!q) {
 			return { text: 'Select Limit', isError: false }
