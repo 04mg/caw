@@ -80,6 +80,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	var lastCheck time.Time // zero — finds ANY existing transcript on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
+	var lastPrompt string
 
 	for {
 		select {
@@ -104,7 +105,13 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						w.parseAntigravityLog(watchedFilePath, lastFileSize, callback)
+						wrappedCallback := func(status, tool, details, prompt string) {
+							if prompt != "" {
+								lastPrompt = prompt
+							}
+							callback(status, tool, details, lastPrompt)
+						}
+						w.parseAntigravityLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -170,7 +177,7 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		case "USER_INPUT":
 			// The content field holds the raw user message (may include XML
 			// wrapper tags — strip them for display).
-			p := extractAntigravityPrompt(step.Content)
+			p := CleanPrompt(step.Content)
 			if p != "" {
 				userPrompt = p
 			}
@@ -231,25 +238,3 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	}
 }
 
-// extractAntigravityPrompt strips XML-style wrapper tags inserted by the
-// Antigravity runtime (e.g. <USER_REQUEST>…</USER_REQUEST>) and returns the
-// clean prompt text for display in the KanbanBoard card.
-func extractAntigravityPrompt(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return ""
-	}
-	// Remove opening tag
-	if idx := strings.Index(s, ">"); idx != -1 && strings.HasPrefix(s, "<") {
-		s = strings.TrimSpace(s[idx+1:])
-	}
-	// Remove closing tag
-	if idx := strings.LastIndex(s, "</"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	// Trim to a reasonable preview length
-	if len(s) > 200 {
-		s = s[:200] + "…"
-	}
-	return s
-}

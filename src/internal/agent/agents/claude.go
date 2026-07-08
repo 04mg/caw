@@ -48,6 +48,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
+	var lastPrompt string
 
 	for {
 		select {
@@ -66,7 +67,13 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						w.parseClaudeLog(watchedFilePath, lastFileSize, callback)
+						wrappedCallback := func(status, tool, details, prompt string) {
+							if prompt != "" {
+								lastPrompt = prompt
+							}
+							callback(status, tool, details, lastPrompt)
+						}
+						w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -117,10 +124,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 			}
 		}
 	}
-	// Trim the prompt to a reasonable display length.
-	if len(userPrompt) > 200 {
-		userPrompt = userPrompt[:200] + "…"
-	}
+	userPrompt = CleanPrompt(userPrompt)
 
 	// Reverse pass: determine the current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
