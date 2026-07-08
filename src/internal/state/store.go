@@ -68,6 +68,12 @@ func (s *Store) migrate() {
 		key      TEXT NOT NULL,
 		value    TEXT NOT NULL,
 		PRIMARY KEY (provider, key)
+	);
+	CREATE TABLE IF NOT EXISTS agent_sessions (
+		leaf_id    TEXT PRIMARY KEY,
+		agent_id   TEXT NOT NULL DEFAULT '',
+		cwd        TEXT NOT NULL DEFAULT '',
+		started_at TEXT NOT NULL DEFAULT ''
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
