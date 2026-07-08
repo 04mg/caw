@@ -30,8 +30,9 @@ type openCodePart struct {
 
 // openCodeMessage mirrors the JSON blob stored in the message.data column.
 type openCodeMessage struct {
-	Role  string `json:"role"`
-	Parts []struct {
+	Role   string `json:"role"`
+	Finish string `json:"finish,omitempty"`
+	Parts  []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
 	} `json:"parts,omitempty"`
@@ -138,90 +139,113 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 	}
 	userPrompt = CleanPrompt(userPrompt)
 
-	// Determine the current state by inspecting the most recent part.
-	// Parts are fine-grained events: step-start, tool (with running/completed state),
-	// text, step-finish, patch, reasoning, etc.
-	var partDataJSON string
-	err = db.QueryRow(
-		`SELECT data FROM part WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`,
-		openCodeSessionID,
-	).Scan(&partDataJSON)
-
-	if err == nil && partDataJSON != "" {
-		var p openCodePart
-		if json.Unmarshal([]byte(partDataJSON), &p) == nil {
-			switch p.Type {
-			case "tool":
-				toolStatus := ""
-				if p.State != nil {
-					toolStatus = p.State.Status
-				}
-				if toolStatus == "running" || toolStatus == "pending" {
-					// The "question" tool is OpenCode's mechanism to ask the user
-					// a question and wait for a response. While it is running, the
-					// agent is blocked waiting for user input — not executing code.
-					if p.Tool == "question" {
-						callback("waiting_input", "question", "", userPrompt)
-						return
-					}
-					callback("executing", p.Tool, "", userPrompt)
-					return
-				}
-				// Completed tool — agent is likely in between steps (thinking)
-				callback("thinking", "", "", userPrompt)
-				return
-			case "step-start", "reasoning":
-				callback("thinking", "", "", userPrompt)
-				return
-			case "step-finish":
-				// Step just finished; wait for the next message to determine if done.
-				callback("thinking", "", "", userPrompt)
-				return
-			case "text":
-				status := "idle"
-				if strings.Contains(p.Text, "?") || strings.Contains(p.Text, "approval") || strings.Contains(p.Text, "confirm") {
-					status = "waiting_input"
-				}
-				callback(status, "", "", userPrompt)
-				return
-			case "patch":
-				// A patch is being applied — executing.
-				callback("executing", "patch", "", userPrompt)
-				return
-			}
-		}
-	}
-
-	// Fall back to reading the latest message from the message table.
+	// 1. Get the latest message in the session.
+	var msgID string
 	var msgDataJSON string
 	err = db.QueryRow(
-		`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`,
+		`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`,
 		openCodeSessionID,
-	).Scan(&msgDataJSON)
+	).Scan(&msgID, &msgDataJSON)
 	if err != nil {
+		callback("idle", "", "", userPrompt)
 		return
 	}
 
 	var msg openCodeMessage
 	if err := json.Unmarshal([]byte(msgDataJSON), &msg); err != nil {
+		callback("idle", "", "", userPrompt)
 		return
 	}
 
+	// 2. Query all parts associated with this latest message.
+	rows, err := db.Query(
+		`SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC`,
+		msgID,
+	)
+	var parts []openCodePart
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var partData string
+			if rows.Scan(&partData) == nil {
+				var p openCodePart
+				if json.Unmarshal([]byte(partData), &p) == nil {
+					parts = append(parts, p)
+				}
+			}
+		}
+	}
+
+	// 3. Determine status based on message role, finish reason, and part states.
 	switch msg.Role {
 	case "user":
+		// User just sent a message — agent is thinking/preparing response.
 		callback("thinking", "", "", userPrompt)
+
 	case "assistant":
+		// Check for any currently running/pending tool calls.
+		var hasQuestion bool
+		var activeTool string
+		var lastToolName string
+
+		for _, p := range parts {
+			if p.Type == "tool" {
+				if p.Tool != "" {
+					lastToolName = p.Tool
+				}
+				toolStatus := ""
+				if p.State != nil {
+					toolStatus = p.State.Status
+				}
+				if toolStatus == "running" || toolStatus == "pending" {
+					if p.Tool == "question" {
+						hasQuestion = true
+					} else {
+						activeTool = p.Tool
+					}
+				}
+			}
+		}
+
+		if hasQuestion {
+			callback("waiting_input", "question", "", userPrompt)
+			return
+		}
+		if activeTool != "" {
+			callback("executing", activeTool, "", userPrompt)
+			return
+		}
+
+		// If no tool is actively running/pending but the turn expects more tool calls:
+		if msg.Finish == "tool-calls" {
+			if lastToolName != "" {
+				callback("executing", lastToolName, "", userPrompt)
+			} else {
+				callback("thinking", "", "", userPrompt)
+			}
+			return
+		}
+
+		// Otherwise, the assistant turn is complete (finish = "stop" or "completed").
+		// Check if the final text contains questions/approvals.
 		status := "idle"
 		var textContent string
-		for _, p := range msg.Parts {
+		for _, p := range parts {
 			if p.Type == "text" {
 				textContent = p.Text
 			}
 		}
-		if strings.Contains(textContent, "?") || strings.Contains(textContent, "approval") || strings.Contains(textContent, "confirm") {
-			status = "waiting_input"
+		if textContent != "" {
+			textContentLower := strings.ToLower(textContent)
+			if strings.Contains(textContentLower, "?") ||
+				strings.Contains(textContentLower, "approval") ||
+				strings.Contains(textContentLower, "confirm") ||
+				strings.Contains(textContentLower, "approve") {
+				status = "waiting_input"
+			}
 		}
-		callback(status, "", "", userPrompt)
+		callback(status, "", textContent, userPrompt)
+
 	default:
 		callback("idle", "", "", userPrompt)
 	}
