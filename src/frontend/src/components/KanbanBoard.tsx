@@ -4,7 +4,6 @@ import {
   Clock, 
   Terminal,
   ChevronRight,
-  Sparkles,
   Construction,
   Briefcase,
   Workflow
@@ -38,18 +37,18 @@ const COLUMNS: Column[] = [
     glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
   },
   {
-    id: 'needs_input',
-    title: 'Needs Input',
-    icon: Construction,
-    colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
-    glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
-  },
-  {
     id: 'working',
     title: 'Working',
     icon: Briefcase,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
+  },
+  {
+    id: 'needs_input',
+    title: 'Needs Input',
+    icon: Construction,
+    colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
+    glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
 ]
 
@@ -291,8 +290,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         </div>
 
         {/* Hover Arrow Overlay */}
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
-          <ChevronRight className="w-4 h-4 text-foreground/80 mr-1 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
+        <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
+          <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
         </div>
       </div>
     )
@@ -300,19 +299,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
-      {/* Board Header */}
-      <div className="flex items-center justify-between shrink-0">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-bold text-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            Agent Control Center
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Monitor running coding agents in real-time across workspaces. Click any card to navigate to the agent's workspace.
-          </p>
-        </div>
-      </div>
-
       {/* Kanban Board Columns */}
       <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2">
         {COLUMNS.map((col) => {
@@ -322,7 +308,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
           return (
             <div 
               key={col.id} 
-              className="flex flex-col min-w-[280px] flex-1 bg-secondary/5 rounded-xl p-4 min-h-[400px]"
+              className="flex flex-col min-w-[280px] flex-1 rounded-xl p-4 min-h-[400px]"
             >
               {/* Column Header */}
               <div className="flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0">
