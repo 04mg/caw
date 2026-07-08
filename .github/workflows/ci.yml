@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Build & lint (release-ready)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Frontend install
+        run: cd src/frontend && npm ci
+
+      - name: Frontend lint
+        run: cd src/frontend && npm run lint
+
+      - name: Frontend build
+        run: cd src/frontend && npm run build
+
+      - name: Go vet
+        run: cd src && go vet ./...
+
+      - name: Go build
+        run: |
+          cd src
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o caw-linux-amd64    ./cmd/caw/
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -o caw-darwin-amd64   ./cmd/caw/
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o caw-darwin-arm64   ./cmd/caw/
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o caw-windows-amd64.exe ./cmd/caw/
