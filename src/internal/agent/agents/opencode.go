@@ -52,10 +52,18 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 	walPath := dbPath + "-wal"
 
+	const agentID = "opencode"
 	var lastDBMod time.Time
 	var lastWALMod time.Time
 	var lastReportedStatus string
 	var openCodeSessionID string
+	watcherStart := time.Now().Add(-2 * time.Second)
+
+	defer func() {
+		if openCodeSessionID != "" {
+			UnclaimSession(agentID, cwd, openCodeSessionID)
+		}
+	}()
 
 	for {
 		select {
@@ -77,21 +85,87 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				}
 			}
 
+			if openCodeSessionID == "" {
+				if changed {
+					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID)
+				}
+			}
+
 			// Always re-parse while waiting for user input even if the DB
 			// hasn't changed. This keeps lastActivity alive in the watchdog
 			// so the idle-timeout never fires while a question is pending.
 			if changed || lastReportedStatus == "waiting_input" {
-				wrappedCallback := func(status, tool, details, title string) {
-					lastReportedStatus = status
-					callback(status, tool, details, title)
+				if openCodeSessionID != "" {
+					wrappedCallback := func(status, tool, details, title string) {
+						lastReportedStatus = status
+						callback(status, tool, details, title)
+					}
+					w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
 				}
-				w.parseOpenCodeDB(dbPath, cwd, &openCodeSessionID, wrappedCallback)
 			}
 		}
 	}
 }
 
-func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSessionID *string, callback func(status, tool, details, title string)) {
+// findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the
+// opencode.db (filtered by directory=cwd when possible and started after
+// watcherStart) and returns the id of the most recent one that is not already
+// claimed by another watcher of the same agent type+cwd. When a session is
+// found it is immediately claimed.
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string) string {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	type row struct {
+		id          string
+		timeUpdated int64
+	}
+	var candidates []row
+
+	if cwd != "" {
+		rows, qerr := db.Query(
+			`SELECT id, time_updated FROM session WHERE directory = ? ORDER BY time_updated DESC`,
+			cwd,
+		)
+		if qerr == nil {
+			for rows.Next() {
+				var r row
+				rows.Scan(&r.id, &r.timeUpdated)
+				candidates = append(candidates, r)
+			}
+			rows.Close()
+		}
+	}
+	if len(candidates) == 0 {
+		rows, qerr := db.Query(
+			`SELECT id, time_updated FROM session ORDER BY time_updated DESC`,
+		)
+		if qerr == nil {
+			for rows.Next() {
+				var r row
+				rows.Scan(&r.id, &r.timeUpdated)
+				candidates = append(candidates, r)
+			}
+			rows.Close()
+		}
+	}
+
+	for _, r := range candidates {
+		sessionTime := time.UnixMilli(r.timeUpdated)
+		if !sessionTime.After(watcherStart) {
+			continue
+		}
+		if ClaimSession(agentID, cwd, r.id) {
+			return r.id
+		}
+	}
+	return ""
+}
+
+func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSessionID string, callback func(status, tool, details, title string)) {
 	// Open in read-only WAL mode to avoid interfering with the running OpenCode process.
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
@@ -100,29 +174,17 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	defer db.Close()
 
 	var openCodeTitle string
-	if *openCodeSessionID == "" {
-		if cwd != "" {
-			_ = db.QueryRow(
-				`SELECT id, title FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1`,
-				cwd,
-			).Scan(openCodeSessionID, &openCodeTitle)
-		}
-		if *openCodeSessionID == "" {
-			_ = db.QueryRow(
-				`SELECT id, title FROM session ORDER BY time_updated DESC LIMIT 1`,
-			).Scan(openCodeSessionID, &openCodeTitle)
-		}
-	} else {
-		_ = db.QueryRow(
-			`SELECT title FROM session WHERE id = ?`,
-			*openCodeSessionID,
-		).Scan(&openCodeTitle)
-	}
+	resolvedID := openCodeSessionID
 
-	if *openCodeSessionID == "" {
+	if resolvedID == "" {
 		callback("idle", "", "", "")
 		return
 	}
+
+	_ = db.QueryRow(
+		`SELECT title FROM session WHERE id = ?`,
+		resolvedID,
+	).Scan(&openCodeTitle)
 
 	// Retrieve the user's prompt. OpenCode stores the initial prompt as the
 	// first 'text' part in the session. session_input exists in the schema but
@@ -131,7 +193,7 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	var firstTextPartData string
 	if err := db.QueryRow(
 		`SELECT data FROM part WHERE session_id = ? AND json_extract(data,'$.type') = 'text' ORDER BY time_created ASC LIMIT 1`,
-		*openCodeSessionID,
+		resolvedID,
 	).Scan(&firstTextPartData); err == nil && firstTextPartData != "" {
 		var p openCodePart
 		if json.Unmarshal([]byte(firstTextPartData), &p) == nil && p.Text != "" {
@@ -142,7 +204,7 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	if userPrompt == "" {
 		_ = db.QueryRow(
 			`SELECT prompt FROM session_input WHERE session_id = ? ORDER BY time_created ASC LIMIT 1`,
-			*openCodeSessionID,
+			resolvedID,
 		).Scan(&userPrompt)
 	}
 	userPrompt = CleanPrompt(userPrompt)
@@ -157,7 +219,7 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	var msgDataJSON string
 	err = db.QueryRow(
 		`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`,
-		*openCodeSessionID,
+		resolvedID,
 	).Scan(&msgID, &msgDataJSON)
 	if err != nil {
 		callback("idle", "", "", sessionTitle)

@@ -52,12 +52,29 @@ type StatusWatcher interface {
 	Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string))
 }
 
+// wsClient wraps a websocket connection with a dedicated write mutex.
+// gorilla/websocket does NOT support concurrent writes to the same
+// connection, and the status endpoint receives broadcasts from many goroutines
+// (handleSessionStart/Exit, updateStatus) while the read loop runs on its own
+// goroutine. A per-connection write lock serializes every WriteMessage so we
+// never trigger "concurrent write to websocket connection" panics.
+type wsClient struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (c *wsClient) writeMessage(msgType int, data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteMessage(msgType, data)
+}
+
 var (
 	statuses       = make(map[string]AgentStatus)
 	statusesMu     sync.RWMutex
 	activeSessions = make(map[string]*watcherContext)
 	activeSesMu    sync.Mutex
-	wsClients      = make(map[*websocket.Conn]bool)
+	wsClients      = make(map[*wsClient]bool)
 	wsClientsMu    sync.Mutex
 	wsUpgrader     = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -86,13 +103,15 @@ func RegisterStatusWS(mux *http.ServeMux) {
 			return
 		}
 
+		wc := &wsClient{conn: c}
+
 		wsClientsMu.Lock()
-		wsClients[c] = true
+		wsClients[wc] = true
 		wsClientsMu.Unlock()
 
 		defer func() {
 			wsClientsMu.Lock()
-			delete(wsClients, c)
+			delete(wsClients, wc)
 			wsClientsMu.Unlock()
 			c.Close()
 		}()
@@ -110,7 +129,7 @@ func RegisterStatusWS(mux *http.ServeMux) {
 				Title:     s.Title,
 				Timestamp: s.Timestamp,
 			})
-			_ = c.WriteMessage(websocket.TextMessage, msg)
+			_ = wc.writeMessage(websocket.TextMessage, msg)
 		}
 		statusesMu.RUnlock()
 
@@ -141,14 +160,14 @@ func broadcastEvent(ev Event) {
 	}
 
 	wsClientsMu.Lock()
-	conns := make([]*websocket.Conn, 0, len(wsClients))
-	for c := range wsClients {
-		conns = append(conns, c)
+	clients := make([]*wsClient, 0, len(wsClients))
+	for wc := range wsClients {
+		clients = append(clients, wc)
 	}
 	wsClientsMu.Unlock()
 
-	for _, c := range conns {
-		_ = c.WriteMessage(websocket.TextMessage, msg)
+	for _, wc := range clients {
+		_ = wc.writeMessage(websocket.TextMessage, msg)
 	}
 }
 

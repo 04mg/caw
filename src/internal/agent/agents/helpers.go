@@ -4,7 +4,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +35,108 @@ func FindLatestFile(baseDir string, ext string, after time.Time) (string, time.T
 	})
 
 	return latestPath, latestMod, err
+}
+
+// FileCandidate represents a discovered file along with its modification time,
+// used by FindLatestFiles.
+type FileCandidate struct {
+	Path    string
+	ModTime time.Time
+}
+
+// FindLatestFiles finds every file whose name has the given suffix and whose
+// modification time is after the given threshold, walking the whole baseDir
+// tree recursively. Results are returned sorted by modification time, most
+// recent first. This is the plural counterpart to FindLatestFile and is used
+// by the claim-based watchers to enumerate all candidate files so the most
+// recent *unclaimed* one can be selected.
+func FindLatestFiles(baseDir string, ext string, after time.Time) ([]FileCandidate, error) {
+	var candidates []FileCandidate
+
+	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, ext) || name == ext {
+			if info.ModTime().After(after) {
+				candidates = append(candidates, FileCandidate{Path: path, ModTime: info.ModTime()})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].ModTime.After(candidates[j].ModTime)
+	})
+	return candidates, nil
+}
+
+// ----- Session claim registry --------------------------------------------
+//
+// When two agents of the same type run in the same workspace, their watchers
+// must not both follow the *same* internal session/transcript/file. Without
+// coordination they each grab "the most recent file matching cwd" and end up
+// mirroring each other's state.
+//
+// The claim registry solves this: each watcher claims exactly one internal
+// session identifier (a transcript file path, an internal session row id,
+// or an Antigravity conversation id). Other watchers of the same agent type
+// skip already-claimed candidates and pick the next most recent one.
+
+var (
+	claimsMu sync.Mutex
+	// claims maps "<agentID>::<cwd>" -> set of claimed internal session keys
+	claims = make(map[string]map[string]bool)
+)
+
+// ClaimSession tries to claim an internal agent session identified by key for
+// the given agentID+cwd. Returns true if the claim succeeded (the key was
+// free) and false if it was already claimed by another watcher. Claims are
+// keyed by agent type AND cwd, so two *different* agent types in the same cwd
+// never collide, and the same agent type in *different* cwds never collide.
+// The first watcher to call ClaimSession for a free key wins; the key stays
+// claimed until UnclaimSession is called (normally when the PTY closes).
+func ClaimSession(agentID, cwd, key string) bool {
+	if key == "" {
+		return false
+	}
+	group := agentID + "::" + cwd
+	claimsMu.Lock()
+	defer claimsMu.Unlock()
+	set, ok := claims[group]
+	if !ok {
+		set = make(map[string]bool)
+		claims[group] = set
+	}
+	if set[key] {
+		return false
+	}
+	set[key] = true
+	return true
+}
+
+// UnclaimSession releases a previously-claimed internal session key. Safe to
+// call multiple times; a second unclaim for the same key is a no-op. This is
+// normally deferred in Watch so the key is freed when the PTY exits.
+func UnclaimSession(agentID, cwd, key string) {
+	if key == "" {
+		return
+	}
+	group := agentID + "::" + cwd
+	claimsMu.Lock()
+	defer claimsMu.Unlock()
+	if set, ok := claims[group]; ok {
+		delete(set, key)
+		if len(set) == 0 {
+			delete(claims, group)
+		}
+	}
 }
 
 // ReadNewLines reads bytes appended to a file since the given byte offset and

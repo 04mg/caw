@@ -33,10 +33,17 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".codex", "sessions")
+	const agentID = "codex"
 	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+
+	defer func() {
+		if watchedFilePath != "" {
+			UnclaimSession(agentID, cwd, watchedFilePath)
+		}
+	}()
 
 	for {
 		select {
@@ -44,11 +51,17 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, _, err := FindLatestFile(dir, ".jsonl", lastCheck)
-				if err == nil && fp != "" {
-					watchedFilePath = fp
-					lastFileSize = 0
-					lastCheck = time.Now()
+				candidates, err := FindLatestFiles(dir, ".jsonl", lastCheck)
+				if err != nil {
+					continue
+				}
+				for _, c := range candidates {
+					if ClaimSession(agentID, cwd, c.Path) {
+						watchedFilePath = c.Path
+						lastFileSize = 0
+						lastCheck = time.Now()
+						break
+					}
 				}
 			}
 			if watchedFilePath != "" {
@@ -65,6 +78,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 						lastFileSize = info.Size()
 					}
 				} else {
+					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
 				}
 			}
