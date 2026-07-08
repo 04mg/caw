@@ -81,3 +81,74 @@ func ReadFileHead(filePath string, maxBytes int64) (string, error) {
 	}
 	return string(buf[:n]), nil
 }
+
+// CleanPrompt sanitizes the prompt by removing system/XML tags, collapsing
+// newlines and multiple spaces to keep it clean for UI rendering,
+// and truncating to a reasonable preview length.
+func CleanPrompt(raw string) string {
+	s := raw
+
+	// 1. Extract content between <USER_REQUEST> and </USER_REQUEST> if present.
+	if idx := strings.Index(s, "<USER_REQUEST>"); idx != -1 {
+		s = s[idx+len("<USER_REQUEST>"):]
+	}
+	if idx := strings.Index(s, "</USER_REQUEST>"); idx != -1 {
+		s = s[:idx]
+	}
+
+	// 2. Truncate at other metadata/system block boundaries.
+	tags := []string{
+		"<ADDITIONAL_METADATA>",
+		"<user_information>",
+		"<mcp_servers>",
+		"<web_application_development>",
+		"<user_rules>",
+		"<skills>",
+		"<subagents>",
+		"<messaging>",
+		"<conversation_transcript>",
+		"<artifacts>",
+		"<slash_commands>",
+		"<guidelines>",
+		"<communication_style>",
+	}
+	for _, tag := range tags {
+		if idx := strings.Index(s, tag); idx != -1 {
+			s = s[:idx]
+		}
+	}
+
+	// 3. For OpenCode, clean leading instruction wrapper if present:
+	// "Diseña un plan que atienda la siguiente request: \"...\""
+	const opencodePrefix = "Diseña un plan que atienda la siguiente request: "
+	if strings.HasPrefix(s, opencodePrefix) {
+		s = strings.TrimPrefix(s, opencodePrefix)
+		s = strings.Trim(s, "\n\r\t ")
+		s = strings.Trim(s, "\"")
+	}
+
+	// 4. Collapse newlines, carriage returns, tabs and multiple spaces into a single space
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	
+	// Collapse multiple spaces
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+
+	s = strings.TrimSpace(s)
+
+	// 5. Trim to a reasonable preview length
+	if len(s) > 200 {
+		trimmed := s[:200]
+		if lastSpace := strings.LastIndex(trimmed, " "); lastSpace > 150 {
+			s = trimmed[:lastSpace] + "…"
+		} else {
+			s = trimmed + "…"
+		}
+	}
+
+	return s
+}
+

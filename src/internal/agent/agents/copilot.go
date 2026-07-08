@@ -73,9 +73,7 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 		"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1",
 		copilotSessionID,
 	).Scan(&userPrompt)
-	if len(userPrompt) > 200 {
-		userPrompt = userPrompt[:200] + "…"
-	}
+	userPrompt = CleanPrompt(userPrompt)
 
 	// Determine status from the most recent turn.
 	var role, content string

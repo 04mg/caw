@@ -82,9 +82,7 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 			userPrompt = logLine.Payload.Message
 		}
 	}
-	if len(userPrompt) > 200 {
-		userPrompt = userPrompt[:200] + "…"
-	}
+	userPrompt = CleanPrompt(userPrompt)
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
