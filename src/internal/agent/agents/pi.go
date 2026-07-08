@@ -37,6 +37,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
+	var lastPrompt string
 
 	for {
 		select {
@@ -55,7 +56,13 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						w.parsePiLog(watchedFilePath, lastFileSize, callback)
+						wrappedCallback := func(status, tool, details, prompt string) {
+							if prompt != "" {
+								lastPrompt = prompt
+							}
+							callback(status, tool, details, lastPrompt)
+						}
+						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -87,9 +94,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 			}
 		}
 	}
-	if len(userPrompt) > 200 {
-		userPrompt = userPrompt[:200] + "…"
-	}
+	userPrompt = CleanPrompt(userPrompt)
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
