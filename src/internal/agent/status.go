@@ -22,7 +22,7 @@ type AgentStatus struct {
 	Status    string    `json:"status"` // "thinking", "executing", "waiting_input", "idle", "stopped"
 	Tool      string    `json:"tool,omitempty"`
 	Details   string    `json:"details,omitempty"`
-	Prompt    string    `json:"prompt,omitempty"`
+	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -35,7 +35,7 @@ type Event struct {
 	Status    string    `json:"status,omitempty"`
 	Tool      string    `json:"tool,omitempty"`
 	Details   string    `json:"details,omitempty"`
-	Prompt    string    `json:"prompt,omitempty"`
+	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -49,7 +49,7 @@ type watcherContext struct {
 
 // StatusWatcher is the interface that each agent status provider must implement
 type StatusWatcher interface {
-	Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string))
+	Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string))
 }
 
 var (
@@ -107,7 +107,7 @@ func RegisterStatusWS(mux *http.ServeMux) {
 				Status:    s.Status,
 				Tool:      s.Tool,
 				Details:   s.Details,
-				Prompt:    s.Prompt,
+				Title:     s.Title,
 				Timestamp: s.Timestamp,
 			})
 			_ = c.WriteMessage(websocket.TextMessage, msg)
@@ -152,11 +152,11 @@ func broadcastEvent(ev Event) {
 	}
 }
 
-func updateStatus(sessionID, agentID, cwd, status, tool, details, prompt string) {
+func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
 	now := time.Now()
-	if exists && prev.Status == status && prev.Tool == tool && prev.Details == details && prev.Prompt == prompt {
+	if exists && prev.Status == status && prev.Tool == tool && prev.Details == details && prev.Title == title {
 		statusesMu.Unlock()
 		return // no change
 	}
@@ -168,7 +168,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, prompt string)
 		Status:    status,
 		Tool:      tool,
 		Details:   details,
-		Prompt:    prompt,
+		Title:     title,
 		Timestamp: now,
 	}
 	statuses[sessionID] = s
@@ -182,7 +182,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, prompt string)
 		Status:    status,
 		Tool:      tool,
 		Details:   details,
-		Prompt:    prompt,
+		Title:     title,
 		Timestamp: now,
 	})
 }
@@ -302,14 +302,14 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 				// Only revert transient "working" states (thinking/executing)
 				// that have stalled, which indicates a crash.
 				if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" {
-					updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Prompt)
+					updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
 				}
 			}
 		}
 	}()
 
-	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, func(status, tool, details, prompt string) {
+	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, func(status, tool, details, title string) {
 		lastActivity = time.Now()
-		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, prompt)
+		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
 	})
 }

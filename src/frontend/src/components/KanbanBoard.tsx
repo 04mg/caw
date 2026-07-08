@@ -228,14 +228,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
         {/* Card Content - Dynamic Description */}
         <div className="flex flex-col gap-2 z-10">
-          {/* Prompt / Task */}
-          {agent.prompt ? (
+          {/* Title / Session Name */}
+          {agent.title ? (
             <div className="text-xs text-foreground/90 font-medium line-clamp-3 bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors">
-              "{agent.prompt}"
+              {agent.title}
             </div>
           ) : (
             <div className="text-xs text-muted-foreground italic p-1">
-              No active prompt/task
+              Unnamed Session
             </div>
           )}
 

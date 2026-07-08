@@ -38,7 +38,7 @@ type openCodeMessage struct {
 	} `json:"parts,omitempty"`
 }
 
-func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -81,9 +81,9 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 			// hasn't changed. This keeps lastActivity alive in the watchdog
 			// so the idle-timeout never fires while a question is pending.
 			if changed || lastReportedStatus == "waiting_input" {
-				wrappedCallback := func(status, tool, details, prompt string) {
+				wrappedCallback := func(status, tool, details, title string) {
 					lastReportedStatus = status
-					callback(status, tool, details, prompt)
+					callback(status, tool, details, title)
 				}
 				w.parseOpenCodeDB(dbPath, cwd, wrappedCallback)
 			}
@@ -91,7 +91,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	}
 }
 
-func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback func(status, tool, details, title string)) {
 	// Open in read-only WAL mode to avoid interfering with the running OpenCode process.
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
@@ -102,16 +102,17 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 	// Resolve the most-relevant session: prefer one matching the working directory,
 	// fall back to the most recently updated session overall.
 	var openCodeSessionID string
+	var openCodeTitle string
 	if cwd != "" {
 		_ = db.QueryRow(
-			`SELECT id FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1`,
+			`SELECT id, title FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1`,
 			cwd,
-		).Scan(&openCodeSessionID)
+		).Scan(&openCodeSessionID, &openCodeTitle)
 	}
 	if openCodeSessionID == "" {
 		if err := db.QueryRow(
-			`SELECT id FROM session ORDER BY time_updated DESC LIMIT 1`,
-		).Scan(&openCodeSessionID); err != nil {
+			`SELECT id, title FROM session ORDER BY time_updated DESC LIMIT 1`,
+		).Scan(&openCodeSessionID, &openCodeTitle); err != nil {
 			return
 		}
 	}
@@ -139,6 +140,11 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 	}
 	userPrompt = CleanPrompt(userPrompt)
 
+	sessionTitle := openCodeTitle
+	if sessionTitle == "" {
+		sessionTitle = userPrompt
+	}
+
 	// 1. Get the latest message in the session.
 	var msgID string
 	var msgDataJSON string
@@ -147,13 +153,13 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 		openCodeSessionID,
 	).Scan(&msgID, &msgDataJSON)
 	if err != nil {
-		callback("idle", "", "", userPrompt)
+		callback("idle", "", "", sessionTitle)
 		return
 	}
 
 	var msg openCodeMessage
 	if err := json.Unmarshal([]byte(msgDataJSON), &msg); err != nil {
-		callback("idle", "", "", userPrompt)
+		callback("idle", "", "", sessionTitle)
 		return
 	}
 
@@ -180,7 +186,7 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 	switch msg.Role {
 	case "user":
 		// User just sent a message — agent is thinking/preparing response.
-		callback("thinking", "", "", userPrompt)
+		callback("thinking", "", "", sessionTitle)
 
 	case "assistant":
 		// Check for any currently running/pending tool calls.
@@ -208,20 +214,20 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 		}
 
 		if hasQuestion {
-			callback("waiting_input", "question", "", userPrompt)
+			callback("waiting_input", "question", "", sessionTitle)
 			return
 		}
 		if activeTool != "" {
-			callback("executing", activeTool, "", userPrompt)
+			callback("executing", activeTool, "", sessionTitle)
 			return
 		}
 
 		// If no tool is actively running/pending but the turn expects more tool calls:
 		if msg.Finish == "tool-calls" {
 			if lastToolName != "" {
-				callback("executing", lastToolName, "", userPrompt)
+				callback("executing", lastToolName, "", sessionTitle)
 			} else {
-				callback("thinking", "", "", userPrompt)
+				callback("thinking", "", "", sessionTitle)
 			}
 			return
 		}
@@ -244,9 +250,9 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 				status = "waiting_input"
 			}
 		}
-		callback(status, "", textContent, userPrompt)
+		callback(status, "", textContent, sessionTitle)
 
 	default:
-		callback("idle", "", "", userPrompt)
+		callback("idle", "", "", sessionTitle)
 	}
 }

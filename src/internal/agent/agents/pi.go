@@ -28,7 +28,7 @@ type PiBlock struct {
 	Name string `json:"name,omitempty"` // tool name
 }
 
-func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -37,7 +37,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
-	var lastPrompt string
+	var sessionTitle string
 
 	for {
 		select {
@@ -56,11 +56,11 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, prompt string) {
-							if prompt != "" {
-								lastPrompt = prompt
+						wrappedCallback := func(status, tool, details, title string) {
+							if title != "" {
+								sessionTitle = title
 							}
-							callback(status, tool, details, lastPrompt)
+							callback(status, tool, details, sessionTitle)
 						}
 						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
@@ -73,14 +73,14 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, cal
 	}
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, prompt string)) {
+func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the most recent user prompt.
-	var userPrompt string
+	// Forward pass: collect the first user prompt.
+	var sessionTitle string
 	for _, line := range lines {
 		var msg PiMessage
 		if json.Unmarshal([]byte(line), &msg) != nil {
@@ -88,13 +88,13 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		}
 		if msg.Role == "user" {
 			for _, b := range msg.Content {
-				if b.Type == "text" && b.Text != "" {
-					userPrompt = b.Text
+				if b.Type == "text" && b.Text != "" && sessionTitle == "" {
+					sessionTitle = b.Text
 				}
 			}
 		}
 	}
-	userPrompt = CleanPrompt(userPrompt)
+	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -104,7 +104,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		}
 
 		if msg.Role == "user" {
-			callback("thinking", "", "", userPrompt)
+			callback("thinking", "", "", sessionTitle)
 			return
 		}
 
@@ -122,7 +122,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 			}
 
 			if lastToolName != "" {
-				callback("executing", lastToolName, "", userPrompt)
+				callback("executing", lastToolName, "", sessionTitle)
 				return
 			}
 			if hasText {
@@ -130,7 +130,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 				if strings.Contains(textContent, "?") || strings.Contains(textContent, "[y/n]") {
 					status = "waiting_input"
 				}
-				callback(status, "", "", userPrompt)
+				callback(status, "", "", sessionTitle)
 				return
 			}
 		}

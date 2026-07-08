@@ -69,7 +69,7 @@ var permissionStepTypes = map[string]bool{
 	"ASK_QUESTION":   true,
 }
 
-func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -80,7 +80,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	var lastCheck time.Time // zero — finds ANY existing transcript on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
-	var lastPrompt string
+	var sessionTitle string
 
 	for {
 		select {
@@ -105,11 +105,11 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, prompt string) {
-							if prompt != "" {
-								lastPrompt = prompt
+						wrappedCallback := func(status, tool, details, title string) {
+							if title != "" {
+								sessionTitle = title
 							}
-							callback(status, tool, details, lastPrompt)
+							callback(status, tool, details, sessionTitle)
 						}
 						w.parseAntigravityLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
@@ -156,14 +156,14 @@ func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (st
 	return bestPath, bestMod, err
 }
 
-func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, prompt string)) {
+func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
 	// Forward pass: accumulate user prompt and the final state of each step.
-	var userPrompt string
+	var sessionTitle string
 	var lastType string
 	var lastToolNames []string
 
@@ -178,8 +178,8 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			// The content field holds the raw user message (may include XML
 			// wrapper tags — strip them for display).
 			p := CleanPrompt(step.Content)
-			if p != "" {
-				userPrompt = p
+			if p != "" && sessionTitle == "" {
+				sessionTitle = p
 			}
 		case "PLANNER_RESPONSE":
 			lastType = step.Type
@@ -202,39 +202,39 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	switch lastType {
 	case "USER_INPUT":
 		// The user just sent a message; planner hasn't responded yet.
-		callback("thinking", "", "", userPrompt)
+		callback("thinking", "", "", sessionTitle)
 
 	case "PLANNER_RESPONSE":
 		if len(lastToolNames) == 0 {
 			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
-			callback("idle", "", "", userPrompt)
+			callback("idle", "", "", sessionTitle)
 			return
 		}
 		// Check for permission / question tools — agent needs user input.
 		for _, name := range lastToolNames {
 			nameLower := strings.ToLower(name)
 			if nameLower == "ask_permission" || nameLower == "ask_question" {
-				callback("waiting_input", name, "", userPrompt)
+				callback("waiting_input", name, "", sessionTitle)
 				return
 			}
 		}
 		// Planner issued tool calls; tool results not yet written → executing.
-		callback("executing", lastToolNames[0], "", userPrompt)
+		callback("executing", lastToolNames[0], "", sessionTitle)
 
 	default:
 		if permissionStepTypes[lastType] {
 			// The permission/question tool itself just completed — still need input
 			// until the next PLANNER_RESPONSE is written.
-			callback("waiting_input", strings.ToLower(lastType), "", userPrompt)
+			callback("waiting_input", strings.ToLower(lastType), "", sessionTitle)
 			return
 		}
 		if toolStepTypes[lastType] {
 			// A tool result was just written; the planner is about to respond.
-			callback("thinking", "", "", userPrompt)
+			callback("thinking", "", "", sessionTitle)
 			return
 		}
 		// Unknown step type — stay thinking.
-		callback("thinking", "", "", userPrompt)
+		callback("thinking", "", "", sessionTitle)
 	}
 }
 

@@ -33,7 +33,7 @@ type ClaudeBlock struct {
 	Name string `json:"name,omitempty"` // tool name for tool_use blocks
 }
 
-func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -48,7 +48,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	var lastCheck time.Time // zero — finds ANY existing session file on first search
 	var lastFileSize int64 = 0
 	var watchedFilePath string
-	var lastPrompt string
+	var sessionTitle string
 
 	for {
 		select {
@@ -67,11 +67,11 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
 					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, prompt string) {
-							if prompt != "" {
-								lastPrompt = prompt
+						wrappedCallback := func(status, tool, details, title string) {
+							if title != "" {
+								sessionTitle = title
 							}
-							callback(status, tool, details, lastPrompt)
+							callback(status, tool, details, sessionTitle)
 						}
 						w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
@@ -102,15 +102,14 @@ func claudeProjectDir(baseDir, cwd string) string {
 	return baseDir
 }
 
-func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback func(status, tool, details, prompt string)) {
+func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the most recent user prompt so it can be surfaced
-	// in the KanbanBoard card regardless of current status.
-	var userPrompt string
+	// Forward pass: collect the first user prompt to use as the session title.
+	var sessionTitle string
 	for _, line := range lines {
 		var logLine ClaudeLogLine
 		if json.Unmarshal([]byte(line), &logLine) != nil {
@@ -118,13 +117,13 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		}
 		if logLine.Message != nil && logLine.Message.Role == "user" {
 			for _, b := range logLine.Message.Content {
-				if b.Type == "text" && b.Text != "" {
-					userPrompt = b.Text
+				if b.Type == "text" && b.Text != "" && sessionTitle == "" {
+					sessionTitle = b.Text
 				}
 			}
 		}
 	}
-	userPrompt = CleanPrompt(userPrompt)
+	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Reverse pass: determine the current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -134,7 +133,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		}
 
 		if logLine.Type == "result" {
-			callback("idle", "", "", userPrompt)
+			callback("idle", "", "", sessionTitle)
 			return
 		}
 
@@ -142,7 +141,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 			msg := logLine.Message
 			switch msg.Role {
 			case "user":
-				callback("thinking", "", "", userPrompt)
+				callback("thinking", "", "", sessionTitle)
 				return
 
 			case "assistant":
@@ -165,7 +164,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 				}
 
 				if lastToolName != "" {
-					callback("executing", lastToolName, "", userPrompt)
+					callback("executing", lastToolName, "", sessionTitle)
 					return
 				}
 				if hasText {
@@ -175,11 +174,11 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 						strings.Contains(textContent, "approve") {
 						status = "waiting_input"
 					}
-					callback(status, "", textContent, userPrompt)
+					callback(status, "", textContent, sessionTitle)
 					return
 				}
 				// Assistant message with only thinking blocks → still thinking.
-				callback("thinking", "", "", userPrompt)
+				callback("thinking", "", "", sessionTitle)
 				return
 			}
 		}

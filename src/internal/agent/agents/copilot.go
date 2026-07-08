@@ -17,7 +17,7 @@ func init() {
 	agent.RegisterStatusWatcher("copilot", &CopilotWatcher{})
 }
 
-func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
+func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -44,7 +44,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	}
 }
 
-func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callback func(status, tool, details, prompt string)) {
+func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callback func(status, tool, details, title string)) {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return
@@ -67,13 +67,19 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 		}
 	}
 
-	// Retrieve the most recent user message to use as the prompt.
-	var userPrompt string
+	// Retrieve the session title: try summary first, then first user prompt.
+	var sessionTitle string
 	_ = db.QueryRow(
-		"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1",
+		"SELECT summary FROM sessions WHERE id = ?",
 		copilotSessionID,
-	).Scan(&userPrompt)
-	userPrompt = CleanPrompt(userPrompt)
+	).Scan(&sessionTitle)
+	if sessionTitle == "" {
+		_ = db.QueryRow(
+			"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC LIMIT 1",
+			copilotSessionID,
+		).Scan(&sessionTitle)
+	}
+	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Determine status from the most recent turn.
 	var role, content string
@@ -87,12 +93,12 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, callba
 
 	if role == "user" {
 		// User just sent a message — agent is processing.
-		callback("thinking", "", "", userPrompt)
+		callback("thinking", "", "", sessionTitle)
 	} else {
 		status := "idle"
 		if strings.Contains(content, "?") || strings.Contains(content, "approve") {
 			status = "waiting_input"
 		}
-		callback(status, "", "", userPrompt)
+		callback(status, "", "", sessionTitle)
 	}
 }
