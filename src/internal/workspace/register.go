@@ -63,6 +63,8 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/file/delete", handleFileDelete)
 	mux.HandleFunc("/api/workspace/file/create", handleFileCreate)
 	mux.HandleFunc("/api/workspace/file/paste", handleFilePaste)
+	mux.HandleFunc("/api/workspace/undo", handleUndo)
+	mux.HandleFunc("/api/workspace/redo", handleRedo)
 }
 
 func handleOpenDir(w http.ResponseWriter, r *http.Request) {
@@ -491,6 +493,12 @@ func handleFileRename(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	globalHistory.PushUndo(HistoryEntry{
+		Type:     "rename",
+		Path:     absOld,
+		DestPath: absNew,
+		IsDir:    wasDir,
+	})
 	getHub().EmitEvent(absOld, "file-deleted", wasDir)
 	getHub().EmitEvent(absNew, "file-created", wasDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
@@ -594,10 +602,19 @@ func handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		wasDir = info.IsDir()
 	}
 
-	if err := os.RemoveAll(abs); err != nil {
+	trashPath, err := moveToTrash(abs)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	globalHistory.PushUndo(HistoryEntry{
+		Type:      "delete",
+		Path:      abs,
+		TrashPath: trashPath,
+		IsDir:     wasDir,
+	})
+
 	getHub().EmitEvent(abs, "file-deleted", wasDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
@@ -633,6 +650,11 @@ func handleFileCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	globalHistory.PushUndo(HistoryEntry{
+		Type:  "create",
+		Path:  abs,
+		IsDir: isDir,
+	})
 	getHub().EmitEvent(abs, "file-created", isDir)
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
@@ -701,6 +723,36 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	globalHistory.PushUndo(HistoryEntry{
+		Type:     "paste",
+		Path:     absSrc,
+		DestPath: destPath,
+		IsDir:    isDir,
+	})
 	getHub().EmitEvent(destPath, "file-created", isDir)
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleUndo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := globalHistory.Undo(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	httputil.WriteJSON(w, map[string]string{"status": "ok"})
+}
+
+func handleRedo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := globalHistory.Redo(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	httputil.WriteJSON(w, map[string]string{"status": "ok"})
 }
