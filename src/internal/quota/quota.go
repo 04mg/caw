@@ -8,8 +8,9 @@ import (
 )
 
 type Quota struct {
-	Used  int `json:"used"`
-	Limit int `json:"limit"`
+	Used  int    `json:"used"`
+	Limit int    `json:"limit"`
+	Unit  string `json:"unit,omitempty"` // "" | "percentage" | "credits" | "count"
 }
 
 type QuotaItem struct {
@@ -18,6 +19,7 @@ type QuotaItem struct {
 	Description string `json:"description"`
 	Used        int    `json:"used"`
 	Limit       int    `json:"limit"`
+	Unit        string `json:"unit,omitempty"`
 	ResetTime   string `json:"resetTime,omitempty"`
 }
 
