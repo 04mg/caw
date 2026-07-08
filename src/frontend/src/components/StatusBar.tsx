@@ -53,6 +53,18 @@ interface AllQuotas {
 	openrouter?: ProviderData
 }
 
+const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
+	if (unit === 'info') {
+		return { text: '', percentage: 0 }
+	}
+	if (unit === 'percentage' || !unit) {
+		return { text: `${used}%`, percentage: used }
+	}
+	// credits / count
+	const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
+	return { text: `${used}/${limit}`, percentage: pct }
+}
+
 interface StatusBarProps {
 	workspaceName?: string
 	worktreeBranch?: string
@@ -195,18 +207,6 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 	}
 
 	const activeDisplay = getQuotaDisplay()
-
-	const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
-		if (unit === 'info') {
-			return { text: '', percentage: 0 }
-		}
-		if (unit === 'percentage' || !unit) {
-			return { text: `${used}%`, percentage: used }
-		}
-		// credits / count
-		const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
-		return { text: `${used}/${limit}`, percentage: pct }
-	}
 
 	const renderProgressBar = (used: number, limit: number, unit?: string) => {
 		const isInfo = unit === 'info'

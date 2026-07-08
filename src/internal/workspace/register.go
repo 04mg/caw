@@ -162,7 +162,7 @@ func handleListDir(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
-	var children []FileNode
+	children := []FileNode{}
 	for _, e := range entries {
 		name := e.Name()
 		if name[0] == '.' && name != "." && name != ".." {
@@ -302,7 +302,7 @@ func handleListAll(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteJSON(w, []FileNode{})
 		return
 	}
-	var children []FileNode
+	children := []FileNode{}
 	for _, e := range entries {
 		name := e.Name()
 		if name[0] == '.' && name != "." && name != ".." {

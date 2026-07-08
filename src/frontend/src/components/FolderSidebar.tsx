@@ -529,13 +529,17 @@ function LazyFileNode({
     try {
       const res = await fetch(`/api/workspace/list-all?path=${encodeURIComponent(path)}`)
       if (res.ok) {
-        const arr = (await res.json()) as FileNode[]
-        const sorted = arr.sort((a, b) => {
-          if (a.isDir && !b.isDir) return -1
-          if (!a.isDir && b.isDir) return 1
-          return a.name.localeCompare(b.name)
-        })
-        setChildren(sorted)
+        const arr = await res.json()
+        if (Array.isArray(arr)) {
+          const sorted = (arr as FileNode[]).sort((a, b) => {
+            if (a.isDir && !b.isDir) return -1
+            if (!a.isDir && b.isDir) return 1
+            return a.name.localeCompare(b.name)
+          })
+          setChildren(sorted)
+        } else {
+          setChildren([])
+        }
       }
     } catch {
       setChildren([])

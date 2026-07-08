@@ -163,12 +163,18 @@ function syncModes(inst: TerminalInstance): string {
   return '\x1b[?' + set.join(';') + 'h'
 }
 
+function safeScrollToBottom(term: Terminal) {
+  try {
+    term.scrollToBottom()
+  } catch { /* ignore if not attached to DOM */ }
+}
+
 function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
   for (const data of queue) {
     inst.term.write(data, () => {
-      inst.term.scrollToBottom()
+      safeScrollToBottom(inst.term)
     })
     inst.buffer.push(data)
     if (inst.buffer.length > 10000) inst.buffer.shift()
@@ -197,7 +203,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
           return
         }
         inst.term.write(msg.data, () => {
-          inst.term.scrollToBottom()
+          safeScrollToBottom(inst.term)
         })
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
