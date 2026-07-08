@@ -274,6 +274,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	return (
 		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans">
 		<div className="flex items-center gap-2">
+			<span className="h-4 w-px bg-border shrink-0" />
 			<Tooltip delayDuration={0}>
 				<TooltipTrigger asChild>
 					<button
