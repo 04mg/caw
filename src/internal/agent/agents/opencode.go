@@ -54,6 +54,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 	var lastDBMod time.Time
 	var lastWALMod time.Time
+	var lastReportedStatus string
 
 	for {
 		select {
@@ -75,8 +76,15 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				}
 			}
 
-			if changed {
-				w.parseOpenCodeDB(dbPath, cwd, callback)
+			// Always re-parse while waiting for user input even if the DB
+			// hasn't changed. This keeps lastActivity alive in the watchdog
+			// so the idle-timeout never fires while a question is pending.
+			if changed || lastReportedStatus == "waiting_input" {
+				wrappedCallback := func(status, tool, details, prompt string) {
+					lastReportedStatus = status
+					callback(status, tool, details, prompt)
+				}
+				w.parseOpenCodeDB(dbPath, cwd, wrappedCallback)
 			}
 		}
 	}
@@ -107,12 +115,33 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 		}
 	}
 
-	// Retrieve the user's most recent prompt from session_input.
+	// Retrieve the user's prompt. OpenCode stores the initial prompt as the
+	// first 'text' part in the session. session_input exists in the schema but
+	// is not reliably populated in all versions, so we prefer the part table.
 	var userPrompt string
-	_ = db.QueryRow(
-		`SELECT prompt FROM session_input WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`,
+	var firstTextPartData string
+	if err := db.QueryRow(
+		`SELECT data FROM part WHERE session_id = ? AND json_extract(data,'$.type') = 'text' ORDER BY time_created ASC LIMIT 1`,
 		openCodeSessionID,
-	).Scan(&userPrompt)
+	).Scan(&firstTextPartData); err == nil && firstTextPartData != "" {
+		var p openCodePart
+		if json.Unmarshal([]byte(firstTextPartData), &p) == nil && p.Text != "" {
+			userPrompt = p.Text
+			if len(userPrompt) > 200 {
+				userPrompt = userPrompt[:200] + "…"
+			}
+		}
+	}
+	// Fallback: session_input table (populated in some OpenCode versions).
+	if userPrompt == "" {
+		_ = db.QueryRow(
+			`SELECT prompt FROM session_input WHERE session_id = ? ORDER BY time_created ASC LIMIT 1`,
+			openCodeSessionID,
+		).Scan(&userPrompt)
+		if len(userPrompt) > 200 {
+			userPrompt = userPrompt[:200] + "…"
+		}
+	}
 
 	// Determine the current state by inspecting the most recent part.
 	// Parts are fine-grained events: step-start, tool (with running/completed state),
@@ -133,6 +162,13 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 					toolStatus = p.State.Status
 				}
 				if toolStatus == "running" || toolStatus == "pending" {
+					// The "question" tool is OpenCode's mechanism to ask the user
+					// a question and wait for a response. While it is running, the
+					// agent is blocked waiting for user input — not executing code.
+					if p.Tool == "question" {
+						callback("waiting_input", "question", "", userPrompt)
+						return
+					}
 					callback("executing", p.Tool, "", userPrompt)
 					return
 				}

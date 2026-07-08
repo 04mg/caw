@@ -297,7 +297,11 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 				statusesMu.RLock()
 				s, exists := statuses[wCtx.sessionId]
 				statusesMu.RUnlock()
-				if exists && s.Status != "idle" && s.Status != "stopped" {
+				// Do NOT auto-revert "waiting_input": the agent is blocked
+				// waiting for the user to answer — this can take minutes.
+				// Only revert transient "working" states (thinking/executing)
+				// that have stalled, which indicates a crash.
+				if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" {
 					updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Prompt)
 				}
 			}
