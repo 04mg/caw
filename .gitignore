@@ -14,6 +14,7 @@ src/frontend/node_modules/
 src/internal/embed/frontend/dist/
 
 # Go build artifacts
+/caw
 src/caw
 src/caw.exe
 src/caw-*

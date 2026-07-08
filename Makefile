@@ -1,6 +1,11 @@
-BINARY := caw.exe
 FRONTEND_DIR := src/frontend
 SERVER_DIR := src
+
+ifeq ($(OS),Windows_NT)
+	BINARY := caw.exe
+else
+	BINARY := caw
+endif
 
 .PHONY: build lint
 

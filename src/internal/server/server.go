@@ -42,7 +42,7 @@ func New() *Server {
 	}
 }
 
-func (s *Server) ListenAndServe(port string) {
+func (s *Server) ListenAndServe(host, port string) {
 	mux := http.NewServeMux()
 
 	terminal.Register(mux, s.sessions, &s.sessionsMu, &s.upgrader, s.store)
@@ -57,7 +57,7 @@ func (s *Server) ListenAndServe(port string) {
 
 	mux.Handle("/", http.FileServer(http.FS(s.frontendFS)))
 
-	addr := ":" + port
-	fmt.Print(strings.Replace(embed.IconTxt, ":8080", addr, 1))
+	addr := host + ":" + port
+	fmt.Print(strings.Replace(embed.IconTxt, "localhost:8080", addr, 1))
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
