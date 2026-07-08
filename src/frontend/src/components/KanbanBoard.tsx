@@ -311,14 +311,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               className="flex flex-col min-w-[280px] flex-1 rounded-xl p-4 min-h-[400px]"
             >
               {/* Column Header */}
-              <div className="flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0">
+              <div className={`flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0 rounded-xl p-2 ${col.colorClass}`}>
                 <div className="flex items-center gap-2">
-                  <ColIcon className="w-4 h-4 text-white" />
-                  <span className="text-xs font-bold tracking-wider uppercase text-foreground/80">
+                  <ColIcon className="w-4 h-4" />
+                  <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
                     {col.title}
                   </span>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-background/60 text-foreground/80 border border-border/40 font-mono">
                   {agents.length}
                 </span>
               </div>
@@ -329,8 +329,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   agents.map(renderCard)
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
-                    <div className="p-2.5 rounded-full bg-muted/40">
-                      <ColIcon className="w-4 h-4 text-white" />
+                    <div className={`p-2.5 rounded-full ${col.colorClass}`}>
+                      <ColIcon className="w-4 h-4" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
