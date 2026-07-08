@@ -27,14 +27,21 @@ type CodexPayload struct {
 	Message string `json:"message,omitempty"`
 }
 
-func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
+func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".codex", "sessions")
 	const agentID = "codex"
-	lastCheck := time.Now().Add(-1 * time.Second)
+	// On resume (codex resume --last), the agent reattaches to a pre-existing
+	// session whose transcript file may predate this watcher. Widen the
+	// search window to 1 hour so the resumed session is found.
+	lookback := 1 * time.Second
+	if resume {
+		lookback = 1 * time.Hour
+	}
+	lastCheck := time.Now().Add(-lookback)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string

@@ -45,11 +45,17 @@ type watcherContext struct {
 	sessionId string
 	cwd       string
 	cmd       []string
+	resume    bool
 }
 
-// StatusWatcher is the interface that each agent status provider must implement
+// StatusWatcher is the interface that each agent status provider must implement.
+// The resume flag is true when the agent was launched with a resume/continue
+// flag (e.g. --continue), meaning it reattaches to a pre-existing internal
+// session. In that case watchers should look for the most recent session in
+// the cwd regardless of when it was last updated, instead of only sessions
+// started after the watcher launched.
 type StatusWatcher interface {
-	Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string))
+	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string))
 }
 
 // wsClient wraps a websocket connection with a dedicated write mutex.
@@ -239,6 +245,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		sessionId: id,
 		cwd:       cwd,
 		cmd:       cmd,
+		resume:    isResumeCmd(cmd),
 	}
 
 	activeSesMu.Lock()
@@ -327,8 +334,28 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 		}
 	}()
 
-	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, func(status, tool, details, title string) {
+	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
 		lastActivity = time.Now()
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
 	})
+}
+
+// isResumeCmd reports whether the agent launch command contains a resume/
+// continue flag, indicating the agent will reattach to a pre-existing
+// internal session rather than starting a new one. This is set by
+// terminal.resumeCmdForAgent on reopen.
+func isResumeCmd(cmd []string) bool {
+	for _, a := range cmd {
+		switch a {
+		case "--continue", "-c", "--resume", "--last":
+			return true
+		}
+	}
+	// codex uses "resume" as a subcommand
+	for _, a := range cmd {
+		if a == "resume" {
+			return true
+		}
+	}
+	return false
 }

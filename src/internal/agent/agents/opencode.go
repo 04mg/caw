@@ -37,7 +37,7 @@ type openCodeMessage struct {
 	} `json:"parts,omitempty"`
 }
 
-func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
+func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -87,7 +87,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			if openCodeSessionID == "" {
 				if changed {
-					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID)
+					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 				}
 			}
 
@@ -112,7 +112,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 // watcherStart) and returns the id of the most recent one that is not already
 // claimed by another watcher of the same agent type+cwd. When a session is
 // found it is immediately claimed.
-func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string) string {
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
@@ -154,9 +154,14 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 	}
 
 	for _, r := range candidates {
-		sessionTime := time.UnixMilli(r.timeUpdated)
-		if !sessionTime.After(watcherStart) {
-			continue
+		// On resume, skip the recency filter — the session may predate the
+		// watcher (the agent reattaches to an old session). On fresh start,
+		// only match sessions started after the watcher launched.
+		if !resume {
+			sessionTime := time.UnixMilli(r.timeUpdated)
+			if !sessionTime.After(watcherStart) {
+				continue
+			}
 		}
 		if ClaimSession(agentID, cwd, r.id) {
 			return r.id
@@ -293,6 +298,20 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 
 		// If no tool is actively running/pending but the turn expects more tool calls:
 		if msg.Finish == "tool-calls" {
+			if lastToolName != "" {
+				callback("executing", lastToolName, "", sessionTitle)
+			} else {
+				callback("thinking", "", "", sessionTitle)
+			}
+			return
+		}
+
+		// Empty finish means the message row is still being written to — the
+		// turn is in progress but the tool state hasn't been updated yet (or
+		// a new step is about to start). Reporting "idle" here causes the
+		// status to flash idle→executing repeatedly. Treat an unfinished
+		// assistant message as "thinking" (actively working) instead.
+		if msg.Finish == "" {
 			if lastToolName != "" {
 				callback("executing", lastToolName, "", sessionTitle)
 			} else {

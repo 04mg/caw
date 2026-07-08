@@ -33,7 +33,7 @@ type ClaudeBlock struct {
 	Name string `json:"name,omitempty"` // tool name for tool_use blocks
 }
 
-func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
+func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -46,7 +46,16 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	searchDir := claudeProjectDir(baseDir, cwd)
 
 	const agentID = "claude"
-	lastCheck := time.Now().Add(-1 * time.Second)
+	// On resume (--continue), the agent reattaches to a pre-existing session
+	// whose transcript file may have been last modified before this watcher
+	// started. Widen the search window to 1 hour so the resumed session is
+	// found; for a fresh start, only look for files modified in the last
+	// second to avoid grabbing a stale session.
+	lookback := 1 * time.Second
+	if resume {
+		lookback = 1 * time.Hour
+	}
+	lastCheck := time.Now().Add(-lookback)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
