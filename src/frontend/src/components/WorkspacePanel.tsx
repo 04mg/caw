@@ -163,6 +163,7 @@ export function WorkspacePanel({
             <div
               className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5"
               style={{ left: contextMenu.x, top: contextMenu.y }}
+              onMouseDown={(e) => e.stopPropagation()}
             >
               <button
                 onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditTarget(ws) }}
@@ -282,6 +283,7 @@ export function WorkspacePanel({
           <div
             className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5"
             style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <button
               onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditTarget(ws) }}
