@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/04mg/caw/internal/httputil"
+	"github.com/04mg/caw/internal/state"
 )
 
 type CreateRequest struct {
@@ -31,7 +32,7 @@ var (
 	OnSessionExit  func(id string)
 )
 
-func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader) {
+func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader, store *state.Store) {
 	mux.HandleFunc("/api/terminal/create", func(w http.ResponseWriter, r *http.Request) {
 		var req CreateRequest
 		if err := httputil.ReadJSON(r, &req); err != nil {
@@ -58,7 +59,16 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			id = uuid.New().String()
 		}
 
-		ps, err := startPty(cwd, req.Cmd)
+		// Reopen detection: if this leaf previously hosted an agent PTY in a
+		// prior Caw process, mutate the launch command to pass a resume/continue
+		// flag so the agent reconnects to its last internal session instead of
+		// starting fresh. Plain shells and unknown binaries pass through.
+		cmd := req.Cmd
+		if store != nil && id != "" && len(cmd) > 0 {
+			cmd = resumeCmdForAgent(store, id, cmd)
+		}
+
+		ps, err := startPty(cwd, cmd)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -131,6 +141,16 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		sessionsMu.Lock()
 		sessions[id] = sess
 		sessionsMu.Unlock()
+
+		// Record that an agent PTY was started for this leaf so a future Caw
+		// process can detect the reopen case and pass a resume flag. Only
+		// record known agents (not plain shells) so reopening a shell pane
+		// doesn't get a spurious --continue appended.
+		if store != nil && id != "" && len(req.Cmd) > 0 {
+			if aid := agentBaseName(req.Cmd[0]); isKnownAgent(aid) {
+				store.MarkAgentStarted(id, aid, cwd)
+			}
+		}
 
 		if OnSessionStart != nil {
 			OnSessionStart(id, req.Cmd, cwd)
@@ -267,6 +287,13 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 			return
 		}
 		sess.Pty.Kill()
+		// User explicitly closed this pane. Drop the persisted agent-session
+		// marker so that reopening the same layout leaf (or a future Caw run
+		// that reuses this leafId) starts a fresh agent instead of resuming a
+		// session the user intended to discard.
+		if store != nil {
+			store.ClearAgentSession(req.ID)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 }

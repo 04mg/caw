@@ -45,7 +45,7 @@ func New() *Server {
 func (s *Server) ListenAndServe(port string) {
 	mux := http.NewServeMux()
 
-	terminal.Register(mux, s.sessions, &s.sessionsMu, &s.upgrader)
+	terminal.Register(mux, s.sessions, &s.sessionsMu, &s.upgrader, s.store)
 	state.RegisterHTTP(mux, s.store)
 	state.RegisterWS(mux, s.store)
 	workspace.Register(mux)
