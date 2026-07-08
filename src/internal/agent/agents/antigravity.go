@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,10 +79,17 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
+	const agentID = "agy"
 	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+
+	defer func() {
+		if watchedFilePath != "" {
+			UnclaimSession(agentID, cwd, watchedFilePath)
+		}
+	}()
 
 	for {
 		select {
@@ -89,10 +97,10 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				// Search for the most recently modified transcript.jsonl.
-				fp, _, err := findAntigravityTranscript(dir, cwd, lastCheck)
-				if err == nil && fp != "" {
-					watchedFilePath = fp
+				// Search for the most recently modified unclaimed transcript.jsonl.
+				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+				if err == nil && len(candidates) > 0 {
+					watchedFilePath = candidates[0]
 					lastFileSize = 0
 					// After locking on a file, only look for newer transcripts
 					// from this point on (prevents switching to a new session
@@ -114,7 +122,8 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						lastFileSize = info.Size()
 					}
 				} else {
-					// File disappeared — search again next tick.
+					// File disappeared — release claim and search again next tick.
+					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
 				}
 			}
@@ -122,41 +131,56 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	}
 }
 
-// findAntigravityTranscript walks the brain directory looking for the most
-// recently modified transcript.jsonl. When cwd is non-empty it tries to match
-// the working directory using conversation_summaries.db.
-func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (string, time.Time, error) {
-	// 1. Try to query conversation_summaries.db first for a precise workspace match
+// findAntigravityTranscripts walks the brain directory looking for the most
+// recently modified transcript.jsonl files whose modification time is after
+// the given threshold, optionally filtered by cwd via conversation_summaries.db,
+// and skips any transcript already claimed by another watcher of the same
+// agent type+cwd. Returns candidates sorted by modification time, most recent
+// first. The caller claims the first one via ClaimSession.
+func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, agentID string) ([]string, error) {
+	type cand struct {
+		path       string
+		convID     string
+		modTime    time.Time
+		workspaceOK bool
+	}
+
+	// 1. Build the full set of candidate transcript files modified after the
+	// threshold. We collect (path, conversationId, modTime) and, when a cwd
+	// match is requested, also flag whether the conversation's workspace_uris
+	// contain the target cwd.
+	workspaceMatch := map[string]bool{}
+	workspaceQueried := false
 	if cwd != "" {
 		home, _ := os.UserHomeDir()
 		dbPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db")
 		if _, err := os.Stat(dbPath); err == nil {
 			db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 			if err == nil {
-				defer db.Close()
-				var convID string
-				targetURI := "file://" + filepath.ToSlash(cwd)
-				pattern := "%\"" + targetURI + "\"%"
-				err = db.QueryRow(
-					`SELECT conversation_id FROM conversation_summaries WHERE workspace_uris LIKE ? ORDER BY last_modified_time DESC LIMIT 1`,
-					pattern,
-				).Scan(&convID)
-				if err == nil && convID != "" {
-					filePath := filepath.Join(brainDir, convID, ".system_generated", "logs", "transcript.jsonl")
-					if info, err := os.Stat(filePath); err == nil {
-						if info.ModTime().After(after) {
-							return filePath, info.ModTime(), nil
+				workspaceQueried = true
+				rows, qerr := db.Query(
+					`SELECT conversation_id, workspace_uris FROM conversation_summaries ORDER BY last_modified_time DESC`,
+				)
+				if qerr == nil {
+					targetURI := "file://" + filepath.ToSlash(cwd)
+					for rows.Next() {
+						var convID, uris string
+						if rows.Scan(&convID, &uris) != nil {
+							continue
+						}
+						if strings.Contains(uris, "\""+targetURI+"\"") {
+							workspaceMatch[convID] = true
 						}
 					}
+					rows.Close()
 				}
+				db.Close()
 			}
 		}
 	}
 
-	// 2. Fall back to recursive walk
-	var bestPath string
-	var bestMod time.Time
-
+	// 2. Walk the brain directory collecting candidates.
+	var cands []cand
 	err := filepath.Walk(brainDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -170,14 +194,52 @@ func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (st
 		if !info.ModTime().After(after) {
 			return nil
 		}
-		if info.ModTime().After(bestMod) {
-			bestPath = path
-			bestMod = info.ModTime()
+		// Derive conversationId from path: .../brain/<convId>/.system_generated/logs/transcript.jsonl
+		convID := ""
+		if rel, rerr := filepath.Rel(brainDir, path); rerr == nil {
+			parts := strings.Split(filepath.ToSlash(rel), "/")
+			if len(parts) > 0 {
+				convID = parts[0]
+			}
 		}
+		// When cwd filtering is active and we successfully queried the db,
+		// skip transcripts that don't belong to the target workspace.
+		if cwd != "" && workspaceQueried && convID != "" {
+			if !workspaceMatch[convID] {
+				return nil
+			}
+		}
+		cands = append(cands, cand{
+			path:        path,
+			convID:      convID,
+			modTime:     info.ModTime(),
+			workspaceOK: workspaceMatch[convID],
+		})
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return bestPath, bestMod, err
+	// Sort: workspace-matched first, then by modTime descending. This keeps the
+	// most relevant transcripts at the top when cwd filtering is active.
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].workspaceOK != cands[j].workspaceOK {
+			return cands[i].workspaceOK
+		}
+		return cands[i].modTime.After(cands[j].modTime)
+	})
+
+	// 3. Pick the first candidate whose path (or conversationId) is not
+	// already claimed by another watcher of the same agent type+cwd.
+	var result []string
+	for _, c := range cands {
+		key := c.path
+		if ClaimSession(agentID, cwd, key) {
+			result = append(result, key)
+		}
+	}
+	return result, nil
 }
 
 func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, title string)) {

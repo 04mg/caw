@@ -23,9 +23,17 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 
 	home, _ := os.UserHomeDir()
 	dbPath := filepath.Join(home, ".copilot", "session-store.db")
+	const agentID = "copilot"
 
 	var lastDBMod time.Time
 	var copilotSessionID string
+	watcherStart := time.Now().Add(-2 * time.Second)
+
+	defer func() {
+		if copilotSessionID != "" {
+			UnclaimSession(agentID, cwd, copilotSessionID)
+		}
+	}()
 
 	for {
 		select {
@@ -40,45 +48,99 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 				continue
 			}
 			lastDBMod = info.ModTime()
-			w.parseCopilotDB(dbPath, cwd, &copilotSessionID, callback)
+			if copilotSessionID == "" {
+				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID)
+			}
+			if copilotSessionID != "" {
+				w.parseCopilotDB(dbPath, cwd, copilotSessionID, callback)
+			}
 		}
 	}
 }
 
-func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilotSessionID *string, callback func(status, tool, details, title string)) {
+// findUnclaimedCopilotSession enumerates candidate Copilot sessions in the
+// session-store db (filtered by cwd when possible and started after
+// watcherStart) and returns the id of the most recent one that is not already
+// claimed by another watcher of the same agent type+cwd. When a session is
+// found it is immediately claimed.
+func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string) string {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	type row struct {
+		id        string
+		updatedAt string
+	}
+	var candidates []row
+
+	if cwd != "" {
+		rows, qerr := db.Query(
+			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at DESC",
+			cwd,
+		)
+		if qerr == nil {
+			for rows.Next() {
+				var r row
+				rows.Scan(&r.id, &r.updatedAt)
+				candidates = append(candidates, r)
+			}
+			rows.Close()
+		}
+	}
+	if len(candidates) == 0 {
+		rows, qerr := db.Query(
+			"SELECT id, updated_at FROM sessions ORDER BY updated_at DESC",
+		)
+		if qerr == nil {
+			for rows.Next() {
+				var r row
+				rows.Scan(&r.id, &r.updatedAt)
+				candidates = append(candidates, r)
+			}
+			rows.Close()
+		}
+	}
+
+	for _, r := range candidates {
+		if t, err := time.Parse(time.RFC3339, r.updatedAt); err == nil {
+			if !t.After(watcherStart) {
+				continue
+			}
+		}
+		if ClaimSession(agentID, cwd, r.id) {
+			return r.id
+		}
+	}
+	return ""
+}
+
+func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilotSessionID string, callback func(status, tool, details, title string)) {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return
 	}
 	defer db.Close()
 
-	// Find the session that matches our cwd, falling back to the most recent one.
-	if *copilotSessionID == "" {
-		if sessionCwd != "" {
-			_ = db.QueryRow(
-				"SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1",
-				sessionCwd,
-			).Scan(copilotSessionID)
-		}
-		if *copilotSessionID == "" {
-			if err := db.QueryRow(
-				"SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1",
-			).Scan(copilotSessionID); err != nil {
-				return
-			}
-		}
+	// The session id was already resolved and claimed by findUnclaimedCopilotSession.
+	resolvedID := copilotSessionID
+
+	if resolvedID == "" {
+		return
 	}
 
 	// Retrieve the session title: try summary first, then first user prompt.
 	var sessionTitle string
 	_ = db.QueryRow(
 		"SELECT summary FROM sessions WHERE id = ?",
-		*copilotSessionID,
+		resolvedID,
 	).Scan(&sessionTitle)
 	if sessionTitle == "" {
 		_ = db.QueryRow(
 			"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC LIMIT 1",
-			*copilotSessionID,
+			resolvedID,
 		).Scan(&sessionTitle)
 	}
 	sessionTitle = CleanPrompt(sessionTitle)
@@ -87,7 +149,7 @@ func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilo
 	var role, content string
 	err = db.QueryRow(
 		"SELECT role, content FROM turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-		*copilotSessionID,
+		resolvedID,
 	).Scan(&role, &content)
 	if err != nil {
 		return

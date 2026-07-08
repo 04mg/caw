@@ -45,10 +45,17 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	baseDir := filepath.Join(home, ".claude", "projects")
 	searchDir := claudeProjectDir(baseDir, cwd)
 
+	const agentID = "claude"
 	lastCheck := time.Now().Add(-1 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+
+	defer func() {
+		if watchedFilePath != "" {
+			UnclaimSession(agentID, cwd, watchedFilePath)
+		}
+	}()
 
 	for {
 		select {
@@ -56,11 +63,17 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, _, err := FindLatestFile(searchDir, ".jsonl", lastCheck)
-				if err == nil && fp != "" {
-					watchedFilePath = fp
-					lastFileSize = 0
-					lastCheck = time.Now()
+				candidates, err := FindLatestFiles(searchDir, ".jsonl", lastCheck)
+				if err != nil {
+					continue
+				}
+				for _, c := range candidates {
+					if ClaimSession(agentID, cwd, c.Path) {
+						watchedFilePath = c.Path
+						lastFileSize = 0
+						lastCheck = time.Now()
+						break
+					}
 				}
 			}
 			if watchedFilePath != "" {
@@ -77,7 +90,9 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 						lastFileSize = info.Size()
 					}
 				} else {
-					watchedFilePath = "" // lost file, search again
+					// File disappeared — release claim and search again next tick.
+					UnclaimSession(agentID, cwd, watchedFilePath)
+					watchedFilePath = ""
 				}
 			}
 		}
