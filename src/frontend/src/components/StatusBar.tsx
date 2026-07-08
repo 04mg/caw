@@ -296,7 +296,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			) : (
 				<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
 			)}
-			<span className="font-medium text-foreground/80">
+			<span className="font-medium text-[11px] text-foreground/80">
 				{workspaceName || 'Ready'}
 			</span>
 			{worktreeBranch && (
