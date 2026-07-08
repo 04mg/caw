@@ -197,6 +197,15 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			continue
 		}
 
+		if strings.Contains(step.Content, "USER Objective:") {
+			idx := strings.Index(step.Content, "USER Objective:")
+			sub := step.Content[idx+len("USER Objective:"):]
+			parts := strings.Split(strings.TrimSpace(sub), "\n")
+			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+				sessionTitle = strings.TrimSpace(parts[0])
+			}
+		}
+
 		switch step.Type {
 		case "USER_INPUT":
 			// The content field holds the raw user message (may include XML
