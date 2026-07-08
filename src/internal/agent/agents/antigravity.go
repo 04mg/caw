@@ -17,19 +17,67 @@ func init() {
 	agent.RegisterStatusWatcher("agy", &AntigravityWatcher{})
 }
 
-type AntigravityStep struct {
-	Type   string `json:"type"`
-	Source string `json:"source"`
-	Status string `json:"status"`
+// antigravityStep mirrors one line of the transcript.jsonl written by the
+// Antigravity CLI (agy). Steps are appended once complete (status: "DONE").
+type antigravityStep struct {
+	StepIndex int    `json:"step_index"`
+	Source    string `json:"source"`
+	// Type is the canonical step kind: USER_INPUT, PLANNER_RESPONSE,
+	// RUN_COMMAND, VIEW_FILE, GREP_SEARCH, LIST_DIRECTORY, WRITE_TO_FILE,
+	// REPLACE_FILE_CONTENT, ASK_PERMISSION, ASK_QUESTION, etc.
+	Type      string                  `json:"type"`
+	Status    string                  `json:"status"`
+	ToolCalls []antigravityToolCall   `json:"tool_calls,omitempty"`
+	Content   string                  `json:"content,omitempty"`
+	CreatedAt string                  `json:"created_at,omitempty"`
+}
+
+// antigravityToolCall reflects the actual JSON structure in transcript.jsonl:
+//
+//	{"name": "run_command", "args": {...}}
+//
+// (The old code incorrectly expected {"function": {"name": ...}}.)
+type antigravityToolCall struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
+// toolStepTypes is the set of step types that represent tool execution results.
+// When the last recorded step is one of these, the planner has just issued the
+// call and is waiting for (or processing) the result → status "thinking".
+var toolStepTypes = map[string]bool{
+	"RUN_COMMAND":          true,
+	"VIEW_FILE":            true,
+	"GREP_SEARCH":          true,
+	"LIST_DIRECTORY":       true,
+	"WRITE_TO_FILE":        true,
+	"REPLACE_FILE_CONTENT": true,
+	"MULTI_REPLACE_FILE_CONTENT": true,
+	"READ_URL_CONTENT":     true,
+	"SEARCH_WEB":           true,
+	"GENERATE_IMAGE":       true,
+	"INVOKE_SUBAGENT":      true,
+	"SEND_MESSAGE":         true,
+	"MANAGE_SUBAGENTS":     true,
+	"COMMAND_STATUS":       true,
+	"SCHEDULE":             true,
+}
+
+// permissionStepTypes are tool steps that require user approval.
+var permissionStepTypes = map[string]bool{
+	"ASK_PERMISSION": true,
+	"ASK_QUESTION":   true,
 }
 
 func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, prompt string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Antigravity stores transcripts under ~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
-	var lastCheck time.Time = time.Now().Add(-5 * time.Second)
+
+	var lastCheck time.Time = time.Now().Add(-10 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 
@@ -39,7 +87,9 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			return
 		case <-ticker.C:
 			if watchedFilePath == "" {
-				fp, mod, err := FindLatestFile(dir, "transcript.jsonl", lastCheck)
+				// Search for the most recently modified transcript.jsonl that
+				// matches this session's cwd.
+				fp, mod, err := findAntigravityTranscript(dir, cwd, lastCheck)
 				if err == nil && fp != "" {
 					watchedFilePath = fp
 					lastFileSize = 0
@@ -54,11 +104,45 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						lastFileSize = info.Size()
 					}
 				} else {
+					// File disappeared — search again next tick.
 					watchedFilePath = ""
 				}
 			}
 		}
 	}
+}
+
+// findAntigravityTranscript walks the brain directory looking for the most
+// recently modified transcript.jsonl. When cwd is non-empty it tries to match
+// the working directory embedded in the USER_INPUT step of each transcript.
+func findAntigravityTranscript(brainDir string, cwd string, after time.Time) (string, time.Time, error) {
+	var bestPath string
+	var bestMod time.Time
+
+	err := filepath.Walk(brainDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if info.Name() != "transcript.jsonl" {
+			return nil
+		}
+		if !info.ModTime().After(after) {
+			return nil
+		}
+		// Prefer the most recently modified transcript; CWD correlation is
+		// a best-effort hint rather than a hard filter because the transcript
+		// doesn't always contain the cwd explicitly.
+		if info.ModTime().After(bestMod) {
+			bestPath = path
+			bestMod = info.ModTime()
+		}
+		return nil
+	})
+
+	return bestPath, bestMod, err
 }
 
 func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, prompt string)) {
@@ -67,32 +151,101 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		return
 	}
 
-	for i := len(lines) - 1; i >= 0; i-- {
-		var step AntigravityStep
-		if err := json.Unmarshal([]byte(lines[i]), &step); err != nil {
+	// Forward pass: accumulate user prompt and the final state of each step.
+	var userPrompt string
+	var lastType string
+	var lastToolNames []string
+
+	for _, line := range lines {
+		var step antigravityStep
+		if err := json.Unmarshal([]byte(line), &step); err != nil {
 			continue
 		}
 
-		if step.Type == "USER_INPUT" {
-			callback("thinking", "", "", "")
-			return
-		}
-
-		if step.Type == "PLANNER_RESPONSE" {
-			if step.Status == "ERROR" {
-				callback("idle", "", "", "")
-				return
+		switch step.Type {
+		case "USER_INPUT":
+			// The content field holds the raw user message (may include XML
+			// wrapper tags — strip them for display).
+			p := extractAntigravityPrompt(step.Content)
+			if p != "" {
+				userPrompt = p
 			}
-			if strings.Contains(lines[i], "ask_permission") || strings.Contains(lines[i], "ask_question") {
-				callback("waiting_input", "", "", "")
-				return
+		case "PLANNER_RESPONSE":
+			lastType = step.Type
+			lastToolNames = nil
+			for _, tc := range step.ToolCalls {
+				if tc.Name != "" {
+					lastToolNames = append(lastToolNames, tc.Name)
+				}
 			}
-			if strings.Contains(lines[i], "run_command") || strings.Contains(lines[i], "replace_file_content") {
-				callback("executing", "", "", "")
-				return
+		default:
+			if step.Type != "" {
+				lastType = step.Type
 			}
-			callback("idle", "", "", "")
-			return
 		}
 	}
+
+	// Determine current status from the last step type written to the transcript.
+	// Because steps are only written once complete ("DONE"), the last written
+	// step tells us what just finished, which implies what the agent is doing now.
+	switch lastType {
+	case "USER_INPUT":
+		// The user just sent a message; planner hasn't responded yet.
+		callback("thinking", "", "", userPrompt)
+
+	case "PLANNER_RESPONSE":
+		if len(lastToolNames) == 0 {
+			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
+			callback("idle", "", "", userPrompt)
+			return
+		}
+		// Check for permission / question tools — agent needs user input.
+		for _, name := range lastToolNames {
+			nameLower := strings.ToLower(name)
+			if nameLower == "ask_permission" || nameLower == "ask_question" {
+				callback("waiting_input", name, "", userPrompt)
+				return
+			}
+		}
+		// Planner issued tool calls; tool results not yet written → executing.
+		callback("executing", lastToolNames[0], "", userPrompt)
+
+	default:
+		if permissionStepTypes[lastType] {
+			// The permission/question tool itself just completed — still need input
+			// until the next PLANNER_RESPONSE is written.
+			callback("waiting_input", strings.ToLower(lastType), "", userPrompt)
+			return
+		}
+		if toolStepTypes[lastType] {
+			// A tool result was just written; the planner is about to respond.
+			callback("thinking", "", "", userPrompt)
+			return
+		}
+		// Unknown step type — stay thinking.
+		callback("thinking", "", "", userPrompt)
+	}
+}
+
+// extractAntigravityPrompt strips XML-style wrapper tags inserted by the
+// Antigravity runtime (e.g. <USER_REQUEST>…</USER_REQUEST>) and returns the
+// clean prompt text for display in the KanbanBoard card.
+func extractAntigravityPrompt(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	// Remove opening tag
+	if idx := strings.Index(s, ">"); idx != -1 && strings.HasPrefix(s, "<") {
+		s = strings.TrimSpace(s[idx+1:])
+	}
+	// Remove closing tag
+	if idx := strings.LastIndex(s, "</"); idx != -1 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	// Trim to a reasonable preview length
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
