@@ -17,7 +17,7 @@ func init() {
 	agent.RegisterStatusWatcher("copilot", &CopilotWatcher{})
 }
 
-func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
+func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -49,7 +49,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			}
 			lastDBMod = info.ModTime()
 			if copilotSessionID == "" {
-				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID)
+				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID, resume)
 			}
 			if copilotSessionID != "" {
 				w.parseCopilotDB(dbPath, cwd, copilotSessionID, callback)
@@ -63,7 +63,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 // watcherStart) and returns the id of the most recent one that is not already
 // claimed by another watcher of the same agent type+cwd. When a session is
 // found it is immediately claimed.
-func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string) string {
+func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return ""
@@ -105,9 +105,14 @@ func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Ti
 	}
 
 	for _, r := range candidates {
-		if t, err := time.Parse(time.RFC3339, r.updatedAt); err == nil {
-			if !t.After(watcherStart) {
-				continue
+		// On resume, skip the recency filter — the session may predate the
+		// watcher. On fresh start, only match sessions started after the
+		// watcher launched to avoid grabbing a stale session.
+		if !resume {
+			if t, err := time.Parse(time.RFC3339, r.updatedAt); err == nil {
+				if !t.After(watcherStart) {
+					continue
+				}
 			}
 		}
 		if ClaimSession(agentID, cwd, r.id) {

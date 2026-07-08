@@ -28,14 +28,21 @@ type PiBlock struct {
 	Name string `json:"name,omitempty"` // tool name
 }
 
-func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
 	const agentID = "pi"
-	lastCheck := time.Now().Add(-1 * time.Second)
+	// On resume (--continue / -c), the agent reattaches to a pre-existing
+	// session whose log file may predate this watcher. Widen the search
+	// window to 1 hour so the resumed session is found.
+	lookback := 1 * time.Second
+	if resume {
+		lookback = 1 * time.Hour
+	}
+	lastCheck := time.Now().Add(-lookback)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
