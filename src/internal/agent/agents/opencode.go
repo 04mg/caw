@@ -127,9 +127,6 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 		var p openCodePart
 		if json.Unmarshal([]byte(firstTextPartData), &p) == nil && p.Text != "" {
 			userPrompt = p.Text
-			if len(userPrompt) > 200 {
-				userPrompt = userPrompt[:200] + "…"
-			}
 		}
 	}
 	// Fallback: session_input table (populated in some OpenCode versions).
@@ -138,10 +135,8 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, callback fu
 			`SELECT prompt FROM session_input WHERE session_id = ? ORDER BY time_created ASC LIMIT 1`,
 			openCodeSessionID,
 		).Scan(&userPrompt)
-		if len(userPrompt) > 200 {
-			userPrompt = userPrompt[:200] + "…"
-		}
 	}
+	userPrompt = CleanPrompt(userPrompt)
 
 	// Determine the current state by inspecting the most recent part.
 	// Parts are fine-grained events: step-start, tool (with running/completed state),

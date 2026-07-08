@@ -170,7 +170,7 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		case "USER_INPUT":
 			// The content field holds the raw user message (may include XML
 			// wrapper tags — strip them for display).
-			p := extractAntigravityPrompt(step.Content)
+			p := CleanPrompt(step.Content)
 			if p != "" {
 				userPrompt = p
 			}
@@ -231,25 +231,3 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	}
 }
 
-// extractAntigravityPrompt strips XML-style wrapper tags inserted by the
-// Antigravity runtime (e.g. <USER_REQUEST>…</USER_REQUEST>) and returns the
-// clean prompt text for display in the KanbanBoard card.
-func extractAntigravityPrompt(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return ""
-	}
-	// Remove opening tag
-	if idx := strings.Index(s, ">"); idx != -1 && strings.HasPrefix(s, "<") {
-		s = strings.TrimSpace(s[idx+1:])
-	}
-	// Remove closing tag
-	if idx := strings.LastIndex(s, "</"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	// Trim to a reasonable preview length
-	if len(s) > 200 {
-		s = s[:200] + "…"
-	}
-	return s
-}
