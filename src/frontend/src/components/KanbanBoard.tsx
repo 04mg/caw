@@ -1,16 +1,16 @@
 import { useLayoutEffect, useRef, useEffect, useState } from 'react'
 import { 
   Coffee, 
-  Folder, 
   Clock, 
   Terminal,
   ChevronRight,
   Sparkles,
   Construction,
-  Briefcase
+  Briefcase,
+  Workflow
 } from 'lucide-react'
 import { type Workspace } from '@/lib/workspaceStore'
-import { collectLeafIds } from '@/lib/layout'
+import { collectLeafIds, getLeaf } from '@/lib/layout'
 import { agentTypes } from '@/lib/agentTypes'
 import { subscribeAgentStatuses, loadInitialStatuses, type AgentStatus } from '@/lib/agentStatusStore'
 
@@ -110,12 +110,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         const tab = ws.layouts[tabIdx]
         const leafIds = collectLeafIds(tab.layout)
         if (leafIds.includes(sessionId)) {
+          const leaf = getLeaf(tab.layout, sessionId)
           return {
             workspaceId: ws.id,
             workspaceName: ws.name || ws.path || 'Workspace',
             workspaceEmoji: ws.emoji || '💼',
             tabIndex: tabIdx,
             paneId: sessionId,
+            agentBranch: leaf?.agentBranch,
           }
         }
       }
@@ -264,11 +266,19 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         {/* Card Footer - Workspace and Clock */}
         <div className="flex items-center justify-between border-t border-border/20 pt-2.5 text-[11px] text-muted-foreground z-10">
           {wsDetails ? (
-            <div className="flex items-center gap-1 hover:text-foreground transition-colors max-w-[70%]">
-              <Folder className="w-3 h-3 text-muted-foreground/70 shrink-0" />
+            <div className="flex items-center gap-1.5 hover:text-foreground transition-colors max-w-[70%]">
               <span className="truncate">
                 {wsDetails.workspaceEmoji} {wsDetails.workspaceName}
               </span>
+              {wsDetails.agentBranch && (
+                <>
+                  <span className="text-border select-none">·</span>
+                  <span className="flex items-center gap-1 text-foreground/70 shrink-0">
+                    <Workflow className="w-3 h-3 text-violet-400" />
+                    <span className="font-mono text-[10px] truncate max-w-[120px]">{wsDetails.agentBranch}</span>
+                  </span>
+                </>
+              )}
             </div>
           ) : (
             <span className="text-muted-foreground/50 italic">Unknown Workspace</span>
