@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/lib/utils'
 
@@ -271,9 +271,9 @@ export function StatusBar({ workspaceName, worktreeBranch, onOpenSettings }: Sta
 	return (
 		<div className="h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans">
 			<div className="flex items-center gap-2">
-				<div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+				<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 				<span className="font-medium text-foreground/80">
-					{workspaceName ? `Workspace: ${workspaceName}` : 'Ready'}
+					{workspaceName || 'Ready'}
 				</span>
 				{worktreeBranch && (
 					<>
