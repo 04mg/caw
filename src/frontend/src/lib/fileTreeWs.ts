@@ -14,7 +14,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  ws = new WebSocket(`${protocol}//${location.host}/ws/workspace/files`)
+  ws = new WebSocket(`${protocol}//${location.host}/ws/workspaces/files`)
 
   ws.onopen = () => {
     if (subscribedPath) {

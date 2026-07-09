@@ -163,7 +163,7 @@ export function AppLayout() {
       return
     }
     try {
-      const res = await fetch(`/api/git/status?path=${encodeURIComponent(currentWorkspacePath)}`)
+      const res = await fetch(`/api/git/statuses?path=${encodeURIComponent(currentWorkspacePath)}`)
       if (res.ok) {
         const data = await res.json()
         setGitStatuses(data)
@@ -237,7 +237,11 @@ export function AppLayout() {
         e.preventDefault()
         e.stopPropagation()
         try {
-          const res = await fetch('/api/workspace/undo', { method: 'POST' })
+          const res = await fetch('/api/workspaces/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'undo' }),
+          })
           if (res.ok) {
             fetchGitStatus()
           }
@@ -246,7 +250,11 @@ export function AppLayout() {
         e.preventDefault()
         e.stopPropagation()
         try {
-          const res = await fetch('/api/workspace/redo', { method: 'POST' })
+          const res = await fetch('/api/workspaces/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'redo' }),
+          })
           if (res.ok) {
             fetchGitStatus()
           }
@@ -325,7 +333,7 @@ export function AppLayout() {
 
     if (agentId) {
       try {
-        const res = await fetch('/api/agents/setup-workspace', {
+        const res = await fetch('/api/agents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -410,15 +418,9 @@ export function AppLayout() {
         let uncommitted = false
         let unmerged = false
         try {
-          const res = await fetch('/api/agents/check-changes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              worktreePath: firstLeaf.cwd,
-              branchName: firstLeaf.agentBranch,
-              baseBranch: firstLeaf.baseBranch,
-            }),
-          })
+          const res = await fetch(
+            `/api/agents/changes?worktreePath=${encodeURIComponent(firstLeaf.cwd || '')}&branchName=${encodeURIComponent(firstLeaf.agentBranch || '')}&baseBranch=${encodeURIComponent(firstLeaf.baseBranch || '')}`,
+          )
           if (res.ok) {
             const data = await res.json()
             uncommitted = !!data.hasUncommitted
@@ -587,15 +589,9 @@ export function AppLayout() {
         let uncommitted = false
         let unmerged = false
         try {
-          const res = await fetch('/api/agents/check-changes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              worktreePath: leaf.cwd,
-              branchName: leaf.agentBranch,
-              baseBranch: leaf.baseBranch,
-            }),
-          })
+          const res = await fetch(
+            `/api/agents/changes?worktreePath=${encodeURIComponent(leaf.cwd || '')}&branchName=${encodeURIComponent(leaf.agentBranch || '')}&baseBranch=${encodeURIComponent(leaf.baseBranch || '')}`,
+          )
           if (res.ok) {
             const data = await res.json()
             uncommitted = !!data.hasUncommitted
@@ -624,7 +620,7 @@ export function AppLayout() {
     async (path: string, name: string, emoji: string) => {
       let absPath = path
       try {
-        const res = await fetch(`/api/workspace/open?path=${encodeURIComponent(path)}`)
+        const res = await fetch(`/api/workspaces/details?path=${encodeURIComponent(path)}`)
         if (res.ok) {
           const data = await res.json()
           absPath = data.path || path

@@ -13,9 +13,9 @@ import (
 )
 
 func Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/git/status", handleStatus)
-	mux.HandleFunc("/api/git/diff", handleDiff)
-	mux.HandleFunc("/api/git/original", handleOriginal)
+	mux.HandleFunc("GET /api/git/statuses", handleStatus)
+	mux.HandleFunc("GET /api/git/diffs", handleDiff)
+	mux.HandleFunc("GET /api/git/originals", handleOriginal)
 }
 
 var (

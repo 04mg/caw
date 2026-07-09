@@ -12,7 +12,7 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 func RegisterWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/workspace/files", handleWS)
+	mux.HandleFunc("/ws/workspaces/files", handleWS)
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {

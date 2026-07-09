@@ -44,7 +44,7 @@ type CheckChangesResponse struct {
 }
 
 func Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/agents/available", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/agents", func(w http.ResponseWriter, r *http.Request) {
 		agentsList := []Info{
 			{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}},
 			{ID: "codex", Label: "Codex CLI", Cmd: []string{"codex", "--sandbox", "workspace-write", "--ask-for-approval", "never"}},
@@ -62,11 +62,7 @@ func Register(mux *http.ServeMux) {
 		httputil.WriteJSON(w, available)
 	})
 
-	mux.HandleFunc("/api/agents/setup-workspace", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	mux.HandleFunc("POST /api/agents", func(w http.ResponseWriter, r *http.Request) {
 		var req SetupWorkspaceRequest
 		if err := httputil.ReadJSON(r, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -140,33 +136,27 @@ func Register(mux *http.ServeMux) {
 		})
 	})
 
-	mux.HandleFunc("/api/agents/check-changes", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req CheckChangesRequest
-		if err := httputil.ReadJSON(r, &req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	mux.HandleFunc("GET /api/agents/changes", func(w http.ResponseWriter, r *http.Request) {
+		worktreePath := r.URL.Query().Get("worktreePath")
+		branchName := r.URL.Query().Get("branchName")
+		baseBranch := r.URL.Query().Get("baseBranch")
 
-		if req.WorktreePath == "" {
+		if worktreePath == "" {
 			http.Error(w, "worktreePath required", http.StatusBadRequest)
 			return
 		}
 
 		// Check for uncommitted changes
 		cmdStatus := exec.Command("git", "status", "--porcelain", "-u")
-		cmdStatus.Dir = req.WorktreePath
+		cmdStatus.Dir = worktreePath
 		statusOut, err := cmdStatus.Output()
 		hasUncommitted := err == nil && len(strings.TrimSpace(string(statusOut))) > 0
 
 		// Check for unmerged commits
 		hasUnmergedCommits := false
-		if req.BaseBranch != "" && req.BranchName != "" {
-			cmdLog := exec.Command("git", "log", fmt.Sprintf("%s..%s", req.BaseBranch, req.BranchName), "--oneline")
-			cmdLog.Dir = req.WorktreePath
+		if baseBranch != "" && branchName != "" {
+			cmdLog := exec.Command("git", "log", fmt.Sprintf("%s..%s", baseBranch, branchName), "--oneline")
+			cmdLog.Dir = worktreePath
 			logOut, err := cmdLog.Output()
 			hasUnmergedCommits = err == nil && len(strings.TrimSpace(string(logOut))) > 0
 		}

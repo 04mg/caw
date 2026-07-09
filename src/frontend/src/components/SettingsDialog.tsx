@@ -146,7 +146,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   ) => {
     try {
       await fetch('/api/quotas/settings', {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           antigravity: { apiKey: agKey },
@@ -167,7 +167,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     try {
       setCopilotDeviceFlow('waiting')
       setCopilotDeviceError('')
-      const res = await fetch('/api/quotas/copilot/device-login', { method: 'POST' })
+      const res = await fetch('/api/quotas/copilot/device-codes', { method: 'POST' })
       if (!res.ok) {
         const text = await res.text()
         throw new Error(text || 'Failed to initiate device login')
@@ -189,11 +189,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const pollCopilotDeviceToken = useCallback(async () => {
     if (!copilotDeviceCode) return
     try {
-      const res = await fetch('/api/quotas/copilot/device-poll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_code: copilotDeviceCode }),
-      })
+      const res = await fetch(`/api/quotas/copilot/device-codes/${encodeURIComponent(copilotDeviceCode)}`)
       if (!res.ok) {
         const text = await res.text()
         throw new Error(text || 'Poll failed')
