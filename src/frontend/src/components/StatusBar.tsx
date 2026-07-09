@@ -296,15 +296,15 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			) : (
 				<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
 			)}
-			<span className="font-medium text-[11px] text-foreground/80">
+			<span className="text-[11px] font-sans text-muted-foreground">
 				{workspaceName || 'Ready'}
 			</span>
 			{worktreeBranch && (
 				<>
 					<span className="text-border select-none">·</span>
-					<span className="flex items-center gap-1 text-foreground/70">
+					<span className="flex items-center gap-1 text-muted-foreground">
 						<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
-						<span className="font-mono text-[11px]">{worktreeBranch}</span>
+						<span className="text-[11px] font-sans">{worktreeBranch}</span>
 					</span>
 				</>
 			)}
