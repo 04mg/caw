@@ -186,6 +186,22 @@ func ReadFileHead(filePath string, maxBytes int64) (string, error) {
 	return string(buf[:n]), nil
 }
 
+func stripXMLTag(s, openTagPrefix, closeTag string) string {
+	for {
+		start := strings.Index(s, openTagPrefix)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], closeTag)
+		if end == -1 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[start+end+len(closeTag):]
+	}
+	return s
+}
+
 // CleanPrompt sanitizes the prompt by removing system/XML tags, collapsing
 // newlines and multiple spaces to keep it clean for UI rendering,
 // and truncating to a reasonable preview length.
@@ -200,7 +216,23 @@ func CleanPrompt(raw string) string {
 		s = s[:idx]
 	}
 
-	// 2. Truncate at other metadata/system block boundaries.
+	// 2. Strip system XML blocks
+	s = stripXMLTag(s, "<skill", "</skill>")
+	s = stripXMLTag(s, "<user_rules", "</user_rules>")
+	s = stripXMLTag(s, "<RULE", "</RULE")
+	s = stripXMLTag(s, "<user_information", "</user_information>")
+	s = stripXMLTag(s, "<mcp_servers", "</mcp_servers>")
+	s = stripXMLTag(s, "<web_application_development", "</web_application_development>")
+	s = stripXMLTag(s, "<skills", "</skills>")
+	s = stripXMLTag(s, "<subagents", "</subagents>")
+	s = stripXMLTag(s, "<messaging", "</messaging>")
+	s = stripXMLTag(s, "<conversation_transcript", "</conversation_transcript>")
+	s = stripXMLTag(s, "<artifacts", "</artifacts>")
+	s = stripXMLTag(s, "<slash_commands", "</slash_commands>")
+	s = stripXMLTag(s, "<guidelines", "</guidelines>")
+	s = stripXMLTag(s, "<communication_style", "</communication_style>")
+
+	// 3. Truncate at other metadata/system block boundaries.
 	tags := []string{
 		"<ADDITIONAL_METADATA>",
 		"<user_information>",

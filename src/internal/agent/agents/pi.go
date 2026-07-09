@@ -35,10 +35,8 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
 	const agentID = "pi"
-	// On resume (--continue / -c), the agent reattaches to a pre-existing
-	// session whose log file may predate this watcher. Widen the search
-	// window to 1 hour so the resumed session is found.
-	lookback := 1 * time.Second
+	// Increase lookback to 5 minutes to avoid clock skew / file creation delay issues
+	lookback := 5 * time.Minute
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -64,6 +62,14 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					cleanCwd := filepath.Clean(cwd)
 					projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
 					targetDir := filepath.Join(dir, projDir)
+					// Handle alternative trailing slash format `--root-caw--`
+					if _, err := os.Stat(targetDir); err != nil {
+						projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
+						targetDirAlt := filepath.Join(dir, projDirAlt)
+						if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
+							targetDir = targetDirAlt
+						}
+					}
 					if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
 						searchDir = targetDir
 					}
@@ -135,13 +141,15 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 			if msg.Role == "user" {
 				for _, b := range msg.Content {
 					if b.Type == "text" && b.Text != "" && sessionTitle == "" {
-						sessionTitle = b.Text
+						cleaned := CleanPrompt(b.Text)
+						if cleaned != "" {
+							sessionTitle = cleaned
+						}
 					}
 				}
 			}
 		}
 	}
-	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Reverse pass: determine current status from the last meaningful entry.
 	for i := len(lines) - 1; i >= 0; i-- {
