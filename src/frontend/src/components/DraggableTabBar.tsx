@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type PointerEvent } from 'react'
-import { Terminal, Plus, X, GitBranch, FileCode } from 'lucide-react'
+import { Terminal, Plus, X, GitBranch, FileCode, Workflow } from 'lucide-react'
 import { agentTypes, getEffectiveAgentCmd } from '@/lib/agentTypes'
 import {
   DropdownMenu,
@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { Checkbox } from '@/components/ui/checkbox'
 
 interface TabItem {
   id: string
@@ -24,6 +25,8 @@ interface DraggableTabBarProps {
   onClose: (index: number) => void
   onReorder: (from: number, to: number) => void
   onAdd: (cmd?: string[], agentId?: string, label?: string) => void
+  enableWorktrees?: boolean
+  onToggleWorktrees?: () => void
 }
 
 export function DraggableTabBar({
@@ -33,6 +36,8 @@ export function DraggableTabBar({
   onClose,
   onReorder,
   onAdd,
+  enableWorktrees,
+  onToggleWorktrees,
 }: DraggableTabBarProps) {
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
@@ -202,6 +207,24 @@ export function DraggableTabBar({
               </>
             )
           })()}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault()
+              onToggleWorktrees?.()
+            }}
+            className="flex items-center justify-between w-full cursor-pointer gap-4"
+          >
+            <div className="flex items-center gap-2">
+              <Workflow className={enableWorktrees ? 'lava-lamp-icon h-4 w-4' : 'h-4 w-4 opacity-50'} />
+              <span className={enableWorktrees ? 'lava-lamp-text' : ''}>Worktrees</span>
+            </div>
+            <Checkbox
+              checked={enableWorktrees}
+              onChange={() => onToggleWorktrees?.()}
+              className={enableWorktrees ? 'lava-lamp-checkbox' : ''}
+            />
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </>

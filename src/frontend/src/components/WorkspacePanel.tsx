@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
-import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2 } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2, FolderPlus, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspacePickerDialog } from '@/components/WorkspacePickerDialog'
@@ -22,6 +22,7 @@ interface WorkspacePanelProps {
   noHeader?: boolean
   pickerOpen?: boolean
   onPickerOpenChange?: (open: boolean) => void
+  onOpenSettings?: () => void
 }
 
 export function WorkspacePanel({
@@ -37,6 +38,7 @@ export function WorkspacePanel({
   noHeader,
   pickerOpen: externalPickerOpen,
   onPickerOpenChange,
+  onOpenSettings,
 }: WorkspacePanelProps) {
   const [internalPickerOpen, setInternalPickerOpen] = useState(false)
   const pickerOpen = externalPickerOpen ?? internalPickerOpen
@@ -48,6 +50,7 @@ export function WorkspacePanel({
   const dragStartYRef = useRef(0)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
+  const [generalContextMenu, setGeneralContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -55,6 +58,13 @@ export function WorkspacePanel({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
+
+  useEffect(() => {
+    if (!generalContextMenu) return
+    const onDown = () => setGeneralContextMenu(null)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [generalContextMenu])
 
   const handleChoose = useCallback(
     (path: string, name: string, emoji: string) => {
@@ -125,7 +135,14 @@ export function WorkspacePanel({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0 workspace-panel" style={{ width: 44 }}>
+      <div
+        className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0 workspace-panel"
+        style={{ width: 44 }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setGeneralContextMenu({ x: e.clientX, y: e.clientY })
+        }}
+      >
         <div className="flex items-center justify-center border-b border-border h-[33px] select-none bg-background">
           <Button
             variant="ghost"
@@ -197,7 +214,13 @@ export function WorkspacePanel({
   }
 
   return (
-    <div className="flex h-full flex-col bg-background select-none workspace-panel">
+    <div
+      className="flex h-full flex-col bg-background select-none workspace-panel"
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setGeneralContextMenu({ x: e.clientX, y: e.clientY })
+      }}
+    >
       {!noHeader && (
         <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
           <Button
@@ -298,6 +321,32 @@ export function WorkspacePanel({
             >
               <Trash2 className="h-3.5 w-3.5" />
               Delete workspace
+            </button>
+          </div>
+        )
+      })()}
+
+      {generalContextMenu && (() => {
+        return (
+          <div
+            className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
+            style={{ left: generalContextMenu.x, top: generalContextMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setPickerOpen(true) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              New Workspace
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); onOpenSettings?.() }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Settings
             </button>
           </div>
         )

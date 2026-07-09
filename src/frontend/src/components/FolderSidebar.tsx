@@ -326,7 +326,7 @@ export function FolderSidebar({
                 <FolderPlus className="h-3.5 w-3.5" />
                 New Folder
               </button>
-              <div className="border-t border-border my-0.5" />
+              {!contextMenu.isRoot && <div className="border-b border-border my-1 mx-1" />}
             </>
           )}
           {!contextMenu.isRoot && (
