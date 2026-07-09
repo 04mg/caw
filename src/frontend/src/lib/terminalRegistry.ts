@@ -41,7 +41,7 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promi
     const customShell = localStorage.getItem('caw:defaultShell')
     if (customShell) cmd = [customShell]
   }
-  const res = await fetch('/api/terminal/create', {
+  const res = await fetch('/api/terminals', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: leafId, cwd: cwd || '', cmd }),
@@ -183,7 +183,7 @@ function flushPending(inst: TerminalInstance) {
 
 function connectWs(inst: TerminalInstance, backendId: string) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${backendId}`)
+  const ws = new WebSocket(`${protocol}//${location.host}/ws/terminals/${backendId}`)
   inst.ws = ws
 
   ws.onopen = () => {
@@ -324,10 +324,8 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   notify()
-  fetch('/api/terminal/kill', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: leafId, deleteBranch }),
+  fetch(`/api/terminals/${encodeURIComponent(leafId)}${deleteBranch ? '?deleteBranch=true' : ''}`, {
+    method: 'DELETE',
   }).catch(() => {})
 }
 

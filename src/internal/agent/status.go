@@ -101,9 +101,9 @@ func RegisterStatusWatcher(agentID string, w StatusWatcher) {
 	watchersMu.Unlock()
 }
 
-// RegisterStatusWS registers the /ws/agent-status endpoint
+// RegisterStatusWS registers the /ws/agents/statuses endpoint
 func RegisterStatusWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/agent-status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ws/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
 		c, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -148,7 +148,7 @@ func RegisterStatusWS(mux *http.ServeMux) {
 	})
 
 	// Also expose standard HTTP GET for current status list
-	mux.HandleFunc("/api/agents/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
 		statusesMu.RLock()
 		list := make([]AgentStatus, 0, len(statuses))
 		for _, s := range statuses {

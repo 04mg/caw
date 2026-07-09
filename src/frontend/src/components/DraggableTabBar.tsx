@@ -37,7 +37,7 @@ export function DraggableTabBar({
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
   useEffect(() => {
-    fetch('/api/agents/available')
+    fetch('/api/agents')
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {

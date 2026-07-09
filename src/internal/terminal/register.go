@@ -33,7 +33,7 @@ var (
 )
 
 func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync.RWMutex, upgrader *websocket.Upgrader, store *state.Store) {
-	mux.HandleFunc("/api/terminal/create", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/terminals", func(w http.ResponseWriter, r *http.Request) {
 		var req CreateRequest
 		if err := httputil.ReadJSON(r, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -161,8 +161,8 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		httputil.WriteJSON(w, map[string]string{"id": id})
 	})
 
-	mux.HandleFunc("/ws/terminal/", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Path[len("/ws/terminal/"):]
+	mux.HandleFunc("/ws/terminals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
 		sessionsMu.RLock()
 		sess, ok := sessions[id]
 		sessionsMu.RUnlock()
@@ -263,23 +263,16 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		}
 	})
 
-	mux.HandleFunc("/api/terminal/kill", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req KillRequest
-		if err := httputil.ReadJSON(r, &req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	mux.HandleFunc("DELETE /api/terminals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		deleteBranch := r.URL.Query().Get("deleteBranch") == "true"
 		sessionsMu.Lock()
-		sess, ok := sessions[req.ID]
+		sess, ok := sessions[id]
 		if ok {
-			if req.DeleteBranch {
+			if deleteBranch {
 				sess.DeleteBranch = true
 			}
-			delete(sessions, req.ID)
+			delete(sessions, id)
 		}
 		sessionsMu.Unlock()
 		if !ok {
@@ -292,7 +285,7 @@ func Register(mux *http.ServeMux, sessions map[string]*Session, sessionsMu *sync
 		// that reuses this leafId) starts a fresh agent instead of resuming a
 		// session the user intended to discard.
 		if store != nil {
-			store.ClearAgentSession(req.ID)
+			store.ClearAgentSession(id)
 		}
 		w.WriteHeader(http.StatusOK)
 	})

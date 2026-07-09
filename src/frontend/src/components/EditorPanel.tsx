@@ -97,7 +97,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setLoading(true)
         setError(null)
         try {
-          const res = await fetch(`/api/git/diff?path=${encodeURIComponent(cwd)}`)
+          const res = await fetch(`/api/git/diffs?path=${encodeURIComponent(cwd)}`)
           if (res.ok) {
             const text = await res.text()
             setContent(text)
@@ -121,8 +121,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       if (isDiff) {
         // Fetch both original (from git HEAD) and current modified file content
         const [resOrig, resCurr] = await Promise.all([
-          fetch(`/api/git/original?path=${encodeURIComponent(filePath)}`),
-          fetch(`/api/workspace/file/read?path=${encodeURIComponent(filePath)}`),
+          fetch(`/api/git/originals?path=${encodeURIComponent(filePath)}`),
+          fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`),
         ])
 
         const origText = resOrig.ok ? await resOrig.text() : ''
@@ -132,7 +132,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setEditedContent(currText)
       } else {
         // Normal file read
-        const res = await fetch(`/api/workspace/file/read?path=${encodeURIComponent(filePath)}`)
+        const res = await fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`)
         if (res.ok) {
           const text = await res.text()
           setContent(text)
@@ -158,8 +158,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     setSaving(true)
     setSaveStatus('idle')
     try {
-      const res = await fetch('/api/workspace/file/write', {
-        method: 'POST',
+      const res = await fetch('/api/workspaces/files', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           path: filePath,

@@ -29,7 +29,7 @@ let statusWs: WebSocket | null = null
 function ensureWs() {
   if (statusWs) return
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  statusWs = new WebSocket(`${protocol}//${location.host}/ws/agent-status`)
+  statusWs = new WebSocket(`${protocol}//${location.host}/ws/agents/statuses`)
 
   statusWs.onmessage = (e) => {
     try {
@@ -87,7 +87,7 @@ export function subscribeAgentStatuses(cb: AgentStatusListener): () => void {
 
 export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>> {
   try {
-    const res = await fetch('/api/agents/status')
+    const res = await fetch('/api/agents/statuses')
     if (!res.ok) return {}
     const list = await res.json() as AgentStatus[]
     const next: Record<string, AgentStatus> = {}

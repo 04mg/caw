@@ -86,8 +86,8 @@ export function FolderSidebar({
     const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
     const newPath = parentDir + sep + newName
     try {
-      const res = await fetch('/api/workspace/file/rename', {
-        method: 'POST',
+      const res = await fetch('/api/workspaces/files', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldPath, newPath }),
       })
@@ -106,7 +106,7 @@ export function FolderSidebar({
     const newPath = parentPath + sep + name
     setCreateTarget(null)
     try {
-      await fetch('/api/workspace/file/create', {
+      await fetch('/api/workspaces/files', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: newPath, type }),
@@ -123,8 +123,8 @@ export function FolderSidebar({
     setDeleteTarget(null)
     setBusy(true)
     try {
-      await fetch('/api/workspace/file/delete', {
-        method: 'POST',
+      await fetch('/api/workspaces/files', {
+        method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: target.path }),
       })
@@ -145,7 +145,7 @@ export function FolderSidebar({
     setContextMenu(null)
     setBusy(true)
     try {
-      await fetch('/api/workspace/file/paste', {
+      await fetch('/api/workspaces/files', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourcePath: src, targetDir }),
@@ -164,7 +164,7 @@ export function FolderSidebar({
       formData.append('targetDir', targetDir)
       formData.append('file', file)
       try {
-        await fetch('/api/workspace/file/upload', { method: 'POST', body: formData })
+        await fetch('/api/workspaces/files', { method: 'POST', body: formData })
       } catch { /* ignore */ }
     }
     triggerRefresh()
@@ -359,7 +359,7 @@ export function FolderSidebar({
           {!contextMenu.isDir && (
             <>
               <button
-                onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspace/file/download?path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -527,7 +527,7 @@ function LazyFileNode({
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/workspace/list-all?path=${encodeURIComponent(path)}`)
+      const res = await fetch(`/api/workspaces/contents?path=${encodeURIComponent(path)}`)
       if (res.ok) {
         const arr = await res.json()
         if (Array.isArray(arr)) {

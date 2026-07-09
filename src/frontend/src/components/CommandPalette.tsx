@@ -56,7 +56,7 @@ export function CommandPalette({
 
   useEffect(() => {
     if (!open) return
-    fetch('/api/agents/available')
+    fetch('/api/agents')
       .then((r) => r.ok ? r.json() : [])
       .then(setAgents)
       .catch(() => setAgents([]))
@@ -92,7 +92,7 @@ export function CommandPalette({
     clearTimeout(searchTimerRef.current)
     searchTimerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/workspace/search-all?q=${encodeURIComponent(query)}&root=${encodeURIComponent(workspacePath)}`)
+        const res = await fetch(`/api/workspaces/files?q=${encodeURIComponent(query)}&root=${encodeURIComponent(workspacePath)}`)
         if (res.ok) setFileResults(await res.json())
         else setFileResults([])
       } catch {

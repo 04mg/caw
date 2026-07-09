@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,23 +50,77 @@ type PasteRequest struct {
 }
 
 func Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/workspace/open", handleOpenDir)
-	mux.HandleFunc("/api/workspace/tree", handleFileTree)
-	mux.HandleFunc("/api/workspace/list", handleListDir)
-	mux.HandleFunc("/api/workspace/list-all", handleListAll)
-	mux.HandleFunc("/api/workspace/search", handleSearchDirs)
-	mux.HandleFunc("/api/workspace/search-all", handleSearchAll)
-	mux.HandleFunc("/api/workspace/file/read", handleFileRead)
-	mux.HandleFunc("/api/workspace/file/download", handleFileDownload)
-	mux.HandleFunc("/api/workspace/file/write", handleFileWrite)
-	mux.HandleFunc("/api/workspace/file/upload", handleFileUpload)
-	mux.HandleFunc("/api/workspace/file/rename", handleFileRename)
-	mux.HandleFunc("/api/workspace/file/copy", handleFileCopy)
-	mux.HandleFunc("/api/workspace/file/delete", handleFileDelete)
-	mux.HandleFunc("/api/workspace/file/create", handleFileCreate)
-	mux.HandleFunc("/api/workspace/file/paste", handleFilePaste)
-	mux.HandleFunc("/api/workspace/undo", handleUndo)
-	mux.HandleFunc("/api/workspace/redo", handleRedo)
+	mux.HandleFunc("GET /api/workspaces/details", handleOpenDir)
+	mux.HandleFunc("GET /api/workspaces/trees", handleFileTree)
+	mux.HandleFunc("GET /api/workspaces/contents", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("dirs_only") == "true" {
+			handleListDir(w, r)
+		} else {
+			handleListAll(w, r)
+		}
+	})
+	mux.HandleFunc("GET /api/workspaces/directories", handleSearchDirs)
+	mux.HandleFunc("GET /api/workspaces/files", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		path := r.URL.Query().Get("path")
+		if q != "" {
+			handleSearchAll(w, r)
+		} else if path != "" {
+			if r.URL.Query().Get("download") == "true" {
+				handleFileDownload(w, r)
+			} else {
+				handleFileRead(w, r)
+			}
+		} else {
+			http.Error(w, "query parameter q or path required", http.StatusBadRequest)
+		}
+	})
+	mux.HandleFunc("PUT /api/workspaces/files", handleFileWrite)
+	mux.HandleFunc("DELETE /api/workspaces/files", handleFileDelete)
+	mux.HandleFunc("PATCH /api/workspaces/files", handleFileRename)
+	mux.HandleFunc("POST /api/workspaces/files", func(w http.ResponseWriter, r *http.Request) {
+		contentType := r.Header.Get("Content-Type")
+		if strings.HasPrefix(contentType, "multipart/form-data") {
+			handleFileUpload(w, r)
+			return
+		}
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		var data map[string]any
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if _, ok := data["destPath"]; ok {
+			handleFileCopy(w, r)
+		} else if _, ok := data["targetDir"]; ok {
+			handleFilePaste(w, r)
+		} else {
+			handleFileCreate(w, r)
+		}
+	})
+	mux.HandleFunc("POST /api/workspaces/history", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Action string `json:"action"`
+		}
+		if err := httputil.ReadJSON(r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Action == "undo" {
+			handleUndo(w, r)
+		} else if req.Action == "redo" {
+			handleRedo(w, r)
+		} else {
+			http.Error(w, "invalid action: must be 'undo' or 'redo'", http.StatusBadRequest)
+		}
+	})
 }
 
 func handleOpenDir(w http.ResponseWriter, r *http.Request) {
@@ -388,10 +444,6 @@ func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileWrite(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req WriteRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -416,10 +468,6 @@ func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -461,10 +509,6 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileRename(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req RenameRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -530,10 +574,6 @@ func copyDir(src, dst string) error {
 }
 
 func handleFileCopy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req CopyRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -579,14 +619,9 @@ func handleFileCopy(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req DeleteRequest
-	if err := httputil.ReadJSON(r, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	if err := httputil.ReadJSON(r, &req); err != nil || req.Path == "" {
+		req.Path = r.URL.Query().Get("path")
 	}
 	if req.Path == "" {
 		http.Error(w, "path required", http.StatusBadRequest)
@@ -620,10 +655,6 @@ func handleFileDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req CreateRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -676,10 +707,6 @@ func uniquePath(path string) string {
 }
 
 func handleFilePaste(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req PasteRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -734,10 +761,6 @@ func handleFilePaste(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUndo(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	if err := globalHistory.Undo(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -746,10 +769,6 @@ func handleUndo(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleRedo(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	if err := globalHistory.Redo(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
