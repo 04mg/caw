@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+import { Toaster, toast } from 'sonner'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/components/WorkspacePanel'
 import { TerminalGrid } from '@/components/TerminalGrid'
@@ -26,7 +27,7 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight } from 'lucide-react'
+import { Settings, Folder, Workflow, PanelRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -34,6 +35,8 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { StatusBar } from '@/components/StatusBar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Checkbox } from '@/components/ui/checkbox'
+import { subscribeAgentStatuses, type AgentStatus } from '@/lib/agentStatusStore'
+import { agentTypes } from '@/lib/agentTypes'
 
 const kbd =
   'px-1.5 py-0.5 text-xs font-semibold bg-muted text-muted-foreground rounded border border-border font-mono'
@@ -274,6 +277,170 @@ export function AppLayout() {
     },
     [],
   )
+
+  // ─── Agent Status Notifications ──────────────────────────────────────────
+  // Keep a ref to the latest workspaces so the notification callback can
+  // look up workspace/worktree data without capturing stale closure state.
+  const workspacesRef = useRef<Workspace[]>([])
+  useEffect(() => { workspacesRef.current = workspaces }, [workspaces])
+
+  // Ref that tracks the last known AgentStatus per sessionId so we can
+  // detect meaningful transitions (e.g. thinking → waiting_input).
+  const prevStatusesRef = useRef<Record<string, AgentStatus>>({})
+
+  // Refs for the navigate-on-click callback — avoids capturing stale closures
+  // inside the toast custom render function.
+  const setActiveWorkspaceIdRef = useRef(setActiveWorkspaceId)
+  const patchWorkspaceRef = useRef(patchWorkspace)
+  const setAgentBoardOpenRef = useRef(setAgentBoardOpen)
+  useEffect(() => { setActiveWorkspaceIdRef.current = setActiveWorkspaceId }, [setActiveWorkspaceId])
+  useEffect(() => { patchWorkspaceRef.current = patchWorkspace }, [patchWorkspace])
+  useEffect(() => { setAgentBoardOpenRef.current = setAgentBoardOpen }, [setAgentBoardOpen])
+
+  const triggerAgentNotification = useCallback(
+    (agentStatus: AgentStatus, type: 'needs_input' | 'finished') => {
+      const agentDef = agentTypes[agentStatus.agentId]
+      // AgentIcon is a React component — rendered inside the toast custom fn
+      const AgentIcon = agentDef?.icon
+      const agentLabel = agentDef?.label || agentStatus.agentId
+
+      // Find the workspace + tab + pane that owns this sessionId
+      const findDetails = (sessionId: string) => {
+        for (const ws of workspacesRef.current) {
+          for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
+            const tab = ws.layouts[tabIdx]
+            const leafIds = collectLeafIds(tab.layout)
+            if (leafIds.includes(sessionId)) {
+              const leaf = getLeaf(tab.layout, sessionId)
+              return {
+                workspaceId: ws.id,
+                workspaceName: ws.name || ws.path || 'Workspace',
+                workspaceEmoji: ws.emoji || '💼',
+                tabIndex: tabIdx,
+                paneId: sessionId,
+                agentBranch: leaf?.agentBranch,
+              }
+            }
+          }
+        }
+        return null
+      }
+
+      const wsDetails = findDetails(agentStatus.sessionId)
+      const raw = agentStatus.title || ''
+      const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw || 'Unnamed Session'
+
+      toast.custom(
+        (t) => (
+          <div
+            onClick={() => {
+              if (wsDetails) {
+                setActiveWorkspaceIdRef.current(wsDetails.workspaceId)
+                patchWorkspaceRef.current(wsDetails.workspaceId, (ws) => ({
+                  ...ws,
+                  activeTabIndex: wsDetails.tabIndex,
+                  activePaneId: wsDetails.paneId,
+                }))
+                setAgentBoardOpenRef.current(false)
+              }
+              toast.dismiss(t)
+            }}
+            className={`flex flex-col gap-2 p-3.5 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
+              type === 'needs_input'
+                ? 'border-amber-500/30 hover:border-amber-500/50'
+                : 'border-emerald-500/20 hover:border-emerald-500/40'
+            }`}
+          >
+            {/* Header: agent icon + name + status badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`shrink-0 p-1.5 rounded-lg border ${
+                  type === 'needs_input'
+                    ? 'bg-amber-500/10 border-amber-500/20'
+                    : 'bg-emerald-500/10 border-emerald-500/20'
+                }`}>
+                  {AgentIcon
+                    ? <AgentIcon className="w-3.5 h-3.5" />
+                    : <span className="block w-3.5 h-3.5" />
+                  }
+                </div>
+                <span className="font-semibold text-xs text-foreground/90 truncate">
+                  {agentLabel}
+                </span>
+              </div>
+
+              {type === 'needs_input' ? (
+                <div className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] uppercase font-mono tracking-wider font-bold">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+                  </span>
+                  Needs Input
+                </div>
+              ) : (
+                <div className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] uppercase font-mono tracking-wider font-bold">
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                  Finished
+                </div>
+              )}
+            </div>
+
+            {/* Chat title */}
+            <div className="text-[11px] text-foreground/75 font-medium italic pl-2 border-l-2 border-border/50 py-0.5 truncate">
+              {truncatedTitle}
+            </div>
+
+            {/* Workspace / Worktree footer */}
+            <div className={`flex flex-col gap-1 text-[10px] text-muted-foreground/70 border-t pt-2 mt-0.5 ${
+              type === 'needs_input' ? 'border-amber-500/10' : 'border-emerald-500/10'
+            }`}>
+              {wsDetails ? (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <Folder className="w-3 h-3 shrink-0 text-muted-foreground/50" />
+                    <span className="truncate">{wsDetails.workspaceEmoji} {wsDetails.workspaceName}</span>
+                  </div>
+                  {wsDetails.agentBranch && (
+                    <div className="flex items-center gap-1.5">
+                      <Workflow className="w-3 h-3 shrink-0 text-violet-400" />
+                      <span className="font-mono text-[9px] text-violet-400/80 truncate">{wsDetails.agentBranch}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <span className="italic text-muted-foreground/40">Unknown workspace</span>
+              )}
+            </div>
+          </div>
+        ),
+        { duration: 7000 },
+      )
+    },
+    [],
+  )
+
+  // Subscribe to real-time agent status changes and fire toasts on transitions
+  useEffect(() => {
+    const unsub = subscribeAgentStatuses((nextStatuses) => {
+      for (const [sessionId, next] of Object.entries(nextStatuses)) {
+        const prev = prevStatusesRef.current[sessionId]
+        if (prev && prev.status !== next.status) {
+          const prevS = prev.status
+          const nextS = next.status
+          if (nextS === 'waiting_input') {
+            triggerAgentNotification(next, 'needs_input')
+          } else if (
+            (nextS === 'idle' || nextS === 'stopped') &&
+            (prevS === 'thinking' || prevS === 'executing')
+          ) {
+            triggerAgentNotification(next, 'finished')
+          }
+        }
+      }
+      prevStatusesRef.current = nextStatuses
+    })
+    return unsub
+  }, [triggerAgentNotification])
 
   const updateActiveLayout = useCallback(
     (fn: (layout: LayoutNode) => LayoutNode) => {
@@ -1043,6 +1210,14 @@ export function AppLayout() {
           <stop offset="100%" className="lava-stop-3" />
         </linearGradient>
       </svg>
+
+      {/* Agent status toast notifications — positioned above StatusBar */}
+      <Toaster
+        position="bottom-right"
+        visibleToasts={5}
+        gap={8}
+        toastOptions={{ unstyled: true, classNames: { toast: '' } }}
+      />
     </div>
   )
 }
