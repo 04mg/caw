@@ -26,14 +26,13 @@ import {
 import { DraggableTabBar } from '@/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/lib/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Workflow, Check, X } from 'lucide-react'
+import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FolderSidebar } from '@/components/FolderSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { StatusBar } from '@/components/StatusBar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Checkbox } from '@/components/ui/checkbox'
 
 const kbd =
@@ -732,6 +731,8 @@ export function AppLayout() {
       onClose={closeTab}
       onReorder={reorderTabs}
       onAdd={addTab}
+      enableWorktrees={activeWorkspace.enableWorktrees}
+      onToggleWorktrees={toggleWorktrees}
     />
   ) : null
 
@@ -821,6 +822,7 @@ export function AppLayout() {
                 onToggle={toggleSidebar}
                 pickerOpen={pickerOpen}
                 onPickerOpenChange={setPickerOpen}
+                onOpenSettings={() => setSettingsOpen(true)}
               />
             ) : (
               <>
@@ -848,6 +850,7 @@ export function AppLayout() {
                     onToggle={toggleSidebar}
                     pickerOpen={pickerOpen}
                     onPickerOpenChange={setPickerOpen}
+                    onOpenSettings={() => setSettingsOpen(true)}
                   />
                 </Panel>
                 <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
@@ -875,36 +878,7 @@ export function AppLayout() {
                       </Button>
                     </div>
 
-                    {/* Workflow Button (Always Visible when workspace is active) */}
-                    {activeWorkspace && (
-                      <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-                        <Tooltip delayDuration={0}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                              onClick={toggleWorktrees}
-                            >
-                              <Workflow className={activeWorkspace.enableWorktrees ? 'lava-lamp-icon h-3.5 w-3.5' : 'h-3.5 w-3.5 opacity-50'} />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent className="flex items-center select-none">
-                            {activeWorkspace.enableWorktrees ? (
-                              <>
-                                <Check className="h-3.5 w-3.5 text-green-500 mr-1.5 shrink-0" />
-                                <span>Worktrees</span>
-                              </>
-                            ) : (
-                              <>
-                                <X className="h-3.5 w-3.5 text-red-500 mr-1.5 shrink-0" />
-                                <span>Worktrees</span>
-                              </>
-                            )}
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                    )}
+
 
                     {/* Folder Button (Only Visible when Sidebar is Collapsed and workspace is active) */}
                     {activeWorkspace && folderSidebarCollapsed && (
@@ -1025,7 +999,7 @@ export function AppLayout() {
                   <Checkbox
                     id="delete-branch-cb"
                     checked={deleteBranchChecked}
-                    onChange={(e) => setDeleteBranchChecked(e.target.checked)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeleteBranchChecked(e.target.checked)}
                   />
                   <label
                     htmlFor="delete-branch-cb"

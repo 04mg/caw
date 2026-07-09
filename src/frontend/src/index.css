@@ -231,3 +231,31 @@ html, body, #root {
   stroke: url(#lava-gradient) !important;
   filter: drop-shadow(0 0 2px rgba(168, 85, 247, 0.4));
 }
+
+.lava-lamp-text {
+  background: linear-gradient(to right, #a855f7, #ec4899, #3b82f6, #a855f7);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lava-text-anim 6s linear infinite;
+  font-weight: 500;
+}
+
+@keyframes lava-text-anim {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+.lava-lamp-checkbox[data-state="checked"] {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #a855f7, #ec4899, #3b82f6);
+  background-size: 300% 300%;
+  animation: lava-checkbox-anim 6s ease infinite alternate;
+  box-shadow: 0 0 4px rgba(168, 85, 247, 0.5);
+  color: white !important;
+}
+
+@keyframes lava-checkbox-anim {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
