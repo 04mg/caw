@@ -217,7 +217,7 @@ export function FolderSidebar({
   }, [workspacePath, triggerRefresh, onRefresh])
 
   return (
-    <div className="flex h-full flex-col bg-background select-none border-l border-border">
+    <div className="flex h-full flex-col bg-background select-none border-l border-border explorer-sidebar">
       {!noHeader && (
       <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
         <Button
@@ -418,7 +418,7 @@ const SmartContextMenu = React.forwardRef<HTMLDivElement, { x: number; y: number
   return (
     <div
       ref={ref as React.Ref<HTMLDivElement>}
-      className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5"
+      className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
       style={{ left: pos.left, top: pos.top }}
     >
       {children}
