@@ -415,3 +415,27 @@ html, body, #root {
   padding: 4px 8px !important;
   color: hsl(var(--popover-foreground)) !important;
 }
+
+/* ==========================================================================
+   Sonner Toast Notification — Positioning & Forced Animations
+   ========================================================================== */
+
+/* Position container so toasts appear above the 33px StatusBar */
+[data-sonner-toaster][data-y-position='bottom'] {
+  --offset-bottom: 48px !important;
+}
+
+/* Force sonner slide/fade animations even when the user has
+   prefers-reduced-motion: reduce set at the OS level.
+   Without these overrides, sonner CSS resets transitions to
+   "none" inside the reduced-motion media query, making toasts
+   appear/disappear instantly with no animation. */
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toaster] {
+    transition: transform 400ms ease !important;
+  }
+  [data-sonner-toast] {
+    transition: transform 400ms, opacity 400ms, height 400ms, box-shadow 200ms !important;
+    animation: unset !important;
+  }
+}
