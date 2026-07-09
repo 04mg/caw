@@ -125,7 +125,7 @@ export function WorkspacePanel({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0" style={{ width: 44 }}>
+      <div className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0 workspace-panel" style={{ width: 44 }}>
         <div className="flex items-center justify-center border-b border-border h-[33px] select-none bg-background">
           <Button
             variant="ghost"
@@ -161,7 +161,7 @@ export function WorkspacePanel({
           if (!ws) return null
           return (
             <div
-              className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5"
+              className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
               style={{ left: contextMenu.x, top: contextMenu.y }}
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -197,7 +197,7 @@ export function WorkspacePanel({
   }
 
   return (
-    <div className="flex h-full flex-col bg-background select-none">
+    <div className="flex h-full flex-col bg-background select-none workspace-panel">
       {!noHeader && (
         <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
           <Button
@@ -281,7 +281,7 @@ export function WorkspacePanel({
         if (!ws) return null
         return (
           <div
-            className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5"
+            className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
             style={{ left: contextMenu.x, top: contextMenu.y }}
             onMouseDown={(e) => e.stopPropagation()}
           >
