@@ -259,3 +259,139 @@ html, body, #root {
   0% { background-position: 0% 50%; }
   100% { background-position: 100% 50%; }
 }
+
+/* ==========================================================================
+   Monaco Editor overrides to match Shadcn UI context menus & floats
+   ========================================================================== */
+
+/* Context Menu & Widget Containers */
+.context-view.monaco-menu-container {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px !important;
+  font-family: inherit !important;
+  color: hsl(var(--popover-foreground)) !important;
+  min-width: 180px !important;
+}
+
+.monaco-menu .actions-container {
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+/* Individual context menu items */
+.monaco-menu .action-item {
+  display: flex !important;
+  align-items: center !important;
+  border-radius: calc(var(--radius) - 2px) !important;
+  transition: background-color 0.1s ease, color 0.1s ease !important;
+  padding: 4px 8px !important;
+  margin: 0 !important;
+  background-color: transparent !important;
+  height: 28px !important;
+}
+
+.monaco-menu .action-item.focused {
+  background-color: hsl(var(--accent)) !important;
+  color: hsl(var(--accent-foreground)) !important;
+}
+
+.monaco-menu .action-item .action-label {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: hsl(var(--popover-foreground)) !important;
+  padding: 0 !important;
+}
+
+.monaco-menu .action-item.focused .action-label {
+  color: hsl(var(--accent-foreground)) !important;
+}
+
+.monaco-menu .action-item.disabled {
+  opacity: 0.5 !important;
+  pointer-events: none !important;
+}
+
+.monaco-menu .action-item .keybinding {
+  font-size: 10px !important;
+  opacity: 0.6 !important;
+  color: hsl(var(--muted-foreground)) !important;
+  margin-left: auto !important;
+  padding-left: 24px !important;
+}
+
+.monaco-menu .action-item.focused .keybinding {
+  color: hsl(var(--accent-foreground)) !important;
+  opacity: 0.8 !important;
+}
+
+.monaco-menu .action-item.separator {
+  height: 1px !important;
+  background-color: hsl(var(--border)) !important;
+  margin: 4px 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+/* Suggest Widget (Autocomplete popup) */
+.monaco-editor .suggest-widget {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list {
+  background-color: transparent !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list-row {
+  border-radius: calc(var(--radius) - 2px) !important;
+  padding: 0 6px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list-row.focused,
+.monaco-editor .suggest-widget .monaco-list-row:hover {
+  background-color: hsl(var(--accent)) !important;
+  color: hsl(var(--accent-foreground)) !important;
+}
+
+/* Suggestion description details box */
+.monaco-editor .suggest-details {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Hover widgets and Tooltips */
+.monaco-editor .monaco-hover {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 6px 8px !important;
+  color: hsl(var(--popover-foreground)) !important;
+}
+
+.monaco-editor .monaco-hover hr {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* Parameter hints popup */
+.monaco-editor .parameter-hints-widget {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px 8px !important;
+  color: hsl(var(--popover-foreground)) !important;
+}
