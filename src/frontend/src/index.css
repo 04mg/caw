@@ -265,7 +265,9 @@ html, body, #root {
    ========================================================================== */
 
 /* Context Menu & Widget Containers */
-.context-view.monaco-menu-container {
+.context-view,
+.monaco-menu-container,
+.monaco-menu {
   background-color: hsl(var(--popover)) !important;
   border: 1px solid hsl(var(--border)) !important;
   border-radius: var(--radius) !important;
@@ -274,6 +276,19 @@ html, body, #root {
   font-family: inherit !important;
   color: hsl(var(--popover-foreground)) !important;
   min-width: 180px !important;
+}
+
+/* Redefine VS Code theme variables used by Monaco Editor internal styles to align with Shadcn UI */
+.context-view,
+.monaco-menu-container,
+.monaco-menu,
+.monaco-editor {
+  --vscode-menu-background: hsl(var(--popover)) !important;
+  --vscode-menu-foreground: hsl(var(--popover-foreground)) !important;
+  --vscode-menu-border: hsl(var(--border)) !important;
+  --vscode-menu-separatorBackground: hsl(var(--border)) !important;
+  --vscode-menu-selectionBackground: hsl(var(--accent)) !important;
+  --vscode-menu-selectionForeground: hsl(var(--accent-foreground)) !important;
 }
 
 .monaco-menu .actions-container {
@@ -296,19 +311,24 @@ html, body, #root {
   height: 28px !important;
 }
 
-.monaco-menu .action-item.focused {
+.monaco-menu .action-item.focused,
+.monaco-menu .action-item:hover {
   background-color: hsl(var(--accent)) !important;
-  color: hsl(var(--accent-foreground)) !important;
 }
 
+.monaco-menu .action-item .action-menu-item,
 .monaco-menu .action-item .action-label {
   font-size: 12px !important;
   font-weight: 500 !important;
   color: hsl(var(--popover-foreground)) !important;
   padding: 0 !important;
+  text-decoration: none !important;
 }
 
-.monaco-menu .action-item.focused .action-label {
+.monaco-menu .action-item.focused .action-menu-item,
+.monaco-menu .action-item.focused .action-label,
+.monaco-menu .action-item:hover .action-menu-item,
+.monaco-menu .action-item:hover .action-label {
   color: hsl(var(--accent-foreground)) !important;
 }
 

@@ -222,7 +222,8 @@ export function AppLayout() {
         active.tagName === 'TEXTAREA' ||
         active.hasAttribute('contenteditable') ||
         active.getAttribute('contenteditable') === 'true' ||
-        active.classList.contains('inputarea')
+        active.classList.contains('inputarea') ||
+        active.closest('.monaco-editor') !== null
       )
 
       if (isInputActive) {
