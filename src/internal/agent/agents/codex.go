@@ -25,6 +25,13 @@ type CodexLogLine struct {
 type CodexPayload struct {
 	Type    string `json:"type"`
 	Message string `json:"message,omitempty"`
+	// Phase is set on event_msg "agent_message" and response_item "message"
+	// entries: "commentary" (interim thought) or "final_answer" (turn done).
+	Phase string `json:"phase,omitempty"`
+	// Role is set on response_item "message" entries: developer/user/assistant.
+	Role string `json:"role,omitempty"`
+	// Name is the tool name for response_item "function_call" entries.
+	Name string `json:"name,omitempty"`
 }
 
 func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
@@ -114,23 +121,50 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	}
 	sessionTitle = CleanPrompt(sessionTitle)
 
-	// Reverse pass: determine current status from the last meaningful entry.
+	// Codex writes a sequence of entries per turn. The status we report must
+	// reflect the LAST meaningful entry:
+	//
+	//   user_message                      → thinking
+	//   agent_message / message            → interim "commentary" still WORKING,
+	//                                       final_answer → idle (turn complete)
+	//   function_call                      → executing <tool>
+	//   function_call_output               → thinking (waiting for next step)
+	//   task_complete                      → idle (turn definitively done)
+	//
+	// The previous implementation matched any response_item "message" with
+	// role assistant and reported "idle" — but Codex emits many such messages
+	// with phase "commentary" mid-turn, which made the status flicker between
+	// executing and idle. We now treat "commentary" as still working and only
+	// "final_answer" (or an explicit task_complete) as idle.
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine CodexLogLine
 		if err := json.Unmarshal([]byte(lines[i]), &logLine); err != nil {
 			continue
 		}
 
-		if logLine.Payload != nil {
-			p := logLine.Payload
-			switch p.Type {
-			case "user_message":
-				callback("thinking", "", "", sessionTitle)
-				return
-			case "function_call":
-				callback("executing", p.Message, "", sessionTitle)
-				return
-			case "message":
+		if logLine.Payload == nil {
+			continue
+		}
+		p := logLine.Payload
+		switch p.Type {
+		case "task_complete":
+			callback("idle", "", "", sessionTitle)
+			return
+		case "function_call":
+			tool := p.Name
+			if tool == "" {
+				tool = "exec"
+			}
+			callback("executing", tool, "", sessionTitle)
+			return
+		case "function_call_output":
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "user_message":
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "message":
+			if p.Role == "assistant" && p.Phase == "final_answer" {
 				status := "idle"
 				msgLower := strings.ToLower(p.Message)
 				if strings.Contains(msgLower, "[y/n]") ||
@@ -144,6 +178,37 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 				callback(status, "", "", sessionTitle)
 				return
 			}
+			if p.Role == "assistant" && p.Phase == "commentary" {
+				callback("thinking", "", "", sessionTitle)
+				return
+			}
+			if p.Role == "user" {
+				callback("thinking", "", "", sessionTitle)
+				return
+			}
+			// developer/other roles — keep scanning backwards.
+			continue
+		case "agent_message":
+			if p.Phase == "final_answer" {
+				status := "idle"
+				msgLower := strings.ToLower(p.Message)
+				if strings.Contains(msgLower, "[y/n]") ||
+					strings.Contains(msgLower, "[y/N]") ||
+					strings.Contains(msgLower, "[Y/n]") ||
+					strings.Contains(msgLower, "(y/n)") ||
+					strings.Contains(msgLower, "confirm") ||
+					strings.Contains(msgLower, "approve") {
+					status = "waiting_input"
+				}
+				callback(status, "", "", sessionTitle)
+				return
+			}
+			// commentary agent_message — still working.
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "task_started":
+			callback("thinking", "", "", sessionTitle)
+			return
 		}
 	}
 }
