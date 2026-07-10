@@ -343,6 +343,7 @@ export function AppLayout() {
               }
               toast.dismiss(t)
             }}
+            style={{ fontFamily: 'inherit' }}
             className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
               type === 'needs_input'
                 ? 'border-amber-500/30 hover:border-amber-500/50'
@@ -350,14 +351,10 @@ export function AppLayout() {
             }`}
           >
             {/* Large agent icon */}
-            <div className={`shrink-0 flex items-center justify-center w-12 h-12 rounded-xl border ${
-              type === 'needs_input'
-                ? 'bg-amber-500/15 border-amber-500/30'
-                : 'bg-emerald-500/15 border-emerald-500/30'
-            }`}>
+            <div className="shrink-0 flex items-center justify-center w-12 h-12">
               {AgentIcon
-                ? <AgentIcon className={`w-6 h-6 ${type === 'needs_input' ? 'text-amber-400' : 'text-emerald-400'}`} />
-                : <span className="block w-6 h-6" />
+                ? <AgentIcon className="w-12 h-12" />
+                : <span className="block w-12 h-12" />
               }
             </div>
 
@@ -365,7 +362,7 @@ export function AppLayout() {
             <div className="flex flex-col gap-0.5 min-w-0 flex-1">
               {/* Headline: state */}
               <span className={`font-bold text-sm leading-tight ${
-                type === 'needs_input' ? 'text-amber-400' : 'text-emerald-400'
+                type === 'needs_input' ? 'text-amber-400' : 'text-foreground'
               }`}>
                 {type === 'needs_input' ? (
                   <span className="flex items-center gap-1.5">
