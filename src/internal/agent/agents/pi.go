@@ -134,7 +134,7 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		return
 	}
 
-	// Forward pass: collect the first user prompt.
+	// Forward pass: collect the first user prompt (session title).
 	var sessionTitle string
 	for _, line := range lines {
 		if msg, ok := parseOnePiLogLine(line); ok {
@@ -151,56 +151,100 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		}
 	}
 
-	// Reverse pass: determine current status from the last meaningful entry.
-	for i := len(lines) - 1; i >= 0; i-- {
-		msg, ok := parseOnePiLogLine(lines[i])
+	// Forward pass: emit status events for the new log lines.
+	//
+	// When this is the *first* read of the file (offset == 0) we only report
+	// the final state, mirroring the previous reverse-scan behaviour. This
+	// avoids replaying the whole session history as a burst of transitions on
+	// attach/resume (which would make the card flicker through past states).
+	//
+	// For *incremental* reads (offset > 0) we emit a status event for every
+	// state transition so that brief Working phases (Idle -> Working -> Idle)
+	// that complete entirely between two poll cycles are still surfaced to the
+	// UI. The previous implementation scanned the log backwards and only
+	// reported the LAST meaningful entry, so a fast exchange (e.g. "hi there"
+	// -> "hi") that finished within a single 500ms poll window was never seen
+	// leaving Idle.
+	var states []struct{ status, tool string }
+	for _, line := range lines {
+		msg, ok := parseOnePiLogLine(line)
 		if !ok {
 			continue
 		}
+		status, tool := piStatusForMessage(msg)
+		if status == "" {
+			continue
+		}
+		states = append(states, struct{ status, tool string }{status, tool})
+	}
 
-		roleLower := strings.ToLower(msg.Role)
+	if len(states) == 0 {
+		return
+	}
 
-		if roleLower == "user" {
-			callback("thinking", "", "", sessionTitle)
-			return
+	if offset == 0 {
+		// Initial full read: report only the final state.
+		last := states[len(states)-1]
+		callback(last.status, last.tool, "", sessionTitle)
+		return
+	}
+
+	// Incremental read: emit every transition.
+	var lastState string
+	for _, st := range states {
+		state := st.status + "|" + st.tool
+		if state == lastState {
+			continue
+		}
+		lastState = state
+		callback(st.status, st.tool, "", sessionTitle)
+	}
+}
+
+// piStatusForMessage derives the working/idle state represented by a single
+// pi log message. It returns an empty status string when the message does not
+// represent a meaningful state change.
+func piStatusForMessage(msg PiMessage) (status, tool string) {
+	roleLower := strings.ToLower(msg.Role)
+
+	if roleLower == "user" {
+		return "thinking", ""
+	}
+
+	if roleLower == "toolresult" || roleLower == "tool" {
+		return "thinking", ""
+	}
+
+	if roleLower == "assistant" || roleLower == "agent" {
+		var lastToolName string
+		var hasText bool
+		var textContent string
+		for _, b := range msg.Content {
+			if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
+				lastToolName = b.Name
+			} else if b.Type == "text" {
+				hasText = true
+				textContent = b.Text
+			}
 		}
 
-		if roleLower == "toolresult" || roleLower == "tool" {
-			callback("thinking", "", "", sessionTitle)
-			return
+		if lastToolName != "" {
+			return "executing", lastToolName
 		}
-
-		if roleLower == "assistant" || roleLower == "agent" {
-			var lastToolName string
-			var hasText bool
-			var textContent string
-			for _, b := range msg.Content {
-				if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
-					lastToolName = b.Name
-				} else if b.Type == "text" {
-					hasText = true
-					textContent = b.Text
-				}
+		if hasText {
+			status := "idle"
+			textContentLower := strings.ToLower(textContent)
+			if strings.Contains(textContentLower, "[y/n]") ||
+				strings.Contains(textContentLower, "[y/N]") ||
+				strings.Contains(textContentLower, "[Y/n]") ||
+				strings.Contains(textContentLower, "(y/n)") ||
+				strings.Contains(textContentLower, "confirm") ||
+				strings.Contains(textContentLower, "approve") {
+				status = "waiting_input"
 			}
-
-			if lastToolName != "" {
-				callback("executing", lastToolName, "", sessionTitle)
-				return
-			}
-			if hasText {
-				status := "idle"
-				textContentLower := strings.ToLower(textContent)
-				if strings.Contains(textContentLower, "[y/n]") ||
-					strings.Contains(textContentLower, "[y/N]") ||
-					strings.Contains(textContentLower, "[Y/n]") ||
-					strings.Contains(textContentLower, "(y/n)") ||
-					strings.Contains(textContentLower, "confirm") ||
-					strings.Contains(textContentLower, "approve") {
-					status = "waiting_input"
-				}
-				callback(status, "", "", sessionTitle)
-				return
-			}
+			return status, ""
 		}
 	}
+
+	return "", ""
 }
