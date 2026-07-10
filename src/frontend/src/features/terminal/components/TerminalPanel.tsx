@@ -10,6 +10,38 @@ interface TerminalPanelProps {
   isActive?: boolean
 }
 
+function copyToClipboard(text: string): boolean {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch((err) => {
+      console.error('navigator.clipboard error:', err)
+      fallbackCopyToClipboard(text)
+    })
+    return true
+  }
+  return fallbackCopyToClipboard(text)
+}
+
+function fallbackCopyToClipboard(text: string): boolean {
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.style.top = '0'
+  textArea.style.left = '0'
+  textArea.style.position = 'fixed'
+  textArea.style.opacity = '0'
+  document.body.appendChild(textArea)
+  textArea.focus()
+  textArea.select()
+  try {
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textArea)
+    return successful
+  } catch (err) {
+    console.error('Fallback copy failed:', err)
+    document.body.removeChild(textArea)
+    return false
+  }
+}
+
 export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -20,6 +52,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
   isActiveRef.current = isActive
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [savedSelection, setSavedSelection] = useState('')
 
   useEffect(() => {
     const el = elRef.current
@@ -108,21 +141,22 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     }
   }, [contextMenu])
 
+  const inst = getTerminal(terminalId)
+
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
+    let sel = ''
+    if (inst) {
+      sel = inst.term.getSelection()
+    }
+    setSavedSelection(sel)
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
 
-  const inst = getTerminal(terminalId)
-  const hasSelection = inst ? inst.term.hasSelection() : false
-
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (inst) {
-      const text = inst.term.getSelection()
-      if (text) {
-        navigator.clipboard.writeText(text)
-      }
+    if (savedSelection) {
+      copyToClipboard(savedSelection)
     }
     setContextMenu(null)
   }
@@ -131,12 +165,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     e.stopPropagation()
     if (inst) {
       try {
+        if (!navigator.clipboard || !navigator.clipboard.readText) {
+          alert('Clipboard paste is only supported in secure contexts (HTTPS/localhost). Please use Ctrl+V / Cmd+V directly in the terminal.')
+          setContextMenu(null)
+          return
+        }
         const text = await navigator.clipboard.readText()
         if (text && inst.ws?.readyState === WebSocket.OPEN) {
           inst.ws.send(JSON.stringify({ type: 'input', data: text }))
         }
       } catch (err) {
         console.error('Failed to read from clipboard:', err)
+        alert('Could not paste from clipboard. Please allow clipboard access or use Ctrl+V / Cmd+V directly in the terminal.')
       }
     }
     setContextMenu(null)
@@ -152,9 +192,9 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button
             onClick={handleCopy}
-            disabled={!hasSelection}
+            disabled={!savedSelection}
             className={`flex items-center w-full px-3 py-1.5 text-xs text-left cursor-pointer gap-2 ${
-              hasSelection ? 'text-foreground/80 hover:bg-accent hover:text-foreground' : 'text-foreground/30 cursor-not-allowed'
+              savedSelection ? 'text-foreground/80 hover:bg-accent hover:text-foreground' : 'text-foreground/30 cursor-not-allowed'
             }`}
           >
             <Copy size={14} />
