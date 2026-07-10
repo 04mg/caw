@@ -40,6 +40,7 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { Shortcut } from './Shortcut'
+import { Sounds } from '@/features/shared/utils/sounds'
 
 export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
@@ -320,6 +321,13 @@ export function AppLayout() {
       const wsDetails = findDetails(agentStatus.sessionId)
       const raw = agentStatus.title || ''
       const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw || 'Unnamed Session'
+
+      // Play notification sound
+      if (type === 'needs_input') {
+        Sounds.waitingInput()
+      } else {
+        Sounds.finished()
+      }
 
       toast.custom(
         (t) => (
