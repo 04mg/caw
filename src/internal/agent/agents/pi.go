@@ -87,6 +87,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					}
 				}
 			}
+			isFirstRead := lastFileSize == 0
 			if watchedFilePath != "" {
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
@@ -97,7 +98,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 							}
 							callback(status, tool, details, sessionTitle)
 						}
-						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
+						w.parsePiLog(watchedFilePath, lastFileSize, resume && isFirstRead, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -128,7 +129,7 @@ func parseOnePiLogLine(line string) (PiMessage, bool) {
 	return PiMessage{}, false
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) parsePiLog(filePath string, offset int64, isResume bool, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
@@ -182,8 +183,10 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		return
 	}
 
-	if offset == 0 {
-		// Initial full read: report only the final state.
+	if offset == 0 && isResume {
+		// Initial full read for a resumed (old) session: report only the
+		// final state to avoid replaying the whole session history as a
+		// burst of transitions.
 		last := states[len(states)-1]
 		callback(last.status, last.tool, "", sessionTitle)
 		return
