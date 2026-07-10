@@ -351,7 +351,7 @@ export function AppLayout() {
             }`}
           >
             {/* Large agent icon */}
-            <div className="shrink-0 flex items-center justify-center w-12 h-12">
+            <div className="shrink-0 flex items-center justify-center w-12 h-12 pointer-events-none">
               {AgentIcon
                 ? <AgentIcon className="w-12 h-12" />
                 : <span className="block w-12 h-12" />
@@ -359,7 +359,7 @@ export function AppLayout() {
             </div>
 
             {/* Text content */}
-            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <div className="flex flex-col gap-0.5 min-w-0 flex-1 pointer-events-none">
               {/* Headline: state */}
               <span className={`font-bold text-[11px] leading-tight ${
                 type === 'needs_input' ? 'text-amber-400' : 'text-foreground'

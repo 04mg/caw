@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Copy, Clipboard } from 'lucide-react'
 import { attachTerminal, detachTerminal, getTerminal, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
-
+import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
   terminalId: string
@@ -11,11 +12,14 @@ interface TerminalPanelProps {
 
 export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     const el = elRef.current
@@ -93,9 +97,78 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     }
   }, [isActive, terminalId])
 
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleClose = () => setContextMenu(null)
+    document.addEventListener('mousedown', handleClose)
+    document.addEventListener('click', handleClose)
+    return () => {
+      document.removeEventListener('mousedown', handleClose)
+      document.removeEventListener('click', handleClose)
+    }
+  }, [contextMenu])
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }
+
+  const inst = getTerminal(terminalId)
+  const hasSelection = inst ? inst.term.hasSelection() : false
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (inst) {
+      const text = inst.term.getSelection()
+      if (text) {
+        navigator.clipboard.writeText(text)
+      }
+    }
+    setContextMenu(null)
+  }
+
+  const handlePaste = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (inst) {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text && inst.ws?.readyState === WebSocket.OPEN) {
+          inst.ws.send(JSON.stringify({ type: 'input', data: text }))
+        }
+      } catch (err) {
+        console.error('Failed to read from clipboard:', err)
+      }
+    }
+    setContextMenu(null)
+  }
+
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div
+      className="relative h-full w-full overflow-hidden custom-context-menu"
+      onContextMenu={handleContextMenu}
+    >
       <div ref={elRef} className="h-full w-full overflow-hidden" />
+      {contextMenu && (
+        <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
+          <button
+            onClick={handleCopy}
+            disabled={!hasSelection}
+            className={`flex items-center w-full px-3 py-1.5 text-xs text-left cursor-pointer gap-2 ${
+              hasSelection ? 'text-foreground/80 hover:bg-accent hover:text-foreground' : 'text-foreground/30 cursor-not-allowed'
+            }`}
+          >
+            <Copy size={14} />
+            <span>Copy</span>
+          </button>
+          <button
+            onClick={handlePaste}
+            className="flex items-center w-full px-3 py-1.5 text-xs text-foreground/80 hover:bg-accent hover:text-foreground text-left cursor-pointer gap-2"
+          >
+            <Clipboard size={14} />
+            <span>Paste</span>
+          </button>
+        </SmartContextMenu>
+      )}
     </div>
   )
 }
