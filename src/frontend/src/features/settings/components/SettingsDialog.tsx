@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, type ElementType } from 'react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, FolderKanban, Settings as SettingsIcon } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -303,7 +303,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const sections: { id: Section; label: string; icon: ElementType }[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'terminal', label: 'Terminal', icon: Terminal },
-    { id: 'workspaces', label: 'Workspaces', icon: FolderKanban },
+    { id: 'workspaces', label: 'Workspaces', icon: Folder },
     { id: 'agents', label: 'Agents', icon: Bot },
     { id: 'limits', label: 'Limits', icon: ChartSpline },
   ]
@@ -965,7 +965,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className={`p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg ${
+      <DialogContent hideClose={isMobile} className={`p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg ${
         isMobile
           ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0'
           : 'w-[600px] h-[400px] max-w-none max-h-none'
@@ -974,10 +974,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           <>
             {/* Mobile: two-step layout */}
             {!mobileSectionSelected ? (
-              <div className="w-full flex flex-col select-none">
-                <DialogTitle className="text-sm font-semibold text-foreground px-4 py-3 border-b border-border flex items-center gap-2">
+              <div className="w-full flex flex-col select-none [&_[data-radix-collection-wrapper]:has(>button[data-radix-dialog-close])]:hidden">
+                <DialogTitle className="text-sm font-semibold text-foreground px-4 h-[44px] border-b border-border flex items-center gap-2">
                   <SettingsIcon className="h-4 w-4" />
-                  Settings
+                  <span>Settings</span>
+                  <DialogClose className="ml-auto p-1 -mr-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer">
+                    <X className="h-4 w-4" />
+                  </DialogClose>
                 </DialogTitle>
                 <div className="flex-1 flex flex-col p-3 gap-1.5">
                   {sections.map((s) => {
@@ -997,10 +1000,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             ) : (
               <div className="w-full flex flex-col">
-                <div className="flex items-center gap-2 px-3 py-3 border-b border-border shrink-0">
+                <div className="flex items-center gap-2 px-4 h-[44px] border-b border-border shrink-0">
                   <button
                     onClick={backToSections}
-                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    className="p-1 -ml-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     title="Back to Settings"
                   >
                     <ArrowLeft className="h-4 w-4 shrink-0" />
@@ -1008,6 +1011,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <DialogTitle className="text-sm font-semibold text-foreground">
                     {sections.find((s) => s.id === activeSection)?.label || 'Settings'}
                   </DialogTitle>
+                  <DialogClose className="ml-auto p-1 -mr-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer">
+                    <X className="h-4 w-4" />
+                  </DialogClose>
                 </div>
                 <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                   {renderSectionContent()}
