@@ -59,7 +59,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [pushNeedsInput, setPushNeedsInput] = useState(true)
   const [pushFinished, setPushFinished] = useState(true)
   const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>('default')
-  const [pushSupported] = useState(() => 'serviceWorker' in navigator && 'PushManager' in window)
+  const [pushSupported] = useState(() => typeof navigator !== 'undefined' && 'serviceWorker' in navigator && ('PushManager' in window || 'pushManager' in ServiceWorkerRegistration.prototype))
   const [pushSubscribed, setPushSubscribed] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
   const [pushError, setPushError] = useState('')
