@@ -116,6 +116,46 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   return { term, fit }
 }
 
+export const stickyModifiers = {
+  ctrl: false,
+  alt: false,
+}
+
+const stickySubscribers = new Set<() => void>()
+export function subscribeStickyModifiers(cb: () => void) {
+  stickySubscribers.add(cb)
+  return () => { stickySubscribers.delete(cb) }
+}
+
+function notifySticky() {
+  for (const cb of stickySubscribers) cb()
+}
+
+export function toggleStickyCtrl() {
+  stickyModifiers.ctrl = !stickyModifiers.ctrl
+  if (stickyModifiers.ctrl) stickyModifiers.alt = false
+  notifySticky()
+}
+
+export function toggleStickyAlt() {
+  stickyModifiers.alt = !stickyModifiers.alt
+  if (stickyModifiers.alt) stickyModifiers.ctrl = false
+  notifySticky()
+}
+
+export function resetStickyModifiers() {
+  stickyModifiers.ctrl = false
+  stickyModifiers.alt = false
+  notifySticky()
+}
+
+export function sendTerminalInput(leafId: string, data: string) {
+  const inst = registry.get(leafId)
+  if (inst && inst.ws?.readyState === WebSocket.OPEN) {
+    inst.ws.send(JSON.stringify({ type: 'input', data }))
+  }
+}
+
 function wireInput(inst: TerminalInstance) {
   inst.term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
@@ -129,7 +169,20 @@ function wireInput(inst: TerminalInstance) {
 
   inst.term.onData((data) => {
     if (inst.ws?.readyState === WebSocket.OPEN) {
-      inst.ws.send(JSON.stringify({ type: 'input', data }))
+      let finalData = data
+      if (stickyModifiers.ctrl && data.length === 1) {
+        const code = data.charCodeAt(0)
+        if (code >= 97 && code <= 122) { // a-z
+          finalData = String.fromCharCode(code - 96)
+        } else if (code >= 65 && code <= 90) { // A-Z
+          finalData = String.fromCharCode(code - 64)
+        }
+        resetStickyModifiers()
+      } else if (stickyModifiers.alt && data.length === 1) {
+        finalData = '\x1b' + data
+        resetStickyModifiers()
+      }
+      inst.ws.send(JSON.stringify({ type: 'input', data: finalData }))
     }
   })
 }

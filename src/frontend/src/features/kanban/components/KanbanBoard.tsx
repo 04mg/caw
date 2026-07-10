@@ -57,6 +57,13 @@ const COLUMNS: Column[] = [
 export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardProps) {
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
   const cardsRef = useRef<Record<string, DOMRect>>({})
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   // Fetch initial statuses and subscribe to real-time updates
   useEffect(() => {
@@ -311,6 +318,62 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
           <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
         </div>
+      </div>
+    )
+  }
+
+  // Define mobile columns (Needs Input -> Working -> Idle)
+  const MOBILE_COLUMNS: Column[] = [
+    {
+      id: 'needs_input',
+      title: 'Needs Input',
+      icon: Construction,
+      colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
+      glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
+    },
+    {
+      id: 'working',
+      title: 'Working',
+      icon: Briefcase,
+      colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
+      glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
+    },
+    {
+      id: 'idle',
+      title: 'Idle',
+      icon: Coffee,
+      colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
+      glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
+    },
+  ]
+
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
+        {MOBILE_COLUMNS.map((col) => {
+          const agents = groupedAgents[col.id]
+          if (agents.length === 0) return null // Skip entirely if empty
+
+          const ColIcon = col.icon
+          return (
+            <div key={col.id} className="flex flex-col shrink-0 gap-3 border border-border/30 rounded-xl p-3 bg-secondary/5">
+              <div className="flex items-center justify-between pb-2 border-b border-border/20">
+                <div className="flex items-center gap-2">
+                  <ColIcon className="w-4 h-4 text-foreground" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-foreground/90">
+                    {col.title}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                  {agents.length}
+                </span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {agents.map(renderCard)}
+              </div>
+            </div>
+          )
+        })}
       </div>
     )
   }
