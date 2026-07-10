@@ -78,6 +78,7 @@ export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarRef = usePanelRef()
   const skipPersistRef = useRef(false)
+  const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
 
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
@@ -149,6 +150,7 @@ export function AppLayout() {
     loadState().then((s) => {
       if (done) return
       skipPersistRef.current = true
+      loadedRef.current = true
       setWorkspaces(s.workspaces)
       setActiveWorkspaceId(s.activeWorkspaceId)
       setLoaded(true)
@@ -242,6 +244,7 @@ export function AppLayout() {
   }, [activeWorkspace?.id, activeWorkspace?.activeTabIndex, activeWorkspace?.activePaneId])
 
   useEffect(() => {
+    if (!loadedRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
       return

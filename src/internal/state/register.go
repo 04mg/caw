@@ -50,8 +50,9 @@ func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws
 	}()
 
 	cur := store.Get()
-	if msg, err := json.Marshal(cur); err == nil {
-		_ = wc.WriteMessage(websocket.TextMessage, msg)
+	curJSON, _ := json.Marshal(cur)
+	if curJSON != nil {
+		_ = wc.WriteMessage(websocket.TextMessage, curJSON)
 	}
 
 	for {
@@ -67,6 +68,12 @@ func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws
 			s.Workspaces = []Workspace{}
 		}
 		store.Set(s)
-		hub.BroadcastTextExcept(store.Get(), wc)
+		next := store.Get()
+		nextJSON, _ := json.Marshal(next)
+		if string(nextJSON) == string(curJSON) {
+			continue
+		}
+		curJSON = nextJSON
+		hub.BroadcastExcept(websocket.TextMessage, nextJSON, wc)
 	}
 }
