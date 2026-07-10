@@ -351,11 +351,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   const sections: { id: Section; label: string; icon: ElementType }[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
-    { id: 'terminal', label: 'Terminal', icon: Terminal },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'workspaces', label: 'Workspaces', icon: Folder },
+    { id: 'terminal', label: 'Terminal', icon: Terminal },
     { id: 'agents', label: 'Agents', icon: Bot },
     { id: 'limits', label: 'Limits', icon: ChartSpline },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
   ]
 
   const renderSectionContent = () => (
@@ -403,7 +403,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </button>
               </div>
 
-              <div className="border-t border-border pt-4 mt-2">
+              <div className="pt-4 mt-2">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-medium">Terminal Theme</label>
                   <p className="text-[10px] text-muted-foreground">Match the terminal background with the rest of the UI.</p>
@@ -1044,8 +1044,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
 
-              {/* Push notifications */}
-              <div className="border-t border-border pt-4 mt-2">
+              <div className="pt-4 mt-2">
                 <div className="flex flex-col gap-2 mb-3">
                   <label className="text-xs font-medium">Web Push Notifications</label>
                   <p className="text-[10px] text-muted-foreground">Get notified even when Caw is not in focus. Requires browser notification permission.</p>
@@ -1210,7 +1209,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0 mt-2">
                       <div className="flex items-center justify-between">
                         <div className="flex flex-col gap-0.5">
                           <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Notify on Finished</label>
