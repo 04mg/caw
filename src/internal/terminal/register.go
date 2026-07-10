@@ -63,8 +63,9 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		return
 	}
 
+	wc := &connWriter{conn: c}
+
 	sess.mu.Lock()
-	sess.conns[c] = true
 	scrollback := make([]byte, len(sess.scrollback))
 	copy(scrollback, sess.scrollback)
 	syncSeq := sess.syncMessage()
@@ -74,10 +75,16 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			"cols": sess.cols,
 			"rows": sess.rows,
 		})
-		c.WriteMessage(websocket.TextMessage, msg)
+		wc.WriteMessage(websocket.TextMessage, msg)
 	}
 	sess.mu.Unlock()
 
+	// Replay scrollback and sync-mode sequence to this client before
+	// registering it in sess.conns. While the replay runs, wc is invisible
+	// to ReadLoop and broadcastResize, so no other goroutine can write to
+	// it — eliminating the concurrent-write race. Registering after the
+	// replay also guarantees the client receives scrollback before any live
+	// output, preventing interleaving corruption.
 	if len(scrollback) > 0 {
 		stripped := stripAlternateScreen(scrollback)
 		if len(stripped) > 0 {
@@ -85,7 +92,7 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 				"type": "output",
 				"data": string(stripped),
 			})
-			c.WriteMessage(websocket.TextMessage, msg)
+			wc.WriteMessage(websocket.TextMessage, msg)
 		}
 	}
 
@@ -94,14 +101,18 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			"type": "output",
 			"data": syncSeq,
 		})
-		c.WriteMessage(websocket.TextMessage, msg)
+		wc.WriteMessage(websocket.TextMessage, msg)
 	}
+
+	sess.mu.Lock()
+	sess.conns[wc] = true
+	sess.mu.Unlock()
 
 	defer func() {
 		sess.mu.Lock()
-		delete(sess.conns, c)
+		delete(sess.conns, wc)
 		sess.mu.Unlock()
-		c.Close()
+		wc.Close()
 	}()
 
 	for {

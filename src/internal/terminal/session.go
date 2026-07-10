@@ -34,6 +34,29 @@ var syncModes = map[int]bool{
 	2004: true, // bracketed paste
 }
 
+// connWriter wraps a gorilla websocket.Conn with a per-connection write
+// mutex. gorilla/websocket does not allow concurrent writes to the same
+// connection, and the terminal Session has multiple goroutines writing to
+// the same conn (ReadLoop for PTY output, broadcastResize for resizes,
+// HandleTerminalWS for scrollback replay). Serializing every WriteMessage
+// call through this mutex prevents the "concurrent write to websocket
+// connection" panic. This mirrors the existing ws.Client pattern in
+// internal/ws/hub.go.
+type connWriter struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (w *connWriter) WriteMessage(msgType int, data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteMessage(msgType, data)
+}
+
+func (w *connWriter) Close() error {
+	return w.conn.Close()
+}
+
 // modeRe matches a single DEC private mode set/reset sequence, e.g.
 // "\x1b[?1003h" (set) or "\x1b[?1000l" (reset). Multi-parameter forms such as
 // "\x1b[?1000;1002h" are intentionally not matched; TUI apps (bubbletea,
@@ -46,7 +69,7 @@ type Session struct {
 	Cwd          string
 	DeleteBranch bool
 	mu           sync.Mutex
-	conns        map[*websocket.Conn]bool
+	conns        map[*connWriter]bool
 	cols         int
 	rows         int
 	scrollback   []byte
