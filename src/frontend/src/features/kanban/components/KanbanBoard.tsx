@@ -372,7 +372,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
           const ColIcon = col.icon
           return (
-            <div key={col.id} className="flex flex-col shrink-0 gap-3 border border-border/30 rounded-xl p-3 bg-secondary/5">
+            <div key={col.id} className="flex flex-col shrink-0 gap-3 rounded-xl p-3 bg-secondary/5">
               <div className="flex items-center justify-between pb-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
                   <ColIcon className="w-4 h-4 text-foreground" />

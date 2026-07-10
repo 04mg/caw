@@ -1221,6 +1221,18 @@ export function AppLayout() {
                 {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
                   <MobileControlBar terminalId={currentActiveLeaf.id} />
                 )}
+
+                <StatusBar
+                  workspaceName={activeWorkspace?.name}
+                  worktreeBranch={activeWorktreeBranch}
+                  agentBoardOpen={agentBoardOpen}
+                  onToggleAgentBoard={() => setMobileView('control_center')}
+                  onOpenSettings={(section) => {
+                    setSettingsSection(section)
+                    setSettingsOpen(true)
+                  }}
+                  hideControlCenter
+                />
               </div>
             )}
           </div>
