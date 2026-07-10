@@ -332,6 +332,10 @@ export function AppLayout() {
   // Ref that tracks the last known AgentStatus per sessionId so we can
   // detect meaningful transitions (e.g. thinking → waiting_input).
   const prevStatusesRef = useRef<Record<string, AgentStatus>>({})
+  // Pending "finished" notifications: keyed by sessionId, each with a timer
+  // that fires after a short delay. If the agent goes back to working before
+  // the timer elapses, the notification is cancelled.
+  const pendingFinishedRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   // Refs for the navigate-on-click callback — avoids capturing stale closures
   // inside the toast custom render function.
@@ -463,19 +467,45 @@ export function AppLayout() {
         if (prev && prev.status !== next.status) {
           const prevS = prev.status
           const nextS = next.status
+
+          // If the agent goes back to a working state, cancel any pending
+          // "finished" notification — it was a transient idle blip, not a
+          // real completion.
+          if (nextS === 'thinking' || nextS === 'executing') {
+            const timer = pendingFinishedRef.current[sessionId]
+            if (timer) {
+              clearTimeout(timer)
+              delete pendingFinishedRef.current[sessionId]
+            }
+          }
+
           if (nextS === 'waiting_input') {
             triggerAgentNotification(next, 'needs_input')
           } else if (
             (nextS === 'idle' || nextS === 'stopped') &&
             (prevS === 'thinking' || prevS === 'executing')
           ) {
-            triggerAgentNotification(next, 'finished')
+            // Debounce the "finished" notification: wait 5s before firing.
+            // If the agent resumes working within that window (e.g. the LLM
+            // response was slow and the watchdog briefly reverted to idle),
+            // the pending timer is cancelled above.
+            const timer = setTimeout(() => {
+              delete pendingFinishedRef.current[sessionId]
+              triggerAgentNotification(next, 'finished')
+            }, 5000)
+            pendingFinishedRef.current[sessionId] = timer
           }
         }
       }
       prevStatusesRef.current = nextStatuses
     })
-    return unsub
+    return () => {
+      unsub
+      for (const timer of Object.values(pendingFinishedRef.current)) {
+        clearTimeout(timer)
+      }
+      pendingFinishedRef.current = {}
+    }
   }, [triggerAgentNotification])
 
   const updateActiveLayout = useCallback(
@@ -830,16 +860,19 @@ export function AppLayout() {
         }
       } catch { /* fall back to raw path */ }
 
-      const layout = createLeaf(absPath)
+      const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'terminal'
+      const agent = agentTypes[defaultAgentId]
+      const cmd = agent && agent.id !== 'terminal' ? agent.cmd : undefined
+      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined)
       const ws: Workspace = {
         id: crypto.randomUUID(),
         path: absPath,
         name: name || absPath.split(/[\\/]/).filter(Boolean).pop() || absPath || 'Workspace',
         emoji: emoji || undefined,
-        layouts: [{ id: crypto.randomUUID(), name: 'Terminal', layout }],
+        layouts: [{ id: crypto.randomUUID(), name: agent && agent.id !== 'terminal' ? agent.label : 'Terminal', layout }],
         activeTabIndex: 0,
         activePaneId: collectLeafIds(layout)[0],
-        enableWorktrees: true,
+        enableWorktrees: false,
       }
       setWorkspaces((prev) => [...prev, ws])
       setActiveWorkspaceId(ws.id)
@@ -1204,10 +1237,10 @@ export function AppLayout() {
                     ) : (
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
                     )
-                  ) : (
+                  ) : activeWorkspace ? (
                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-4 px-6 text-center">
                       <div className="p-4 rounded-full bg-muted/30 border border-border/30">
-                        <Plus className="w-7 h-7 text-muted-foreground/40" />
+                        <Plus className="w-7 h-7 text-muted-foreground" />
                       </div>
                       <span>No terminals or agents open.</span>
                       <NewTabMenu
@@ -1222,6 +1255,17 @@ export function AppLayout() {
                           New Terminal / Agent
                         </Button>
                       </NewTabMenu>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-4 px-6 text-center">
+                      <div className="p-4 rounded-full bg-muted/30 border border-border/30">
+                        <Plus className="w-7 h-7 text-muted-foreground" />
+                      </div>
+                      <span>No workspace selected.</span>
+                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPickerOpen(true)}>
+                        <Plus className="h-3.5 w-3.5" />
+                        Create Workspace
+                      </Button>
                     </div>
                   )}
                 </div>

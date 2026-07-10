@@ -353,7 +353,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       return (
         <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
           <div className="p-4 rounded-full bg-muted/30 border border-border/30">
-            <Workflow className="w-8 h-8 text-muted-foreground/40" />
+            <Workflow className="w-8 h-8 text-muted-foreground" />
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-sm font-semibold text-foreground/80">No agents running</span>

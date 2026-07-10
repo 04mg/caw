@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2 } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, FolderKanban } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -15,7 +15,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'limits'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -50,6 +50,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [claudeInstalled, setClaudeInstalled] = useState(true)
   const [codexInstalled, setCodexInstalled] = useState(true)
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
+  const [defaultNewAgent, setDefaultNewAgent] = useState('terminal')
+  const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -120,6 +122,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
+
+      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
+
+      fetch('/api/agents')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
+        .then((json) => {
+          const data = json?.data
+          if (Array.isArray(data)) {
+            setAvailableAgents(data)
+          }
+        })
+        .catch(() => {})
 
       loadQuotaSettings()
       loadQuotas()
@@ -292,6 +306,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           >
             <Terminal className="h-3.5 w-3.5" />
             Terminal
+          </button>
+          <button
+            onClick={() => setActiveSection('workspaces')}
+            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              activeSection === 'workspaces'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+            }`}
+          >
+            <FolderKanban className="h-3.5 w-3.5" />
+            Workspaces
           </button>
           <button
             onClick={() => setActiveSection('agents')}
@@ -577,6 +602,69 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     )}
                   </div>
                   <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'workspaces' && (
+            <div className="flex flex-col h-full gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Workspaces</h3>
+                <p className="text-xs text-muted-foreground">Configure what opens by default when creating a new workspace.</p>
+              </div>
+
+              <div className="flex flex-col gap-2 mt-2">
+                <label className="text-xs font-medium">Default Agent / Terminal</label>
+                <p className="text-[10px] text-muted-foreground">Choose what gets launched as the first tab when a new workspace is created.</p>
+                <div className="flex flex-col gap-1.5 mt-1 max-h-[200px] overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+                  <button
+                    onClick={() => {
+                      setDefaultNewAgent('terminal')
+                      localStorage.setItem('caw:defaultNewAgent', 'terminal')
+                    }}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                      defaultNewAgent === 'terminal'
+                        ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                        : 'border-border hover:bg-accent/20'
+                    }`}
+                  >
+                    <Terminal className="h-4 w-4" />
+                    <span className="flex-1 text-left">New Terminal</span>
+                    {defaultNewAgent === 'terminal' && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
+                  {(() => {
+                    const savedDisabled = localStorage.getItem('caw:disabledAgents')
+                    let disabledList: string[] = []
+                    if (savedDisabled) {
+                      try { disabledList = JSON.parse(savedDisabled) } catch {}
+                    }
+                    return availableAgents
+                      .filter((a) => !disabledList.includes(a.id))
+                      .map((agentInfo) => {
+                        const agent = agentTypes[agentInfo.id]
+                        if (!agent) return null
+                        const Icon = agent.icon
+                        return (
+                          <button
+                            key={agentInfo.id}
+                            onClick={() => {
+                              setDefaultNewAgent(agentInfo.id)
+                              localStorage.setItem('caw:defaultNewAgent', agentInfo.id)
+                            }}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                              defaultNewAgent === agentInfo.id
+                                ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                                : 'border-border hover:bg-accent/20'
+                            }`}
+                          >
+                            <Icon className="h-4 w-4" />
+                            <span className="flex-1 text-left">{agentInfo.label}</span>
+                            {defaultNewAgent === agentInfo.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                          </button>
+                        )
+                      })
+                  })()}
                 </div>
               </div>
             </div>
