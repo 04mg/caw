@@ -361,7 +361,7 @@ export function AppLayout() {
             {/* Text content */}
             <div className="flex flex-col gap-0.5 min-w-0 flex-1">
               {/* Headline: state */}
-              <span className={`font-bold text-sm leading-tight ${
+              <span className={`font-bold text-[11px] leading-tight ${
                 type === 'needs_input' ? 'text-amber-400' : 'text-foreground'
               }`}>
                 {type === 'needs_input' ? (

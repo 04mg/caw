@@ -235,24 +235,25 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 colId === 'working' ? 'bg-blue-400' : colId === 'needs_input' ? 'bg-amber-400' : 'bg-slate-400'
               }`}></span>
             </span>
-            <span className="text-[10px] uppercase font-mono text-muted-foreground">
-              {agent.status}
-            </span>
           </div>
         </div>
 
         {/* Card Content - Dynamic Description */}
         <div className="flex flex-col gap-2 z-10">
           {/* Title / Session Name */}
-          {agent.title ? (
-            <div className="text-xs text-foreground/90 font-medium line-clamp-3 bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors">
-              {agent.title}
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground italic p-1">
-              Unnamed Session
-            </div>
-          )}
+          <div
+            className="text-xs font-medium bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors whitespace-nowrap overflow-hidden"
+            style={{
+              maskImage: 'linear-gradient(to right, black 85%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)'
+            }}
+          >
+            {agent.title ? (
+              <span className="text-foreground/90">{agent.title}</span>
+            ) : (
+              <span className="text-muted-foreground">Unnamed Session</span>
+            )}
+          </div>
 
           {/* Active Tool / Details */}
           {(agent.tool || agent.details) && (
@@ -298,7 +299,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             <span className="text-muted-foreground/50 italic">Unknown Workspace</span>
           )}
 
-          <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+          <div className="flex items-center gap-1 text-[10px] shrink-0">
             <Clock className="w-3 h-3 opacity-60" />
             <span>{formatTime(agent.timestamp)}</span>
           </div>
