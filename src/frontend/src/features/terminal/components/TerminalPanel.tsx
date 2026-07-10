@@ -11,21 +11,16 @@ interface TerminalPanelProps {
 }
 
 function copyToClipboard(text: string): boolean {
-  console.log('[TerminalPanel] copyToClipboard:', text)
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    console.log('[TerminalPanel] using navigator.clipboard.writeText')
-    navigator.clipboard.writeText(text).catch((err) => {
-      console.error('[TerminalPanel] navigator.clipboard error:', err)
+    navigator.clipboard.writeText(text).catch(() => {
       fallbackCopyToClipboard(text)
     })
     return true
   }
-  console.log('[TerminalPanel] using fallbackCopyToClipboard')
   return fallbackCopyToClipboard(text)
 }
 
 function fallbackCopyToClipboard(text: string): boolean {
-  console.log('[TerminalPanel] fallbackCopyToClipboard')
   const textArea = document.createElement('textarea')
   textArea.value = text
   textArea.style.top = '0'
@@ -37,11 +32,9 @@ function fallbackCopyToClipboard(text: string): boolean {
   textArea.select()
   try {
     const successful = document.execCommand('copy')
-    console.log('[TerminalPanel] execCommand copy successful:', successful)
     document.body.removeChild(textArea)
     return successful
   } catch (err) {
-    console.error('[TerminalPanel] Fallback copy failed:', err)
     document.body.removeChild(textArea)
     return false
   }
@@ -82,9 +75,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     }
 
     const handleRightClickMousedown = (e: MouseEvent) => {
-      console.log('[TerminalPanel] handleRightClickMousedown:', e.type, 'button:', e.button)
       if (e.button === 2) {
-        console.log('[TerminalPanel] stopping propagation of right-click event')
         e.stopPropagation()
       }
     }
@@ -170,9 +161,6 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     let sel = ''
     if (inst) {
       sel = inst.term.getSelection()
-      console.log('[TerminalPanel] handleContextMenu - active selection:', sel)
-    } else {
-      console.log('[TerminalPanel] handleContextMenu - no terminal instance found')
     }
     setSavedSelection(sel)
     setContextMenu({ x: e.clientX, y: e.clientY })
@@ -180,36 +168,26 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
-    console.log('[TerminalPanel] handleCopy triggered, savedSelection:', savedSelection)
     if (savedSelection) {
-      const res = copyToClipboard(savedSelection)
-      console.log('[TerminalPanel] copyToClipboard result:', res)
+      copyToClipboard(savedSelection)
     }
     setContextMenu(null)
   }
 
   const handlePaste = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    console.log('[TerminalPanel] handlePaste triggered')
     if (inst) {
       try {
-        console.log('[TerminalPanel] checking clipboard access')
         if (!navigator.clipboard || !navigator.clipboard.readText) {
-          console.warn('[TerminalPanel] navigator.clipboard.readText is undefined')
           alert('Clipboard paste is only supported in secure contexts (HTTPS/localhost). Please use Ctrl+V / Cmd+V directly in the terminal.')
           setContextMenu(null)
           return
         }
         const text = await navigator.clipboard.readText()
-        console.log('[TerminalPanel] clipboard text read:', text)
         if (text && inst.ws?.readyState === WebSocket.OPEN) {
           inst.ws.send(JSON.stringify({ type: 'input', data: text }))
-          console.log('[TerminalPanel] paste input sent to WebSocket')
-        } else {
-          console.warn('[TerminalPanel] websocket not open or no text')
         }
       } catch (err) {
-        console.error('[TerminalPanel] Failed to read from clipboard:', err)
         alert('Could not paste from clipboard. Please allow clipboard access or use Ctrl+V / Cmd+V directly in the terminal.')
       }
     }
