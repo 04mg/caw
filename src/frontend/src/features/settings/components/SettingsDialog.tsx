@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ElementType } from 'reac
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -15,7 +15,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -54,6 +54,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
   const [defaultNewAgent, setDefaultNewAgent] = useState('terminal')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
+
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushNeedsInput, setPushNeedsInput] = useState(true)
+  const [pushFinished, setPushFinished] = useState(true)
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>('default')
+  const [pushSupported] = useState(() => 'serviceWorker' in navigator && 'PushManager' in window)
+  const [pushSubscribed, setPushSubscribed] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushError, setPushError] = useState('')
+  const [soundEnabled, setSoundEnabled] = useState(true)
+  const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -151,6 +162,32 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       loadQuotaSettings()
       loadQuotas()
+
+      // Load push notification state
+      setSoundEnabled(localStorage.getItem('caw:soundEnabled') !== '0')
+      if (pushSupported && 'Notification' in window) {
+        setPushPermission(Notification.permission)
+      } else {
+        setPushPermission('unsupported')
+      }
+      fetch('/api/push/prefs')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: null }))
+        .then((json) => {
+          const d = json?.data
+          if (d) {
+            setPushEnabled(d.enabled || false)
+            setPushNeedsInput(d.needsInput !== false)
+            setPushFinished(d.finished !== false)
+          }
+        })
+        .catch(() => {})
+      if (pushSupported && navigator.serviceWorker) {
+        navigator.serviceWorker.ready.then((reg) => {
+          reg.pushManager.getSubscription().then((sub) => {
+            setPushSubscribed(!!sub)
+          }).catch(() => {})
+        })
+      }
 
       // Reset device login state
       setCopilotDeviceFlow('idle')
@@ -300,12 +337,25 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     setMobileSectionSelected(false)
   }
 
+  function urlBase64ToUint8Array(base64String: string): Uint8Array {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4)
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+    const rawData = window.atob(base64)
+    const buffer = new ArrayBuffer(rawData.length)
+    const outputArray = new Uint8Array(buffer)
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i)
+    }
+    return outputArray
+  }
+
   const sections: { id: Section; label: string; icon: ElementType }[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'terminal', label: 'Terminal', icon: Terminal },
     { id: 'workspaces', label: 'Workspaces', icon: Folder },
     { id: 'agents', label: 'Agents', icon: Bot },
     { id: 'limits', label: 'Limits', icon: ChartSpline },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
   ]
 
   const renderSectionContent = () => (
@@ -956,6 +1006,239 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       />
                     </div>
                   </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'notifications' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Notifications</h3>
+                <p className="text-xs text-muted-foreground">Configure how you receive notifications when agents need input or finish tasks.</p>
+              </div>
+
+              {/* In-app sounds */}
+              <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Notification Sounds</label>
+                    <p className="text-[10px] text-muted-foreground">Play a sound when an agent needs input or finishes.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = !soundEnabled
+                      setSoundEnabled(next)
+                      localStorage.setItem('caw:soundEnabled', next ? '1' : '0')
+                    }}
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring shrink-0 ${
+                      soundEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                        soundEnabled ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Push notifications */}
+              <div className="border-t border-border pt-4 mt-2">
+                <div className="flex flex-col gap-2 mb-3">
+                  <label className="text-xs font-medium">Web Push Notifications</label>
+                  <p className="text-[10px] text-muted-foreground">Get notified even when Caw is not in focus. Requires browser notification permission.</p>
+                </div>
+
+                {!pushSupported && (
+                  <div className="px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/10 text-xs text-amber-400">
+                    Web Push is not supported in this browser.
+                  </div>
+                )}
+
+                {pushSupported && !isSecureContext && (
+                  <div className="px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/10 text-xs text-amber-400">
+                    Push notifications require a secure context (HTTPS). They work on <code>localhost</code> but not on a remote IP over HTTP.
+                  </div>
+                )}
+
+                {pushSupported && pushPermission === 'denied' && (
+                  <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                    Notification permission has been blocked. Please reset it in your browser settings.
+                  </div>
+                )}
+
+                {pushError && (
+                  <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                    {pushError}
+                  </div>
+                )}
+
+                {pushSupported && (
+                  <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enable Push Notifications</label>
+                        <p className="text-[10px] text-muted-foreground">
+                          {pushEnabled && pushSubscribed ? 'Active — this browser will receive push notifications.' : 'Enable to subscribe this browser.'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setPushError('')
+                          if (pushEnabled) {
+                            setPushBusy(true)
+                            try {
+                              const reg = await navigator.serviceWorker.ready
+                              const sub = await reg.pushManager.getSubscription()
+                              if (sub) {
+                                await sub.unsubscribe()
+                                await fetch('/api/push/subscribe', {
+                                  method: 'DELETE',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ endpoint: sub.endpoint }),
+                                })
+                              }
+                              setPushSubscribed(false)
+                              setPushEnabled(false)
+                              await fetch('/api/push/prefs', {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ enabled: false }),
+                              })
+                            } catch (e: any) {
+                              setPushError(e.message || 'Failed to disable push')
+                            }
+                            setPushBusy(false)
+                          } else {
+                            setPushBusy(true)
+                            try {
+                              if (Notification.permission === 'denied') {
+                                setPushError('Notification permission is blocked in browser settings.')
+                                setPushBusy(false)
+                                return
+                              }
+                              if (Notification.permission !== 'granted') {
+                                const perm = await Notification.requestPermission()
+                                setPushPermission(perm)
+                                if (perm !== 'granted') {
+                                  setPushError('Notification permission was not granted.')
+                                  setPushBusy(false)
+                                  return
+                                }
+                              }
+                              const res = await fetch('/api/push/vapid-public-key')
+                              const vapidData = (await res.json())?.data
+                              const vapidKey = vapidData?.publicKey
+                              if (!vapidKey) {
+                                setPushError('Failed to fetch VAPID public key.')
+                                setPushBusy(false)
+                                return
+                              }
+                              const reg = await navigator.serviceWorker.ready
+                              const sub = await reg.pushManager.subscribe({
+                                userVisibleOnly: true,
+                                applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
+                              })
+                              const subJSON = sub.toJSON()
+                              await fetch('/api/push/subscribe', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  endpoint: subJSON.endpoint,
+                                  keys: subJSON.keys,
+                                }),
+                              })
+                              setPushSubscribed(true)
+                              setPushEnabled(true)
+                              await fetch('/api/push/prefs', {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ enabled: true }),
+                              })
+                            } catch (e: any) {
+                              setPushError(e.message || 'Failed to enable push')
+                            }
+                            setPushBusy(false)
+                          }
+                        }}
+                        disabled={pushBusy}
+                        className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring shrink-0 ${
+                          pushEnabled && pushSubscribed ? 'bg-primary' : 'bg-muted-foreground/30'
+                        } ${pushBusy ? 'opacity-50 cursor-wait' : ''}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                            pushEnabled && pushSubscribed ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Per-event toggles */}
+                {pushEnabled && pushSubscribed && pushSupported && (
+                  <>
+                    <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0 mt-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-0.5">
+                          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Notify on Needs Input</label>
+                          <p className="text-[10px] text-muted-foreground">Send a push when an agent is waiting for your input.</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const next = !pushNeedsInput
+                            setPushNeedsInput(next)
+                            fetch('/api/push/prefs', {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ needsInput: next }),
+                            })
+                          }}
+                          className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring shrink-0 ${
+                            pushNeedsInput ? 'bg-primary' : 'bg-muted-foreground/30'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                              pushNeedsInput ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-0.5">
+                          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Notify on Finished</label>
+                          <p className="text-[10px] text-muted-foreground">Send a push when an agent finishes its task.</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const next = !pushFinished
+                            setPushFinished(next)
+                            fetch('/api/push/prefs', {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ finished: next }),
+                            })
+                          }}
+                          className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring shrink-0 ${
+                            pushFinished ? 'bg-primary' : 'bg-muted-foreground/30'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                              pushFinished ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

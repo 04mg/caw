@@ -337,6 +337,16 @@ export function AppLayout() {
   // the timer elapses, the notification is cancelled.
   const pendingFinishedRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
+  // Sound enabled preference — read from localStorage, updated on
+  // 'caw:settings-updated' so toggling in Settings takes effect immediately.
+  const soundEnabledRef = useRef(true)
+  useEffect(() => {
+    const readSoundPref = () => { soundEnabledRef.current = localStorage.getItem('caw:soundEnabled') !== '0' }
+    readSoundPref()
+    window.addEventListener('caw:settings-updated', readSoundPref)
+    return () => window.removeEventListener('caw:settings-updated', readSoundPref)
+  }, [])
+
   // Refs for the navigate-on-click callback — avoids capturing stale closures
   // inside the toast custom render function.
   const setActiveWorkspaceIdRef = useRef(setActiveWorkspaceId)
@@ -379,10 +389,12 @@ export function AppLayout() {
       const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw || 'Unnamed Session'
 
       // Play notification sound
-      if (type === 'needs_input') {
-        Sounds.waitingInput()
-      } else {
-        Sounds.finished()
+      if (soundEnabledRef.current) {
+        if (type === 'needs_input') {
+          Sounds.waitingInput()
+        } else {
+          Sounds.finished()
+        }
       }
 
       toast.custom(
@@ -506,6 +518,34 @@ export function AppLayout() {
       pendingFinishedRef.current = {}
     }
   }, [triggerAgentNotification])
+
+  // Listen for service worker notification-click messages to navigate to the
+  // relevant agent session when a push notification is clicked.
+  useEffect(() => {
+    if (!navigator.serviceWorker) return
+    const handler = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || data.type !== 'notification-click' || !data.sessionId) return
+      for (const ws of workspacesRef.current) {
+        for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
+          const tab = ws.layouts[tabIdx]
+          const leafIds = collectLeafIds(tab.layout)
+          if (leafIds.includes(data.sessionId)) {
+            setActiveWorkspaceId(ws.id)
+            patchWorkspace(ws.id, (w) => ({
+              ...w,
+              activeTabIndex: tabIdx,
+              activePaneId: data.sessionId,
+            }))
+            setAgentBoardOpen(false)
+            return
+          }
+        }
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', handler)
+    return () => navigator.serviceWorker.removeEventListener('message', handler)
+  }, [patchWorkspace])
 
   const updateActiveLayout = useCallback(
     (fn: (layout: LayoutNode) => LayoutNode) => {
