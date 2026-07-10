@@ -23,6 +23,7 @@ export function WorkspaceMenu({ onDelete, onEdit }: WorkspaceMenuProps) {
     <div ref={ref} className="relative">
       <button
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        onPointerDown={(e) => e.stopPropagation()}
         className="h-5 w-5 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center justify-center"
         title="More"
       >
@@ -47,7 +48,7 @@ export function WorkspaceMenu({ onDelete, onEdit }: WorkspaceMenuProps) {
               setOpen(false)
               onDelete()
             }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-destructive-foreground hover:bg-destructive/80"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Delete workspace

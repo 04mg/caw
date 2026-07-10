@@ -1,4 +1,4 @@
-package main
+package terminal
 
 import (
 	"os"
@@ -8,19 +8,39 @@ import (
 	"github.com/aymanbagabas/go-pty"
 )
 
-type ptySession struct {
+type Pty struct {
 	ptmx pty.Pty
 	cmd  *pty.Cmd
 }
 
-func startPty(cwd string) (*ptySession, error) {
+func (p *Pty) Close() error {
+	return p.ptmx.Close()
+}
+
+func (p *Pty) Kill() error {
+	if p.cmd != nil && p.cmd.Process != nil {
+		return p.cmd.Process.Kill()
+	}
+	return nil
+}
+
+func startPty(cwd string, cmdArgs []string) (*Pty, error) {
 	ptmx, err := pty.New()
 	if err != nil {
 		return nil, err
 	}
 
-	shell := getShell()
-	c := ptmx.Command(shell)
+	var c *pty.Cmd
+	if len(cmdArgs) > 0 {
+		name := cmdArgs[0]
+		if path, err := exec.LookPath(name); err == nil {
+			name = path
+		}
+		c = ptmx.Command(name, cmdArgs[1:]...)
+	} else {
+		shell := getShell()
+		c = ptmx.Command(shell)
+	}
 	c.Dir = cwd
 	c.Env = append(os.Environ(), "TERM=xterm-256color")
 
@@ -29,7 +49,7 @@ func startPty(cwd string) (*ptySession, error) {
 		return nil, err
 	}
 
-	return &ptySession{ptmx: ptmx, cmd: c}, nil
+	return &Pty{ptmx: ptmx, cmd: c}, nil
 }
 
 func getShell() string {

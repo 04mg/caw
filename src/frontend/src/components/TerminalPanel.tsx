@@ -1,16 +1,20 @@
 import { useEffect, useRef } from 'react'
-import { attachTerminal, detachTerminal, type TerminalInstance } from '@/lib/terminalRegistry'
+import { attachTerminal, detachTerminal, getTerminal, type TerminalInstance } from '@/lib/terminalRegistry'
 
 interface TerminalPanelProps {
   terminalId: string
   cwd: string
+  cmd?: string[]
+  isActive?: boolean
 }
 
-export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
 
   useEffect(() => {
     const el = elRef.current
@@ -34,9 +38,20 @@ export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
       } catch { /* ignore */ }
     }
 
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        flushResize()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     ;(async () => {
-      inst = await attachTerminal(terminalId, el, cwd)
+      inst = await attachTerminal(terminalId, el, cwd, cmd)
       if (cancelled) return
+
+      if (isActiveRef.current) {
+        inst.term.focus()
+      }
 
       const ro = new ResizeObserver(() => {
         if (fitTimerRef.current) clearTimeout(fitTimerRef.current)
@@ -44,10 +59,21 @@ export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
       })
       ro.observe(el)
       resizeObsRef.current = ro
+
+      // After a tab switch the panel remounts and react-resizable-panels
+      // applies its final sizes a few frames later. attachTerminal already
+      // ran fit() but against a not-yet-laid-out container, so the xterm
+      // canvas renders the wrong cols/rows. Schedule deferred re-fits to
+      // correct the display once layout settles, even if the element's
+      // final size equals the initial one (which would keep the
+      // ResizeObserver from firing).
+      setTimeout(flushResize, 120)
+      setTimeout(flushResize, 300)
     })()
 
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', onVisibility)
       if (fitTimerRef.current) {
         clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
@@ -56,7 +82,15 @@ export function TerminalPanel({ terminalId, cwd }: TerminalPanelProps) {
       resizeObsRef.current = null
       detachTerminal(terminalId)
     }
-  }, [terminalId, cwd])
+  }, [terminalId, cwd, cmd])
+
+  useEffect(() => {
+    if (!isActive) return
+    const inst = getTerminal(terminalId)
+    if (inst) {
+      inst.term.focus()
+    }
+  }, [isActive, terminalId])
 
   return (
     <div className="relative h-full w-full overflow-hidden">

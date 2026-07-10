@@ -3,6 +3,7 @@ import { Group, Panel, Separator } from 'react-resizable-panels'
 import { X, Columns2, Rows2 } from 'lucide-react'
 import { type LayoutNode } from '@/lib/layout'
 import { TerminalPanel } from '@/components/TerminalPanel'
+import { EditorPanel } from '@/components/EditorPanel'
 import { destroyTerminal } from '@/lib/terminalRegistry'
 
 interface TerminalGridProps {
@@ -15,6 +16,8 @@ interface TerminalGridProps {
   leafCount: number
   cwd: string
   onSizesChange: (splitId: string, sizes: number[]) => void
+  gitStatuses?: Record<string, string>
+  onOpenDiff?: (filePath?: string) => void
 }
 
 function childKey(child: LayoutNode): string {
@@ -31,6 +34,8 @@ export function TerminalGrid({
   leafCount,
   cwd,
   onSizesChange,
+  gitStatuses,
+  onOpenDiff,
 }: TerminalGridProps): ReactNode {
   if (node.type === 'empty') {
     return null
@@ -38,41 +43,50 @@ export function TerminalGrid({
 
   if (node.type === 'leaf') {
     const isActive = activePaneId === node.id
+    const isEditor = !!node.filePath || node.isDiff
     return (
       <div
         className={`relative h-full overflow-hidden ${isActive ? 'ring-1 ring-inset ring-border' : ''}`}
         onClick={() => onFocus(node.id)}
         onPointerDown={() => onFocus(node.id)}
       >
-        <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} />
+        {isEditor ? (
+          <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} />
+        ) : (
+          <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} isActive={isActive} />
+        )}
 
-        <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              destroyTerminal(node.id)
-              onClose(node.id)
-            }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Close pane"
-          >
-            <X className="h-3 w-3" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSplitHoriz(node.id) }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Split horizontally"
-          >
-            <Columns2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSplitVert(node.id) }}
-            className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
-            title="Split vertically"
-          >
-            <Rows2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {!isEditor && (
+          <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!isEditor) {
+                  destroyTerminal(node.id)
+                }
+                onClose(node.id)
+              }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Close pane"
+            >
+              <X className="h-3 w-3" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSplitHoriz(node.id) }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Split horizontally"
+            >
+              <Columns2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSplitVert(node.id) }}
+              className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
+              title="Split vertically"
+            >
+              <Rows2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -110,6 +124,8 @@ export function TerminalGrid({
               leafCount={leafCount}
               cwd={cwd}
               onSizesChange={onSizesChange}
+              gitStatuses={gitStatuses}
+              onOpenDiff={onOpenDiff}
             />
           </Panel>
         </Fragment>

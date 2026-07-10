@@ -8,6 +8,7 @@ export interface Workspace {
   layouts: TabLayout[]
   activeTabIndex: number
   activePaneId: string
+  enableWorktrees?: boolean
 }
 
 export interface TabLayout {
@@ -43,6 +44,9 @@ function ensureWs() {
           ws.activeTabIndex = 0
           ws.activePaneId = ''
         }
+        if (ws.enableWorktrees === undefined) {
+          ws.enableWorktrees = true
+        }
       }
       for (const l of listeners) l(data)
     } catch { /* ignore */ }
@@ -70,6 +74,9 @@ export async function loadState(): Promise<BackendState> {
         ws.layouts = []
         ws.activeTabIndex = 0
         ws.activePaneId = ''
+      }
+      if (ws.enableWorktrees === undefined) {
+        ws.enableWorktrees = true
       }
     }
     return {
