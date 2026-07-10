@@ -15,6 +15,7 @@ import (
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
 	"github.com/04mg/caw/internal/httpx"
+	"github.com/04mg/caw/internal/push"
 	"github.com/04mg/caw/internal/quota"
 	_ "github.com/04mg/caw/internal/quota/providers"
 	"github.com/04mg/caw/internal/state"
@@ -38,12 +39,15 @@ func New() *Server {
 		log.Fatalf("embed sub: %v", err)
 	}
 
-	return &Server{
+	s := &Server{
 		frontendFS: frontendFS,
 		store:      state.NewStore(state.DefaultDBPath()),
 		hub:        ws.NewHub(),
 		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
+	push.EnsureVAPIDKeys(s.store)
+	agent.SetPushStore(s.store)
+	return s
 }
 
 func (s *Server) Engine() *gin.Engine {
@@ -58,6 +62,7 @@ func (s *Server) Engine() *gin.Engine {
 		git.Register(api)
 		agent.Register(api)
 		quota.Register(api, s.store)
+		push.Register(api, s.store)
 	}
 
 	r.GET("/ws/state", func(c *gin.Context) {

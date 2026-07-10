@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/04mg/caw/internal/push"
+	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
 	"github.com/04mg/caw/internal/ws"
 )
@@ -80,7 +82,15 @@ var (
 	// statusSeq is a monotonic counter used to assign a stable opening-order
 	// sequence to each agent session. It is only mutated under statusesMu.
 	statusSeq int64
+	// pushStore is set by SetPushStore at server startup so that agent status
+	// transitions can trigger web push notifications.
+	pushStore *state.Store
 )
+
+// SetPushStore wires the state store into the agent package so that status
+// transitions can dispatch web push notifications. Called once from
+// server.New().
+func SetPushStore(s *state.Store) { pushStore = s }
 
 func init() {
 	terminal.OnSessionStart = handleSessionStart
@@ -147,6 +157,20 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		Timestamp: now,
 		Sequence:  seq,
 	})
+
+	if pushStore != nil {
+		switch status {
+		case "waiting_input":
+			push.CancelFinishedDebounced(sessionID)
+			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
+		case "thinking", "executing":
+			push.CancelFinishedDebounced(sessionID)
+		case "idle", "stopped":
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") {
+				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
+			}
+		}
+	}
 }
 
 func handleSessionStart(id string, cmd []string, cwd string) {
@@ -212,6 +236,7 @@ func handleSessionExit(id string) {
 
 	if exists {
 		wCtx.cancel()
+		push.CancelFinishedDebounced(id)
 		statusesMu.Lock()
 		delete(statuses, id)
 		statusesMu.Unlock()

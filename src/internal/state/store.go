@@ -74,6 +74,12 @@ func (s *Store) migrate() {
 		agent_id   TEXT NOT NULL DEFAULT '',
 		cwd        TEXT NOT NULL DEFAULT '',
 		started_at TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS push_subscriptions (
+		endpoint   TEXT PRIMARY KEY,
+		p256dh     TEXT NOT NULL,
+		auth       TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
