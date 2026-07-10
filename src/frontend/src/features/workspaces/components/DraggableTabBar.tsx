@@ -225,6 +225,7 @@ export function DraggableTabBar({
             <Checkbox
               checked={enableWorktrees}
               onChange={() => onToggleWorktrees?.()}
+              onClick={(e) => e.stopPropagation()}
               className={enableWorktrees ? 'lava-lamp-checkbox' : ''}
             />
           </DropdownMenuItem>
