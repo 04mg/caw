@@ -113,6 +113,36 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
+  // The FitAddon subtracts a default 14px scrollbar width from the available
+  // terminal width (overviewRuler?.width || 14). Since we hide the VSCode-style
+  // scrollbar via CSS (display: none), that reserved space shows as an
+  // unrendered black strip on the right side of the terminal. Patch
+  // proposeDimensions to use 0 for the scrollbar width so the terminal fills
+  // its container completely.
+  const originalProposeDimensions = fit.proposeDimensions.bind(fit)
+  fit.proposeDimensions = () => {
+    const dims = originalProposeDimensions()
+    if (dims) {
+      const cellWidth = (term as any)._core?._renderService?.dimensions?.css?.cell?.width
+      if (cellWidth) {
+        // Recalculate cols without the scrollbar subtraction
+        const el = term.element
+        if (el && el.parentElement) {
+          const parentStyle = window.getComputedStyle(el.parentElement)
+          const availableWidth = Math.max(0, parseInt(parentStyle.getPropertyValue('width')))
+            - (parseInt(parentStyle.getPropertyValue('padding-right')) + parseInt(parentStyle.getPropertyValue('padding-left')))
+          const myStyle = window.getComputedStyle(el)
+          const innerWidth = availableWidth
+            - (parseInt(myStyle.getPropertyValue('padding-right')) + parseInt(myStyle.getPropertyValue('padding-left')))
+          const cols = Math.max(2, Math.floor(innerWidth / cellWidth))
+          if (cols > dims.cols) {
+            return { ...dims, cols }
+          }
+        }
+      }
+    }
+    return dims
+  }
   return { term, fit }
 }
 
