@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -7,8 +7,8 @@ export function createEmpty(): LayoutNode {
   return { type: 'empty' }
 }
 
-export function createLeaf(cwd: string): LayoutNode {
-  return { type: 'leaf', id: crypto.randomUUID(), cwd }
+export function createLeaf(cwd: string, cmd?: string[], agentId?: string): LayoutNode {
+  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, agentId }
 }
 
 export function splitLeaf(
@@ -16,24 +16,31 @@ export function splitLeaf(
   targetId: string,
   orientation: 'horizontal' | 'vertical',
   cwd: string,
-): LayoutNode {
-  if (root.type === 'empty') return root
-  if (root.type === 'leaf') {
-    if (root.id === targetId) {
-      return {
-        type: 'split',
-        id: crypto.randomUUID(),
-        orientation,
-        children: [root, createLeaf(cwd)],
-        sizes: [50, 50],
+): { node: LayoutNode; newLeafId: string } {
+  let newLeafId = ''
+
+  function doSplit(n: LayoutNode): LayoutNode {
+    if (n.type === 'empty') return n
+    if (n.type === 'leaf') {
+      if (n.id === targetId) {
+        newLeafId = crypto.randomUUID()
+        return {
+          type: 'split',
+          id: crypto.randomUUID(),
+          orientation,
+          children: [n, { type: 'leaf', id: newLeafId, cwd }],
+          sizes: [50, 50],
+        }
       }
+      return n
     }
-    return root
+    return {
+      ...n,
+      children: n.children.map(doSplit),
+    }
   }
-  return {
-    ...root,
-    children: root.children.map((c) => splitLeaf(c, targetId, orientation, cwd)),
-  }
+
+  return { node: doSplit(root), newLeafId }
 }
 
 export function removeLeaf(root: LayoutNode, targetId: string): LayoutNode {
@@ -124,6 +131,16 @@ export function countLeaves(root: LayoutNode): number {
   return root.children.reduce((sum, c) => sum + countLeaves(c), 0)
 }
 
+export function getLeaf(root: LayoutNode, id: string): Extract<LayoutNode, { type: 'leaf' }> | null {
+  if (root.type === 'empty') return null
+  if (root.type === 'leaf') return root.id === id ? root : null
+  for (const c of root.children) {
+    const v = getLeaf(c, id)
+    if (v !== null) return v
+  }
+  return null
+}
+
 export function getLeafCwd(root: LayoutNode, id: string): string | null {
   if (root.type === 'empty') return null
   if (root.type === 'leaf') return root.id === id ? root.cwd : null
@@ -132,4 +149,26 @@ export function getLeafCwd(root: LayoutNode, id: string): string | null {
     if (v !== null) return v
   }
   return null
+}
+
+export function findAgentId(node: LayoutNode): string | undefined {
+  if (node.type === 'leaf') return node.agentId
+  if (node.type === 'split') {
+    for (const child of node.children) {
+      const id = findAgentId(child)
+      if (id) return id
+    }
+  }
+  return undefined
+}
+
+export function findAgentLeaves(node: LayoutNode): { id: string; cwd: string; agentBranch?: string; baseBranch?: string }[] {
+  if (node.type === 'empty') return []
+  if (node.type === 'leaf') {
+    if (node.agentBranch && node.cwd) {
+      return [{ id: node.id, cwd: node.cwd, agentBranch: node.agentBranch, baseBranch: node.baseBranch }]
+    }
+    return []
+  }
+  return node.children.flatMap(findAgentLeaves)
 }

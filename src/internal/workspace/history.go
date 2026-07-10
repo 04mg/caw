@@ -1,0 +1,242 @@
+package workspace
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+type HistoryEntry struct {
+	Type      string `json:"type"`      // "create", "rename", "delete", "paste"
+	Path      string `json:"path"`      // Original/Old path
+	DestPath  string `json:"destPath"`  // New path (for rename/paste)
+	TrashPath string `json:"trashPath"` // Location of deleted file/folder in trash
+	IsDir     bool   `json:"isDir"`
+}
+
+type HistoryManager struct {
+	mu        sync.Mutex
+	undoStack []HistoryEntry
+	redoStack []HistoryEntry
+}
+
+var globalHistory = &HistoryManager{}
+
+func (h *HistoryManager) PushUndo(entry HistoryEntry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.undoStack = append(h.undoStack, entry)
+	// Clear redo stack on new user action
+	h.redoStack = nil
+}
+
+func (h *HistoryManager) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.undoStack = nil
+	h.redoStack = nil
+}
+
+func findWorkspaceRoot(path string) string {
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		dir = filepath.Clean(path)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return filepath.Dir(path)
+}
+
+func getTrashDir(filePath string) (string, error) {
+	wsRoot := findWorkspaceRoot(filePath)
+	trashDir := filepath.Join(wsRoot, ".wterm_trash")
+	if err := os.MkdirAll(trashDir, 0755); err != nil {
+		return "", err
+	}
+	return trashDir, nil
+}
+
+func moveToTrash(src string) (string, error) {
+	trashDir, err := getTrashDir(src)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Base(src)
+	timestamp := time.Now().UnixNano()
+	trashName := fmt.Sprintf("%d_%s", timestamp, base)
+	dest := filepath.Join(trashDir, trashName)
+	if err := os.Rename(src, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func restoreFromTrash(trashPath, dest string) error {
+	// Make sure the parent directory of dest exists
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	return os.Rename(trashPath, dest)
+}
+
+func (h *HistoryManager) Undo() error {
+	h.mu.Lock()
+	if len(h.undoStack) == 0 {
+		h.mu.Unlock()
+		return fmt.Errorf("nothing to undo")
+	}
+	// Pop from undo
+	entry := h.undoStack[len(h.undoStack)-1]
+	h.undoStack = h.undoStack[:len(h.undoStack)-1]
+	h.mu.Unlock()
+
+	var err error
+	var redoEntry HistoryEntry
+	redoEntry.Type = entry.Type
+	redoEntry.IsDir = entry.IsDir
+
+	switch entry.Type {
+	case "create":
+		// Created at Path. Undo is to move it to trash.
+		trashPath, renameErr := moveToTrash(entry.Path)
+		if renameErr != nil {
+			err = renameErr
+		} else {
+			redoEntry.Path = entry.Path
+			redoEntry.TrashPath = trashPath
+			getHub().EmitEvent(entry.Path, "file-deleted", entry.IsDir)
+		}
+
+	case "delete":
+		// Deleted from Path, trash is at TrashPath. Undo is to restore it.
+		if renameErr := restoreFromTrash(entry.TrashPath, entry.Path); renameErr != nil {
+			err = renameErr
+		} else {
+			redoEntry.Path = entry.Path
+			redoEntry.TrashPath = entry.TrashPath
+			getHub().EmitEvent(entry.Path, "file-created", entry.IsDir)
+		}
+
+	case "rename":
+		// Renamed from Path (old) to DestPath (new). Undo is to rename back.
+		if renameErr := os.Rename(entry.DestPath, entry.Path); renameErr != nil {
+			err = renameErr
+		} else {
+			redoEntry.Path = entry.Path
+			redoEntry.DestPath = entry.DestPath
+			getHub().EmitEvent(entry.DestPath, "file-deleted", entry.IsDir)
+			getHub().EmitEvent(entry.Path, "file-created", entry.IsDir)
+		}
+
+	case "paste":
+		// Pasted (copied) to DestPath. Undo is to move it to trash.
+		trashPath, renameErr := moveToTrash(entry.DestPath)
+		if renameErr != nil {
+			err = renameErr
+		} else {
+			redoEntry.Path = entry.Path
+			redoEntry.DestPath = entry.DestPath
+			redoEntry.TrashPath = trashPath
+			getHub().EmitEvent(entry.DestPath, "file-deleted", entry.IsDir)
+		}
+	}
+
+	if err != nil {
+		// Put it back on undo stack on failure so we don't lose it
+		h.mu.Lock()
+		h.undoStack = append(h.undoStack, entry)
+		h.mu.Unlock()
+		return err
+	}
+
+	h.mu.Lock()
+	h.redoStack = append(h.redoStack, redoEntry)
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *HistoryManager) Redo() error {
+	h.mu.Lock()
+	if len(h.redoStack) == 0 {
+		h.mu.Unlock()
+		return fmt.Errorf("nothing to redo")
+	}
+	// Pop from redo
+	entry := h.redoStack[len(h.redoStack)-1]
+	h.redoStack = h.redoStack[:len(h.redoStack)-1]
+	h.mu.Unlock()
+
+	var err error
+	var undoEntry HistoryEntry
+	undoEntry.Type = entry.Type
+	undoEntry.IsDir = entry.IsDir
+
+	switch entry.Type {
+	case "create":
+		// Created. Redo is to restore from trash to Path.
+		if renameErr := restoreFromTrash(entry.TrashPath, entry.Path); renameErr != nil {
+			err = renameErr
+		} else {
+			undoEntry.Path = entry.Path
+			getHub().EmitEvent(entry.Path, "file-created", entry.IsDir)
+		}
+
+	case "delete":
+		// Deleted. Redo is to move from Path back to trash.
+		trashPath, renameErr := moveToTrash(entry.Path)
+		if renameErr != nil {
+			err = renameErr
+		} else {
+			undoEntry.Path = entry.Path
+			undoEntry.TrashPath = trashPath
+			getHub().EmitEvent(entry.Path, "file-deleted", entry.IsDir)
+		}
+
+	case "rename":
+		// Renamed. Redo is to rename old (Path) to new (DestPath).
+		if renameErr := os.Rename(entry.Path, entry.DestPath); renameErr != nil {
+			err = renameErr
+		} else {
+			undoEntry.Path = entry.Path
+			undoEntry.DestPath = entry.DestPath
+			getHub().EmitEvent(entry.Path, "file-deleted", entry.IsDir)
+			getHub().EmitEvent(entry.DestPath, "file-created", entry.IsDir)
+		}
+
+	case "paste":
+		// Pasted. Redo is to restore from trash to DestPath.
+		if renameErr := restoreFromTrash(entry.TrashPath, entry.DestPath); renameErr != nil {
+			err = renameErr
+		} else {
+			undoEntry.Path = entry.Path
+			undoEntry.DestPath = entry.DestPath
+			getHub().EmitEvent(entry.DestPath, "file-created", entry.IsDir)
+		}
+	}
+
+	if err != nil {
+		// Put back on redo stack on failure
+		h.mu.Lock()
+		h.redoStack = append(h.redoStack, entry)
+		h.mu.Unlock()
+		return err
+	}
+
+	h.mu.Lock()
+	h.undoStack = append(h.undoStack, undoEntry)
+	h.mu.Unlock()
+	return nil
+}

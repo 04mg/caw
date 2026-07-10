@@ -11,7 +11,13 @@ go.work.sum
 
 # Node / Vite
 src/frontend/node_modules/
-src/frontend/dist/
+src/internal/embed/frontend/dist/
+
+# Go build artifacts
+/caw
+src/caw
+src/caw.exe
+src/caw-*
 
 # IDE
 .idea/
@@ -21,3 +27,17 @@ src/frontend/dist/
 *~
 .DS_Store
 Thumbs.db
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tools
+graphify-out/
+.agents/
+.opencode/
+.serena/
+skills-lock.json
+AGENTS.md

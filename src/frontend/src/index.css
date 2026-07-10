@@ -45,27 +45,74 @@
   font-display: swap;
 }
 
-@theme {
-  --color-background: hsl(0 0% 3.9%);
-  --color-foreground: hsl(0 0% 98%);
-  --color-card: hsl(0 0% 3.9%);
-  --color-card-foreground: hsl(0 0% 98%);
-  --color-popover: hsl(0 0% 3.9%);
-  --color-popover-foreground: hsl(0 0% 98%);
-  --color-primary: hsl(0 0% 98%);
-  --color-primary-foreground: hsl(0 0% 9%);
-  --color-secondary: hsl(0 0% 14.9%);
-  --color-secondary-foreground: hsl(0 0% 98%);
-  --color-muted: hsl(0 0% 14.9%);
-  --color-muted-foreground: hsl(0 0% 63.9%);
-  --color-accent: hsl(0 0% 14.9%);
-  --color-accent-foreground: hsl(0 0% 98%);
-  --color-destructive: hsl(0 62.8% 30.6%);
-  --color-destructive-foreground: hsl(0 0% 98%);
-  --color-border: hsl(0 0% 14.9%);
-  --color-input: hsl(0 0% 14.9%);
-  --color-ring: hsl(0 0% 83.1%);
+:root {
+  --background: 0 0% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 14.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 14.9%;
+  --muted-foreground: 0 0% 63.9%;
+  --accent: 0 0% 14.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 14.9%;
+  --input: 0 0% 14.9%;
+  --ring: 0 0% 83.1%;
   --radius: 0.5rem;
+}
+
+.light {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 3.9%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 0 0% 96.1%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 0 0% 96.1%;
+  --muted-foreground: 0 0% 45.1%;
+  --accent: 0 0% 96.1%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 89.8%;
+  --input: 0 0% 89.8%;
+  --ring: 0 0% 3.9%;
+}
+
+@theme {
+  --font-mono: 'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius: var(--radius);
 }
 
 * {
@@ -87,7 +134,6 @@ html, body, #root {
 
 .xterm {
   height: 100%;
-  padding: 4px;
 }
 
 .xterm,
@@ -107,9 +153,289 @@ html, body, #root {
 }
 
 .xterm-viewport {
-  overflow-y: hidden !important;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+  background-color: transparent !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thin-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
 }
 
 .xterm .xterm-scrollable-element > .scrollbar {
   display: none !important;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+
+@keyframes lava-stop-anim {
+  0% {
+    stop-color: #a855f7;
+  }
+  33% {
+    stop-color: #ec4899;
+  }
+  66% {
+    stop-color: #3b82f6;
+  }
+  100% {
+    stop-color: #a855f7;
+  }
+}
+
+.lava-stop-1 {
+  animation: lava-stop-anim 6s infinite alternate;
+}
+.lava-stop-2 {
+  animation: lava-stop-anim 6s infinite alternate;
+  animation-delay: -2s;
+}
+.lava-stop-3 {
+  animation: lava-stop-anim 6s infinite alternate;
+  animation-delay: -4s;
+}
+
+.lava-lamp-icon {
+  stroke: url(#lava-gradient) !important;
+  filter: drop-shadow(0 0 2px rgba(168, 85, 247, 0.4));
+}
+
+.lava-lamp-text {
+  background: linear-gradient(to right, #a855f7, #ec4899, #3b82f6, #a855f7);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lava-text-anim 6s linear infinite;
+  font-weight: 500;
+}
+
+@keyframes lava-text-anim {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+.lava-lamp-checkbox[data-state="checked"] {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #a855f7, #ec4899, #3b82f6);
+  background-size: 300% 300%;
+  animation: lava-checkbox-anim 6s ease infinite alternate;
+  box-shadow: 0 0 4px rgba(168, 85, 247, 0.5);
+  color: white !important;
+}
+
+@keyframes lava-checkbox-anim {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+/* ==========================================================================
+   Monaco Editor overrides to match Shadcn UI context menus & floats
+   ========================================================================== */
+
+/* Context Menu & Widget Containers */
+.context-view,
+.monaco-menu-container,
+.monaco-menu {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px !important;
+  font-family: inherit !important;
+  color: hsl(var(--popover-foreground)) !important;
+  min-width: 180px !important;
+}
+
+/* Redefine VS Code theme variables used by Monaco Editor internal styles to align with Shadcn UI */
+.context-view,
+.monaco-menu-container,
+.monaco-menu,
+.monaco-editor {
+  --vscode-menu-background: hsl(var(--popover)) !important;
+  --vscode-menu-foreground: hsl(var(--popover-foreground)) !important;
+  --vscode-menu-border: hsl(var(--border)) !important;
+  --vscode-menu-separatorBackground: hsl(var(--border)) !important;
+  --vscode-menu-selectionBackground: hsl(var(--accent)) !important;
+  --vscode-menu-selectionForeground: hsl(var(--accent-foreground)) !important;
+}
+
+.monaco-menu .actions-container {
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+/* Individual context menu items */
+.monaco-menu .action-item {
+  display: flex !important;
+  align-items: center !important;
+  border-radius: calc(var(--radius) - 2px) !important;
+  transition: background-color 0.1s ease, color 0.1s ease !important;
+  padding: 4px 8px !important;
+  margin: 0 !important;
+  background-color: transparent !important;
+  height: 28px !important;
+}
+
+.monaco-menu .action-item.focused,
+.monaco-menu .action-item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+
+.monaco-menu .action-item .action-menu-item,
+.monaco-menu .action-item .action-label {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: hsl(var(--popover-foreground)) !important;
+  padding: 0 !important;
+  text-decoration: none !important;
+}
+
+.monaco-menu .action-item.focused .action-menu-item,
+.monaco-menu .action-item.focused .action-label,
+.monaco-menu .action-item:hover .action-menu-item,
+.monaco-menu .action-item:hover .action-label {
+  color: hsl(var(--accent-foreground)) !important;
+}
+
+.monaco-menu .action-item.disabled {
+  opacity: 0.5 !important;
+  pointer-events: none !important;
+}
+
+.monaco-menu .action-item .keybinding {
+  font-size: 10px !important;
+  opacity: 0.6 !important;
+  color: hsl(var(--muted-foreground)) !important;
+  margin-left: auto !important;
+  padding-left: 24px !important;
+}
+
+.monaco-menu .action-item.focused .keybinding {
+  color: hsl(var(--accent-foreground)) !important;
+  opacity: 0.8 !important;
+}
+
+.monaco-menu .action-item.separator {
+  height: 1px !important;
+  background-color: hsl(var(--border)) !important;
+  margin: 4px 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+/* Suggest Widget (Autocomplete popup) */
+.monaco-editor .suggest-widget {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list {
+  background-color: transparent !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list-row {
+  border-radius: calc(var(--radius) - 2px) !important;
+  padding: 0 6px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list-row.focused,
+.monaco-editor .suggest-widget .monaco-list-row:hover {
+  background-color: hsl(var(--accent)) !important;
+  color: hsl(var(--accent-foreground)) !important;
+}
+
+/* Suggestion description details box */
+.monaco-editor .suggest-details {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Hover widgets and Tooltips */
+.monaco-editor .monaco-hover {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 6px 8px !important;
+  color: hsl(var(--popover-foreground)) !important;
+}
+
+.monaco-editor .monaco-hover hr {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* Parameter hints popup */
+.monaco-editor .parameter-hints-widget {
+  background-color: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px 8px !important;
+  color: hsl(var(--popover-foreground)) !important;
+}
+
+/* ==========================================================================
+   Sonner Toast Notification — Positioning & Forced Animations
+   ========================================================================== */
+
+/* Position container so toasts appear above the 33px StatusBar */
+[data-sonner-toaster][data-y-position='bottom'] {
+  --offset-bottom: 48px !important;
+}
+
+/* Force sonner slide/fade animations even when the user has
+   prefers-reduced-motion: reduce set at the OS level.
+   Without these overrides, sonner CSS resets transitions to
+   "none" inside the reduced-motion media query, making toasts
+   appear/disappear instantly with no animation. */
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toaster] {
+    transition: transform 400ms ease !important;
+  }
+  [data-sonner-toast] {
+    transition: transform 400ms, opacity 400ms, height 400ms, box-shadow 200ms !important;
+    animation: unset !important;
+  }
 }

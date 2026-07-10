@@ -8,9 +8,10 @@ interface FileNode {
 }
 
 async function listDir(path: string): Promise<FileNode[]> {
-  const res = await fetch(`/api/workspace/list?path=${encodeURIComponent(path)}`)
+  const res = await fetch(`/api/workspaces/contents?dirs_only=true&path=${encodeURIComponent(path)}`)
   if (!res.ok) return []
   const arr = await res.json()
+  if (!Array.isArray(arr)) return []
   return (arr as FileNode[]).filter((n) => n.isDir)
 }
 
@@ -133,7 +134,7 @@ function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusP
         ) : (
           <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate">{name}</span>
+        <span className="truncate text-muted-foreground">{name}</span>
         {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
       </button>
       {expanded && loaded && (
