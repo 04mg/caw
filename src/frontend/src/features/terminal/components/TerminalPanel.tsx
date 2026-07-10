@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
 import { attachTerminal, detachTerminal, getTerminal, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
@@ -49,6 +49,11 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
 
+  const cmdKey = useMemo(() => JSON.stringify(cmd ?? []), [cmd])
+  const stableCmd = useMemo(() => cmd, [cmdKey])
+  const cwdRef = useRef(cwd)
+  cwdRef.current = cwd
+
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [savedSelection, setSavedSelection] = useState('')
 
@@ -90,7 +95,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     document.addEventListener('visibilitychange', onVisibility)
 
     ;(async () => {
-      inst = await attachTerminal(terminalId, el, cwd, cmd)
+      inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd)
       if (cancelled) return
 
       if (isActiveRef.current) {
@@ -128,7 +133,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       resizeObsRef.current = null
       detachTerminal(terminalId)
     }
-  }, [terminalId, cwd, cmd])
+  }, [terminalId, stableCmd])
 
   useEffect(() => {
     if (!isActive) return
