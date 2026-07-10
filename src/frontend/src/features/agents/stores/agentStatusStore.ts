@@ -25,6 +25,7 @@ function ensureWs() {
           agentId: data.agentId,
           status: 'idle',
           timestamp: data.timestamp || new Date().toISOString(),
+          sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
         }
       } else {
         // agent_status or initial payload
@@ -36,6 +37,7 @@ function ensureWs() {
           details: data.details,
           title: data.title,
           timestamp: data.timestamp || new Date().toISOString(),
+          sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
         }
       }
 

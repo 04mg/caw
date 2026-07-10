@@ -2,6 +2,7 @@ package agent
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -59,6 +60,11 @@ func (h *Handler) ListStatuses(c *gin.Context) {
 		list = append(list, s)
 	}
 	statusesMu.RUnlock()
+	// Return in stable opening order so the UI doesn't reshuffle on every
+	// re-fetch (map iteration order is not deterministic).
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Sequence < list[j].Sequence
+	})
 	httpx.OK(c, list)
 }
 
@@ -82,7 +88,15 @@ func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
 	}()
 
 	statusesMu.RLock()
+	states := make([]AgentStatus, 0, len(statuses))
 	for _, s := range statuses {
+		states = append(states, s)
+	}
+	statusesMu.RUnlock()
+	sort.Slice(states, func(i, j int) bool {
+		return states[i].Sequence < states[j].Sequence
+	})
+	for _, s := range states {
 		msg, _ := marshalEvent(Event{
 			Type:      "agent_status",
 			SessionID: s.SessionID,
@@ -92,10 +106,10 @@ func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
 			Details:   s.Details,
 			Title:     s.Title,
 			Timestamp: s.Timestamp,
+			Sequence:  s.Sequence,
 		})
 		_ = wc.WriteMessage(websocket.TextMessage, msg)
 	}
-	statusesMu.RUnlock()
 
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
