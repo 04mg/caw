@@ -87,7 +87,6 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					}
 				}
 			}
-			isFirstRead := lastFileSize == 0
 			if watchedFilePath != "" {
 				info, err := os.Stat(watchedFilePath)
 				if err == nil {
@@ -98,7 +97,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 							}
 							callback(status, tool, details, sessionTitle)
 						}
-						w.parsePiLog(watchedFilePath, lastFileSize, resume && isFirstRead, wrappedCallback)
+						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -129,7 +128,7 @@ func parseOnePiLogLine(line string) (PiMessage, bool) {
 	return PiMessage{}, false
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, isResume bool, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
@@ -153,19 +152,6 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, isResume bool, cal
 	}
 
 	// Forward pass: emit status events for the new log lines.
-	//
-	// When this is the *first* read of the file (offset == 0) we only report
-	// the final state, mirroring the previous reverse-scan behaviour. This
-	// avoids replaying the whole session history as a burst of transitions on
-	// attach/resume (which would make the card flicker through past states).
-	//
-	// For *incremental* reads (offset > 0) we emit a status event for every
-	// state transition so that brief Working phases (Idle -> Working -> Idle)
-	// that complete entirely between two poll cycles are still surfaced to the
-	// UI. The previous implementation scanned the log backwards and only
-	// reported the LAST meaningful entry, so a fast exchange (e.g. "hi there"
-	// -> "hi") that finished within a single 500ms poll window was never seen
-	// leaving Idle.
 	var states []struct{ status, tool string }
 	for _, line := range lines {
 		msg, ok := parseOnePiLogLine(line)
@@ -183,10 +169,9 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, isResume bool, cal
 		return
 	}
 
-	if offset == 0 && isResume {
-		// Initial full read for a resumed (old) session: report only the
-		// final state to avoid replaying the whole session history as a
-		// burst of transitions.
+	if offset == 0 {
+		// Initial full read: report only the final state to avoid replaying the
+		// whole session history as a burst of transitions.
 		last := states[len(states)-1]
 		callback(last.status, last.tool, "", sessionTitle)
 		return
