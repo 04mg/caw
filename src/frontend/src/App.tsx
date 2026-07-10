@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
-import { AppLayout } from '@/components/AppLayout'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { AppLayout } from '@/features/shared/components/AppLayout'
+
+import { TooltipProvider } from '@/components/tooltip'
+
 
 export default function App() {
   useEffect(() => {
