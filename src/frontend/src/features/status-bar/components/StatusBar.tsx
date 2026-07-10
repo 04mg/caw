@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
@@ -313,6 +313,24 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					</Tooltip>
 					<span className="h-4 w-px bg-border shrink-0" />
 				</>
+			)}
+			{hideControlCenter && (
+				<Tooltip delayDuration={0}>
+					<TooltipTrigger asChild>
+						<button
+							onClick={() => onOpenSettings()}
+							className="shrink-0 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+						>
+							<Settings className="h-3.5 w-3.5" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="top" className="select-none">
+						Settings
+					</TooltipContent>
+				</Tooltip>
+			)}
+			{hideControlCenter && (
+				<span className="h-4 w-px bg-border shrink-0" />
 			)}
 			{workspaceName ? (
 				<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

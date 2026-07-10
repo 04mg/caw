@@ -25,7 +25,7 @@ function ensureWs() {
           ws.activePaneId = ''
         }
         if (ws.enableWorktrees === undefined) {
-          ws.enableWorktrees = true
+          ws.enableWorktrees = false
         }
       }
       for (const l of listeners) l(data)
@@ -56,7 +56,7 @@ export async function loadState(): Promise<BackendState> {
         ws.activePaneId = ''
       }
       if (ws.enableWorktrees === undefined) {
-        ws.enableWorktrees = true
+        ws.enableWorktrees = false
       }
     }
     return {
