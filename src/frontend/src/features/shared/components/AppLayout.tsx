@@ -45,6 +45,7 @@ import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
+import { workspacesEqual } from '@/features/shared/utils/utils'
 
 function findActiveLeaf(node: LayoutNode, activeId: string): any | null {
   if (node.type === 'leaf' && node.id === activeId) {
@@ -147,6 +148,7 @@ export function AppLayout() {
     let done = false
     loadState().then((s) => {
       if (done) return
+      skipPersistRef.current = true
       setWorkspaces(s.workspaces)
       setActiveWorkspaceId(s.activeWorkspaceId)
       setLoaded(true)
@@ -158,6 +160,10 @@ export function AppLayout() {
     const unsub = subscribeRemoteState((remote) => {
       skipPersistRef.current = true
       setWorkspaces((prev) => {
+        if (workspacesEqual(prev, remote.workspaces)) {
+          return prev
+        }
+
         const prevLeafIds = new Set<string>()
         for (const w of prev) for (const t of w.layouts) for (const id of collectLeafIds(t.layout)) prevLeafIds.add(id)
         const nextLeafIds = new Set<string>()
