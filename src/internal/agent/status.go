@@ -3,15 +3,14 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/04mg/caw/internal/httputil"
 	"github.com/04mg/caw/internal/terminal"
+	"github.com/04mg/caw/internal/ws"
 )
 
 // AgentStatus represents the current tracked state of an agent
@@ -58,35 +57,14 @@ type StatusWatcher interface {
 	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string))
 }
 
-// wsClient wraps a websocket connection with a dedicated write mutex.
-// gorilla/websocket does NOT support concurrent writes to the same
-// connection, and the status endpoint receives broadcasts from many goroutines
-// (handleSessionStart/Exit, updateStatus) while the read loop runs on its own
-// goroutine. A per-connection write lock serializes every WriteMessage so we
-// never trigger "concurrent write to websocket connection" panics.
-type wsClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
-
-func (c *wsClient) writeMessage(msgType int, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.conn.WriteMessage(msgType, data)
-}
-
 var (
 	statuses       = make(map[string]AgentStatus)
 	statusesMu     sync.RWMutex
 	activeSessions = make(map[string]*watcherContext)
 	activeSesMu    sync.Mutex
-	wsClients      = make(map[*wsClient]bool)
-	wsClientsMu    sync.Mutex
-	wsUpgrader     = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	watchers   = make(map[string]StatusWatcher)
-	watchersMu sync.Mutex
+	statusHub      = ws.NewHub()
+	watchers       = make(map[string]StatusWatcher)
+	watchersMu     sync.Mutex
 )
 
 func init() {
@@ -101,80 +79,16 @@ func RegisterStatusWatcher(agentID string, w StatusWatcher) {
 	watchersMu.Unlock()
 }
 
-// RegisterStatusWS registers the /ws/agents/statuses endpoint
-func RegisterStatusWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
-		c, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
+func StatusHub() *ws.Hub { return statusHub }
 
-		wc := &wsClient{conn: c}
-
-		wsClientsMu.Lock()
-		wsClients[wc] = true
-		wsClientsMu.Unlock()
-
-		defer func() {
-			wsClientsMu.Lock()
-			delete(wsClients, wc)
-			wsClientsMu.Unlock()
-			c.Close()
-		}()
-
-		// Send initial statuses
-		statusesMu.RLock()
-		for _, s := range statuses {
-			msg, _ := json.Marshal(Event{
-				Type:      "agent_status",
-				SessionID: s.SessionID,
-				AgentID:   s.AgentID,
-				Status:    s.Status,
-				Tool:      s.Tool,
-				Details:   s.Details,
-				Title:     s.Title,
-				Timestamp: s.Timestamp,
-			})
-			_ = wc.writeMessage(websocket.TextMessage, msg)
-		}
-		statusesMu.RUnlock()
-
-		// Keep connection alive
-		for {
-			if _, _, err := c.ReadMessage(); err != nil {
-				break
-			}
-		}
-	})
-
-	// Also expose standard HTTP GET for current status list
-	mux.HandleFunc("GET /api/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
-		statusesMu.RLock()
-		list := make([]AgentStatus, 0, len(statuses))
-		for _, s := range statuses {
-			list = append(list, s)
-		}
-		statusesMu.RUnlock()
-		httputil.WriteJSON(w, list)
-	})
-}
+func marshalEvent(ev Event) ([]byte, error) { return json.Marshal(ev) }
 
 func broadcastEvent(ev Event) {
-	msg, err := json.Marshal(ev)
+	msg, err := marshalEvent(ev)
 	if err != nil {
 		return
 	}
-
-	wsClientsMu.Lock()
-	clients := make([]*wsClient, 0, len(wsClients))
-	for wc := range wsClients {
-		clients = append(clients, wc)
-	}
-	wsClientsMu.Unlock()
-
-	for _, wc := range clients {
-		_ = wc.writeMessage(websocket.TextMessage, msg)
-	}
+	statusHub.Broadcast(websocket.TextMessage, msg)
 }
 
 func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {

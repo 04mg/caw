@@ -6,58 +6,80 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+
 	"github.com/04mg/caw/internal/agent"
 	_ "github.com/04mg/caw/internal/agent/agents"
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
+	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/quota"
 	_ "github.com/04mg/caw/internal/quota/providers"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
 	"github.com/04mg/caw/internal/workspace"
+	"github.com/04mg/caw/internal/ws"
 )
 
 type Server struct {
-	sessions   map[string]*terminal.Session
-	sessionsMu sync.RWMutex
-	upgrader   websocket.Upgrader
 	store      *state.Store
 	frontendFS fs.FS
+	hub        *ws.Hub
+	upgrader   websocket.Upgrader
 }
 
 func New() *Server {
+	gin.SetMode(gin.ReleaseMode)
+
 	frontendFS, err := fs.Sub(embed.FrontendFS, "frontend/dist")
 	if err != nil {
 		log.Fatalf("embed sub: %v", err)
 	}
 
 	return &Server{
-		sessions:   make(map[string]*terminal.Session),
-		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		store:      state.NewStore(state.DefaultDBPath()),
 		frontendFS: frontendFS,
+		store:      state.NewStore(state.DefaultDBPath()),
+		hub:        ws.NewHub(),
+		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
 }
 
+func (s *Server) Engine() *gin.Engine {
+	r := gin.New()
+	httpx.InstallErrorMiddleware(r)
+
+	api := r.Group("/api")
+	{
+		terminal.Register(api, s.store, &s.upgrader)
+		state.RegisterHTTP(api, s.store, s.hub)
+		workspace.Register(api)
+		git.Register(api)
+		agent.Register(api)
+		quota.Register(api, s.store)
+	}
+
+	r.GET("/ws/state", func(c *gin.Context) {
+		state.HandleStateWS(c.Writer, c.Request, s.store, s.hub)
+	})
+	r.GET("/ws/workspaces/files", gin.WrapF(workspace.HandleFilesWS))
+	r.GET("/ws/agents/statuses", func(c *gin.Context) {
+		agent.HandleStatusWS(c.Writer, c.Request, agent.StatusHub())
+	})
+	r.GET("/ws/terminals/:id", func(c *gin.Context) {
+		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &s.upgrader)
+	})
+
+	r.NoRoute(func(c *gin.Context) {
+		http.FileServer(http.FS(s.frontendFS)).ServeHTTP(c.Writer, c.Request)
+	})
+
+	return r
+}
+
 func (s *Server) ListenAndServe(host, port string) {
-	mux := http.NewServeMux()
-
-	terminal.Register(mux, s.sessions, &s.sessionsMu, &s.upgrader, s.store)
-	state.RegisterHTTP(mux, s.store)
-	state.RegisterWS(mux, s.store)
-	workspace.Register(mux)
-	workspace.RegisterWS(mux)
-	git.Register(mux)
-	agent.Register(mux)
-	agent.RegisterStatusWS(mux)
-	quota.Register(mux, s.store)
-
-	mux.Handle("/", http.FileServer(http.FS(s.frontendFS)))
-
 	addr := host + ":" + port
 	fmt.Print(strings.Replace(embed.IconTxt, "localhost:8080", addr, 1))
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, s.Engine()))
 }

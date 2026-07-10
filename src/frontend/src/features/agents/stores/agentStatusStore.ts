@@ -70,7 +70,7 @@ export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>
   try {
     const res = await fetch('/api/agents/statuses')
     if (!res.ok) return {}
-    const list = await res.json() as AgentStatus[]
+    const list = (await res.json())?.data as AgentStatus[]
     const next: Record<string, AgentStatus> = {}
     for (const s of list) {
       next[s.sessionId] = s

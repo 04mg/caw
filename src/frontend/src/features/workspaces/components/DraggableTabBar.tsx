@@ -45,8 +45,9 @@ export function DraggableTabBar({
 
   useEffect(() => {
     fetch('/api/agents')
-      .then((res) => res.json())
-      .then((data) => {
+      .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
+      .then((json) => {
+        const data = json?.data
         if (Array.isArray(data)) {
           setAvailableAgents(data)
         }

@@ -5,7 +5,7 @@ import { type FileNode } from '../types'
 async function listDir(path: string): Promise<FileNode[]> {
   const res = await fetch(`/api/workspaces/contents?dirs_only=true&path=${encodeURIComponent(path)}`)
   if (!res.ok) return []
-  const arr = await res.json()
+  const arr = (await res.json())?.data
   if (!Array.isArray(arr)) return []
   return (arr as FileNode[]).filter((n) => n.isDir)
 }

@@ -42,8 +42,12 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
     setSearching(true)
     try {
       const res = await fetch(`/api/workspaces/directories?q=${encodeURIComponent(q)}&root=${encodeURIComponent(root)}`)
-      if (res.ok) setResults(await res.json())
-      else setResults([])
+      if (res.ok) {
+        const json = await res.json()
+        setResults(json?.data ?? [])
+      } else {
+        setResults([])
+      }
     } catch { setResults([]) }
     setSearching(false)
   }, [])

@@ -84,8 +84,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		try {
 			const res = await fetch('/api/quotas/settings')
 			if (res.ok) {
-				const data = await res.json()
-				setSettings(data || {})
+				const json = await res.json()
+				setSettings(json?.data || {})
 			}
 		} catch (e) {
 			console.error('Error fetching settings', e)
@@ -97,10 +97,11 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		try {
 			const res = await fetch('/api/quotas')
 			if (res.ok) {
-				const data = await res.json()
-				setQuotas(data)
+				const json = await res.json()
+				setQuotas(json?.data)
 			} else {
-				console.error('Failed to fetch quotas', res.statusText)
+				const json = await res.json().catch(() => null)
+				console.error('Failed to fetch quotas', json?.error?.message ?? res.statusText)
 			}
 		} catch (e) {
 			console.error('Error fetching quotas', e)

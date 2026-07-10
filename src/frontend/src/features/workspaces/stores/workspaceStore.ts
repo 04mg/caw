@@ -47,7 +47,7 @@ export async function loadState(): Promise<BackendState> {
   try {
     const res = await fetch('/api/workspaces')
     if (!res.ok) return { ...empty }
-    const data = await res.json() as BackendState
+    const data = (await res.json())?.data as BackendState
     if (!data || !Array.isArray(data.workspaces)) return { ...empty }
     for (const ws of data.workspaces) {
       if (!Array.isArray(ws.layouts)) {
