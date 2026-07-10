@@ -35,8 +35,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
 	const agentID = "pi"
-	// Increase lookback to 5 minutes to avoid clock skew / file creation delay issues
-	lookback := 5 * time.Minute
+	lookback := 2 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
