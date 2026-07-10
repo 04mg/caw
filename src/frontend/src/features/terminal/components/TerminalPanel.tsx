@@ -149,7 +149,12 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
 
   useEffect(() => {
     if (!contextMenu) return
-    const handleClose = () => setContextMenu(null)
+    const handleClose = (e: MouseEvent) => {
+      if (contextMenuRef.current && contextMenuRef.current.contains(e.target as Node)) {
+        return
+      }
+      setContextMenu(null)
+    }
     document.addEventListener('mousedown', handleClose)
     document.addEventListener('click', handleClose)
     return () => {
