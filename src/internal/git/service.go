@@ -1,0 +1,118 @@
+package git
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+)
+
+type Service struct {
+	statusCacheMu   sync.Mutex
+	statusCache     map[string]string
+	statusCacheRepo string
+	statusCacheTime time.Time
+	statusCacheTTL  time.Duration
+}
+
+func NewService() *Service {
+	return &Service{statusCacheTTL: 2 * time.Second}
+}
+
+func (s *Service) Status(path string) (map[string]string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+
+	s.statusCacheMu.Lock()
+	if abs == s.statusCacheRepo && time.Since(s.statusCacheTime) < s.statusCacheTTL && s.statusCache != nil {
+		result := s.statusCache
+		s.statusCacheMu.Unlock()
+		return result, nil
+	}
+	s.statusCacheMu.Unlock()
+
+	cmd := exec.Command("git", "status", "--porcelain", "-u")
+	cmd.Dir = abs
+	output, err := cmd.Output()
+	if err != nil {
+		return map[string]string{}, nil
+	}
+
+	statuses := make(map[string]string, 64)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		statusXY := line[:2]
+		filePath := line[3:]
+		filePath = strings.Trim(filePath, "\"")
+		absFilePath := filepath.Join(abs, filePath)
+		statuses[absFilePath] = statusXY
+	}
+
+	s.statusCacheMu.Lock()
+	s.statusCache = statuses
+	s.statusCacheRepo = abs
+	s.statusCacheTime = time.Now()
+	s.statusCacheMu.Unlock()
+
+	return statuses, nil
+}
+
+func (s *Service) Diff(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = abs
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func (s *Service) Original(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	dir := filepath.Dir(abs)
+	var gitRoot string
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			gitRoot = dir
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	if gitRoot == "" {
+		return "", ErrNotGitRepo
+	}
+
+	relPath, err := filepath.Rel(gitRoot, abs)
+	if err != nil {
+		return "", err
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	cmd := exec.Command("git", "show", "HEAD:"+relPath)
+	cmd.Dir = gitRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return "", nil
+	}
+	return string(output), nil
+}

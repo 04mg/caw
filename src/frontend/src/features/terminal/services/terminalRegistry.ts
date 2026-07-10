@@ -46,7 +46,7 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: leafId, cwd: cwd || '', cmd }),
   })
-  const { id } = await res.json()
+  const { id } = (await res.json())?.data ?? {}
   return id
 }
 

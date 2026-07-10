@@ -100,10 +100,11 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         try {
           const res = await fetch(`/api/git/diffs?path=${encodeURIComponent(cwd)}`)
           if (res.ok) {
-            const text = await res.text()
-            setContent(text)
+            const json = await res.json()
+            setContent(json?.data?.content ?? '')
           } else {
-            setError('Failed to load git diff.')
+            const json = await res.json().catch(() => null)
+            setError(json?.error?.message ?? 'Failed to load git diff.')
           }
         } catch {
           setError('Network error loading git diff.')
@@ -126,8 +127,10 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`),
         ])
 
-        const origText = resOrig.ok ? await resOrig.text() : ''
-        const currText = resCurr.ok ? await resCurr.text() : ''
+        const origJson = resOrig.ok ? await resOrig.json() : null
+        const currJson = resCurr.ok ? await resCurr.json() : null
+        const origText = origJson?.data?.content ?? ''
+        const currText = currJson?.data?.content ?? ''
 
         setOriginalContent(origText)
         setEditedContent(currText)
@@ -135,12 +138,14 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         // Normal file read
         const res = await fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`)
         if (res.ok) {
-          const text = await res.text()
+          const json = await res.json()
+          const text = json?.data?.content ?? ''
           setContent(text)
           setEditedContent(text)
           originalContentRef.current = text
         } else {
-          setError(`Failed to read file: ${res.statusText}`)
+          const json = await res.json().catch(() => null)
+          setError(json?.error?.message ?? `Failed to read file: ${res.statusText}`)
         }
       }
     } catch (err: any) {

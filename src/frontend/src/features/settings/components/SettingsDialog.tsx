@@ -55,7 +55,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     try {
       const res = await fetch('/api/quotas/settings')
       if (res.ok) {
-        const data = await res.json()
+        const data = (await res.json())?.data
         setAntigravityKey(data.antigravity?.apiKey || '')
         setOpencodeCookie(data.opencode?.cookie || '')
         setOpencodeWorkspace(data.opencode?.workspaceId || '')
@@ -78,8 +78,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     try {
       const res = await fetch('/api/quotas')
       if (res.ok) {
-        const data = await res.json()
-        setQuotas(data)
+        const json = await res.json()
+        setQuotas(json?.data)
       }
     } catch (e) {
       console.error('Failed to load quotas', e)
@@ -171,10 +171,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setCopilotDeviceError('')
       const res = await fetch('/api/quotas/copilot/device-codes', { method: 'POST' })
       if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Failed to initiate device login')
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error?.message || 'Failed to initiate device login')
       }
-      const data = await res.json()
+      const data = (await res.json())?.data
       setCopilotDeviceCode(data.device_code)
       setCopilotUserCode(data.user_code)
       setCopilotVerificationURI(data.verification_uri)
@@ -193,10 +193,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     try {
       const res = await fetch(`/api/quotas/copilot/device-codes/${encodeURIComponent(copilotDeviceCode)}`)
       if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Poll failed')
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error?.message || 'Poll failed')
       }
-      const data = await res.json()
+      const data = (await res.json())?.data
       if (data.access_token) {
         setCopilotToken(data.access_token)
         setCopilotDeviceFlow('done')

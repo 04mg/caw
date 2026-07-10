@@ -11,11 +11,7 @@ var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func RegisterWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/workspaces/files", handleWS)
-}
-
-func handleWS(w http.ResponseWriter, r *http.Request) {
+func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
 	c, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return

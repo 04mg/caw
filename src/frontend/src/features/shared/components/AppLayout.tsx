@@ -158,8 +158,8 @@ export function AppLayout() {
     try {
       const res = await fetch(`/api/git/statuses?path=${encodeURIComponent(currentWorkspacePath)}`)
       if (res.ok) {
-        const data = await res.json()
-        setGitStatuses(data)
+        const json = await res.json()
+        setGitStatuses(json?.data || {})
       } else {
         setGitStatuses({})
       }
@@ -501,7 +501,7 @@ export function AppLayout() {
           }),
         })
         if (res.ok) {
-          const data = await res.json()
+          const data = (await res.json())?.data
           if (data.isGit) {
             cwd = data.worktreePath
             agentBranch = data.branchName
@@ -580,7 +580,7 @@ export function AppLayout() {
             `/api/agents/changes?worktreePath=${encodeURIComponent(firstLeaf.cwd || '')}&branchName=${encodeURIComponent(firstLeaf.agentBranch || '')}&baseBranch=${encodeURIComponent(firstLeaf.baseBranch || '')}`,
           )
           if (res.ok) {
-            const data = await res.json()
+            const data = (await res.json())?.data
             uncommitted = !!data.hasUncommitted
             unmerged = !!data.hasUnmergedCommits
           }
@@ -751,7 +751,7 @@ export function AppLayout() {
             `/api/agents/changes?worktreePath=${encodeURIComponent(leaf.cwd || '')}&branchName=${encodeURIComponent(leaf.agentBranch || '')}&baseBranch=${encodeURIComponent(leaf.baseBranch || '')}`,
           )
           if (res.ok) {
-            const data = await res.json()
+            const data = (await res.json())?.data
             uncommitted = !!data.hasUncommitted
             unmerged = !!data.hasUnmergedCommits
           }
@@ -780,7 +780,7 @@ export function AppLayout() {
       try {
         const res = await fetch(`/api/workspaces/details?path=${encodeURIComponent(path)}`)
         if (res.ok) {
-          const data = await res.json()
+          const data = (await res.json())?.data
           absPath = data.path || path
         }
       } catch { /* fall back to raw path */ }

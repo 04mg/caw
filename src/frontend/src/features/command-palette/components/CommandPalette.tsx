@@ -58,8 +58,8 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) return
     fetch('/api/agents')
-      .then((r) => r.ok ? r.json() : [])
-      .then(setAgents)
+      .then((r) => r.ok ? r.json() : Promise.resolve({ data: [] }))
+      .then((json) => setAgents(json?.data ?? []))
       .catch(() => setAgents([]))
 
     const savedDisabled = localStorage.getItem('caw:disabledAgents')
@@ -94,8 +94,12 @@ export function CommandPalette({
     searchTimerRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/workspaces/files?q=${encodeURIComponent(query)}&root=${encodeURIComponent(workspacePath)}`)
-        if (res.ok) setFileResults(await res.json())
-        else setFileResults([])
+        if (res.ok) {
+          const json = await res.json()
+          setFileResults(json?.data ?? [])
+        } else {
+          setFileResults([])
+        }
       } catch {
         setFileResults([])
       }

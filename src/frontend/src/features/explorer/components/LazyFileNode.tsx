@@ -73,7 +73,7 @@ export function LazyFileNode({
     try {
       const res = await fetch(`/api/workspaces/contents?path=${encodeURIComponent(path)}`)
       if (res.ok) {
-        const arr = await res.json()
+        const arr = (await res.json())?.data
         if (Array.isArray(arr)) {
           const sorted = (arr as FileNode[]).sort((a, b) => {
             if (a.isDir && !b.isDir) return -1
