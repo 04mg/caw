@@ -76,6 +76,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       } catch { /* ignore */ }
     }
 
+    const handleRightClickMousedown = (e: MouseEvent) => {
+      if (e.button === 2) {
+        e.stopPropagation()
+      }
+    }
+    el.addEventListener('mousedown', handleRightClickMousedown, true)
+    el.addEventListener('mouseup', handleRightClickMousedown, true)
+
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         flushResize()
@@ -112,6 +120,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisibility)
+      el.removeEventListener('mousedown', handleRightClickMousedown, true)
+      el.removeEventListener('mouseup', handleRightClickMousedown, true)
       if (fitTimerRef.current) {
         clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
