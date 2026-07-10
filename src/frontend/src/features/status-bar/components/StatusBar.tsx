@@ -14,6 +14,7 @@ interface Quota {
 	used:  number
 	limit: number
 	unit?: string // "" | "percentage" | "credits" | "count" | "info"
+	resetTime?: string
 }
 
 interface QuotaItem {
@@ -64,6 +65,19 @@ const formatQuotaValue = (used: number, limit: number, unit?: string): { text: s
 	// credits / count
 	const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
 	return { text: `${used}/${limit}`, percentage: pct }
+}
+
+const formatResetTime = (iso: string): string => {
+	const then = new Date(iso).getTime()
+	if (isNaN(then)) return iso
+	const diff = then - Date.now()
+	if (diff <= 0) return 'soon'
+	const days = Math.floor(diff / 86400000)
+	const hours = Math.floor((diff % 86400000) / 3600000)
+	const minutes = Math.floor((diff % 3600000) / 60000)
+	if (days >= 1) return `${days}d ${hours}h`
+	if (hours >= 1) return `${hours}h ${minutes}m`
+	return `${minutes}m`
 }
 
 interface StatusBarProps {
@@ -247,7 +261,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 	const activeDisplay = getQuotaDisplay()
 
-	const renderProgressBar = (used: number, limit: number, unit?: string) => {
+	const renderProgressBar = (used: number, limit: number, unit?: string, resetTime?: string) => {
 		const isInfo = unit === 'info'
 		if (isInfo) {
 			return null
@@ -256,8 +270,11 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		const pct = display.percentage
 		return (
 			<div className="flex flex-col gap-1 w-full mt-1.5 animate-none">
-				<div className="text-[10px] text-muted-foreground select-none font-sans">
+				<div className="flex items-center justify-between text-[10px] text-muted-foreground select-none font-sans">
 					<span>{display.text}</span>
+					{resetTime && (
+						<span className="text-[9px] text-muted-foreground/70">reset in {formatResetTime(resetTime)}</span>
+					)}
 				</div>
 				<div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
 					<div
@@ -414,7 +431,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -455,7 +472,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -496,7 +513,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -539,7 +556,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																			<span className="text-foreground" title={item.description}>{item.label}</span>
 																			{isActive && <Check className="h-3 w-3 text-primary" />}
 																		</div>
-																		{renderProgressBar(item.used, item.limit, item.unit)}
+																		{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
 																	</div>
 																)
 															})}
@@ -567,7 +584,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																	<span className="text-foreground">{label}</span>
 																	{isActive && <Check className="h-3 w-3 text-primary" />}
 																</div>
-																{renderProgressBar(val.used, val.limit, val.unit)}
+																{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 															</div>
 														)
 													})
@@ -610,7 +627,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -651,7 +668,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -692,7 +709,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																<span className="text-foreground">{label}</span>
 																{isActive && <Check className="h-3 w-3 text-primary" />}
 															</div>
-															{renderProgressBar(val.used, val.limit, val.unit)}
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
 														</div>
 													)
 												})}
@@ -717,11 +734,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 																		<span className="text-foreground" title={item.description}>{item.label}</span>
 																		{isActive && <Check className="h-3 w-3 text-primary" />}
 																	</div>
-																	{renderProgressBar(item.used, item.limit, item.unit)}
-																	{item.resetTime && (
-																		<span className="text-[9px] text-muted-foreground/70 font-sans mt-0.5">Reset: {item.resetTime}</span>
-																	)}
-																</div>
+																{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
+															</div>
 															)
 														})}
 													</div>

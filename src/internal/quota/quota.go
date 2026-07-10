@@ -1,9 +1,10 @@
 package quota
 
 type Quota struct {
-	Used  int    `json:"used"`
-	Limit int    `json:"limit"`
-	Unit  string `json:"unit,omitempty"` // "" | "percentage" | "credits" | "count"
+	Used      int    `json:"used"`
+	Limit     int    `json:"limit"`
+	Unit      string `json:"unit,omitempty"`       // "" | "percentage" | "credits" | "count"
+	ResetTime string `json:"resetTime,omitempty"`  // ISO 8601 timestamp
 }
 
 type QuotaItem struct {

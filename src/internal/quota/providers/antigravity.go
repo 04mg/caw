@@ -512,20 +512,20 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 				used = 100
 			}
 
-			is5h := strings.Contains(combined, "5h") || strings.Contains(combined, "5-hour") || strings.Contains(combined, "five hour")
-			isWeekly := strings.Contains(combined, "weekly")
+		is5h := strings.Contains(combined, "5h") || strings.Contains(combined, "5-hour") || strings.Contains(combined, "five hour")
+		isWeekly := strings.Contains(combined, "weekly")
 
-			if strings.Contains(groupName, "gemini") {
-				if is5h {
-					res.FiveHour = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
-				} else if isWeekly {
-					res.Monthly = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
-				}
-			} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
-				if isWeekly {
-					res.Weekly = quota.Quota{Used: used, Limit: 100, Unit: "percentage"}
-				}
+		if strings.Contains(groupName, "gemini") {
+			if is5h {
+				res.FiveHour = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+			} else if isWeekly {
+				res.Monthly = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
+		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
+			if isWeekly {
+				res.Weekly = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+			}
+		}
 		}
 	}
 	return res
@@ -617,12 +617,17 @@ func getModelQuota(modelsResponse *GoogleAvailableModelsResponse, keys ...string
 			if used > 100 {
 				used = 100
 			}
-		return quota.Quota{
-			Used:  used,
-			Limit: 100,
-			Unit:  "percentage",
-		}, nil
-	}
+			resetTime := ""
+			if m.QuotaInfo != nil {
+				resetTime = m.QuotaInfo.ResetTime
+			}
+			return quota.Quota{
+				Used:      used,
+				Limit:     100,
+				Unit:      "percentage",
+				ResetTime: resetTime,
+			}, nil
+		}
 	}
 	return quota.Quota{
 		Used:  0,

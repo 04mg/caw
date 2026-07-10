@@ -18,6 +18,10 @@ func init() {
 	quota.RegisterProvider("ollama", &OllamaProvider{})
 }
 
+var reOllamaSession = regexp.MustCompile(`aria-label="Session usage ([0-9]+(?:\.[0-9]+)?)% used"`)
+var reOllamaWeekly = regexp.MustCompile(`aria-label="Weekly usage ([0-9]+(?:\.[0-9]+)?)% used"`)
+var reOllamaDataTime = regexp.MustCompile(`data-time="([^"]+)"`)
+
 func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
 	cookie := config["cookie"]
 	if cookie == "" {
@@ -56,8 +60,7 @@ func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 	// decimal percentage (e.g. "3.5%"), so match a floating-point number
 	// and round to the nearest integer.
 	sessionUsed := 0
-	sessionRegex := regexp.MustCompile(`aria-label="Session usage ([0-9]+(?:\.[0-9]+)?)% used"`)
-	if matches := sessionRegex.FindStringSubmatch(html); len(matches) >= 2 {
+	if matches := reOllamaSession.FindStringSubmatch(html); len(matches) >= 2 {
 		if val, err := strconv.ParseFloat(matches[1], 64); err == nil {
 			sessionUsed = int(math.Round(val))
 		}
@@ -68,23 +71,35 @@ func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 
 	// Regex parsing of Weekly usage
 	weeklyUsed := 0
-	weeklyRegex := regexp.MustCompile(`aria-label="Weekly usage ([0-9]+(?:\.[0-9]+)?)% used"`)
-	if matches := weeklyRegex.FindStringSubmatch(html); len(matches) >= 2 {
+	if matches := reOllamaWeekly.FindStringSubmatch(html); len(matches) >= 2 {
 		if val, err := strconv.ParseFloat(matches[1], 64); err == nil {
 			weeklyUsed = int(math.Round(val))
 		}
 	}
 
+	// Extract reset times from data-time attributes. The HTML renders a
+	// .local-time element with data-time="ISO" after each usage block.
+	// The first data-time corresponds to Session (5h), the second to Weekly.
+	var sessionReset, weeklyReset string
+	if dataTimes := reOllamaDataTime.FindAllStringSubmatch(html, -1); len(dataTimes) >= 1 {
+		sessionReset = dataTimes[0][1]
+		if len(dataTimes) >= 2 {
+			weeklyReset = dataTimes[1][1]
+		}
+	}
+
 	return &quota.QuotaResponse{
 		FiveHour: quota.Quota{
-			Used:  sessionUsed,
-			Limit: 100,
-			Unit:  "percentage",
+			Used:      sessionUsed,
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: sessionReset,
 		},
 		Weekly: quota.Quota{
-			Used:  weeklyUsed,
-			Limit: 100,
-			Unit:  "percentage",
+			Used:      weeklyUsed,
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: weeklyReset,
 		},
 		Monthly: quota.Quota{
 			Used:  0,

@@ -26,9 +26,10 @@ func (p *CopilotProvider) IsInstalled() bool {
 
 // CopilotUsageResponse mirrors api.github.com/copilot_internal/user.
 type CopilotUsageResponse struct {
-	QuotaResetDate string                       `json:"quota_reset_date"`
-	QuotaSnapshots CopilotQuotaSnapshotsPayload  `json:"quota_snapshots"`
-	CopilotPlan    string                        `json:"copilot_plan"`
+	QuotaResetDate     string                      `json:"quota_reset_date"`
+	QuotaResetDateUTC  string                      `json:"quota_reset_date_utc"`
+	QuotaSnapshots     CopilotQuotaSnapshotsPayload `json:"quota_snapshots"`
+	CopilotPlan        string                      `json:"copilot_plan"`
 }
 
 type CopilotQuotaSnapshotsPayload struct {
@@ -72,8 +73,24 @@ func (p *CopilotProvider) GetQuotas(config map[string]string) (*quota.QuotaRespo
 	return &quota.QuotaResponse{
 		FiveHour: fiveHour,
 		Weekly:   weekly,
-		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
+		Monthly: quota.Quota{
+			Used:      0,
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: copilotResetTime(usage),
+		},
 	}, nil
+}
+
+func copilotResetTime(u *CopilotUsageResponse) string {
+	if u.QuotaResetDateUTC != "" {
+		return u.QuotaResetDateUTC
+	}
+	if u.QuotaResetDate != "" {
+		// "2026-08-01" → ISO 8601
+		return u.QuotaResetDate + "T00:00:00.000Z"
+	}
+	return ""
 }
 
 func copilotWindow(s *CopilotQuotaSnapshot) quota.Quota {
