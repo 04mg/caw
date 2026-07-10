@@ -59,7 +59,20 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [pushNeedsInput, setPushNeedsInput] = useState(true)
   const [pushFinished, setPushFinished] = useState(true)
   const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>('default')
-  const [pushSupported] = useState(() => typeof navigator !== 'undefined' && 'serviceWorker' in navigator && ('PushManager' in window || 'pushManager' in ServiceWorkerRegistration.prototype))
+  const [pushSupported] = useState(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false
+    // Safari (incl. iOS 16.4+) exposes pushManager on ServiceWorkerRegistration,
+    // not on window. iOS requires the app to be installed as a PWA (standalone).
+    const hasPushManager = 'PushManager' in window || 'pushManager' in ServiceWorkerRegistration.prototype
+    return hasPushManager
+  })
+  const [pushIOSPWA] = useState(() => {
+    if (typeof navigator === 'undefined') return false
+    const ua = navigator.userAgent || ''
+    const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true
+    return isIOS && !isStandalone
+  })
   const [pushSubscribed, setPushSubscribed] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
   const [pushError, setPushError] = useState('')
@@ -167,7 +180,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setSoundEnabled(localStorage.getItem('caw:soundEnabled') !== '0')
       if (pushSupported && 'Notification' in window) {
         setPushPermission(Notification.permission)
-      } else {
+      } else if (!pushSupported && !pushIOSPWA) {
         setPushPermission('unsupported')
       }
       fetch('/api/push/prefs')
@@ -1050,9 +1063,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <p className="text-[10px] text-muted-foreground">Get notified even when Caw is not in focus. Requires browser notification permission.</p>
                 </div>
 
-                {!pushSupported && (
+                {!pushSupported && !pushIOSPWA && (
                   <div className="px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/10 text-xs text-amber-400">
                     Web Push is not supported in this browser.
+                  </div>
+                )}
+
+                {pushIOSPWA && (
+                  <div className="px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/10 text-xs text-amber-400">
+                    On iOS, Web Push requires Caw to be installed as a PWA. Tap the Share button and choose <strong>Add to Home Screen</strong>, then open Caw from the Home Screen icon to enable push notifications.
                   </div>
                 )}
 
