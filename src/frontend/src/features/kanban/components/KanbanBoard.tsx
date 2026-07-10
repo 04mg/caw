@@ -169,6 +169,19 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     groupedAgents[colId].push(agent)
   })
 
+  // Keep a stable ordering based on the backend-assigned opening sequence
+  // (falling back to timestamp) so the cards don't reshuffle every time the
+  // Control Center is reopened and the list is re-fetched.
+  const byStableOrder = (a: AgentStatus, b: AgentStatus) => {
+    const sa = typeof a.sequence === 'number' ? a.sequence : Number.MAX_SAFE_INTEGER
+    const sb = typeof b.sequence === 'number' ? b.sequence : Number.MAX_SAFE_INTEGER
+    if (sa !== sb) return sa - sb
+    return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  }
+  ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
+    groupedAgents[colId].sort(byStableOrder)
+  })
+
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
     const wsDetails = findWorkspaceDetails(agent.sessionId)

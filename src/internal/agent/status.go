@@ -23,6 +23,11 @@ type AgentStatus struct {
 	Details   string    `json:"details,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+	// Sequence is a monotonically increasing value assigned when a session is
+	// first tracked. It reflects the order in which agents were opened and is
+	// used to keep a stable ordering in the UI instead of relying on the map
+	// iteration order or timestamps (which can reorder when re-fetching).
+	Sequence int64 `json:"sequence"`
 }
 
 // Event represents a WebSocket event message
@@ -36,6 +41,7 @@ type Event struct {
 	Details   string    `json:"details,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+	Sequence  int64     `json:"sequence"`
 }
 
 type watcherContext struct {
@@ -65,6 +71,9 @@ var (
 	statusHub      = ws.NewHub()
 	watchers       = make(map[string]StatusWatcher)
 	watchersMu     sync.Mutex
+	// statusSeq is a monotonic counter used to assign a stable opening-order
+	// sequence to each agent session. It is only mutated under statusesMu.
+	statusSeq int64
 )
 
 func init() {
@@ -100,6 +109,12 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		return // no change
 	}
 
+	seq := prev.Sequence
+	if !exists {
+		statusSeq++
+		seq = statusSeq
+	}
+
 	s := AgentStatus{
 		SessionID: sessionID,
 		AgentID:   agentID,
@@ -109,6 +124,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		Details:   details,
 		Title:     title,
 		Timestamp: now,
+		Sequence:  seq,
 	}
 	statuses[sessionID] = s
 	statusesMu.Unlock()
@@ -123,6 +139,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		Details:   details,
 		Title:     title,
 		Timestamp: now,
+		Sequence:  seq,
 	})
 }
 

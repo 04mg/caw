@@ -6,6 +6,9 @@ export interface AgentStatus {
   details?: string
   title?: string
   timestamp: string
+  // Sequence reflects the order in which agents were opened (assigned by the
+  // backend). Used to keep a stable ordering in the UI instead of timestamps.
+  sequence?: number
 }
 
 export interface AgentStatusEvent {
@@ -18,6 +21,7 @@ export interface AgentStatusEvent {
   details?: string
   title?: string
   timestamp: string
+  sequence?: number
 }
 
 export interface AgentType {
