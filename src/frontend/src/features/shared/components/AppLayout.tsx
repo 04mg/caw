@@ -27,7 +27,7 @@ import { type Workspace } from '@/features/workspaces/types'
 import { DraggableTabBar } from '@/features/workspaces/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, Workflow, PanelRight } from 'lucide-react'
+import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -294,7 +294,6 @@ export function AppLayout() {
       const agentDef = agentTypes[agentStatus.agentId]
       // AgentIcon is a React component — rendered inside the toast custom fn
       const AgentIcon = agentDef?.icon
-      const agentLabel = agentDef?.label || agentStatus.agentId
 
       // Find the workspace + tab + pane that owns this sessionId
       const findDetails = (sessionId: string) => {
@@ -344,71 +343,59 @@ export function AppLayout() {
               }
               toast.dismiss(t)
             }}
-            className={`flex flex-col gap-2 p-3.5 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
+            className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
               type === 'needs_input'
                 ? 'border-amber-500/30 hover:border-amber-500/50'
                 : 'border-emerald-500/20 hover:border-emerald-500/40'
             }`}
           >
-            {/* Header: agent icon + name + status badge */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className={`shrink-0 p-1.5 rounded-lg border ${
-                  type === 'needs_input'
-                    ? 'bg-amber-500/10 border-amber-500/20'
-                    : 'bg-emerald-500/10 border-emerald-500/20'
-                }`}>
-                  {AgentIcon
-                    ? <AgentIcon className="w-3.5 h-3.5" />
-                    : <span className="block w-3.5 h-3.5" />
-                  }
-                </div>
-                <span className="font-semibold text-xs text-foreground/90 truncate">
-                  {agentLabel}
-                </span>
-              </div>
-
-              {type === 'needs_input' ? (
-                <div className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] uppercase font-mono tracking-wider font-bold">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
-                  </span>
-                  Needs Input
-                </div>
-              ) : (
-                <div className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] uppercase font-mono tracking-wider font-bold">
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-                  Finished
-                </div>
-              )}
-            </div>
-
-            {/* Chat title */}
-            <div className="text-[11px] text-foreground/75 font-medium italic pl-2 border-l-2 border-border/50 py-0.5 truncate">
-              {truncatedTitle}
-            </div>
-
-            {/* Workspace / Worktree footer */}
-            <div className={`flex flex-col gap-1 text-[10px] text-muted-foreground/70 border-t pt-2 mt-0.5 ${
-              type === 'needs_input' ? 'border-amber-500/10' : 'border-emerald-500/10'
+            {/* Large agent icon */}
+            <div className={`shrink-0 flex items-center justify-center w-12 h-12 rounded-xl border ${
+              type === 'needs_input'
+                ? 'bg-amber-500/15 border-amber-500/30'
+                : 'bg-emerald-500/15 border-emerald-500/30'
             }`}>
-              {wsDetails ? (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <Folder className="w-3 h-3 shrink-0 text-muted-foreground/50" />
-                    <span className="truncate">{wsDetails.workspaceEmoji} {wsDetails.workspaceName}</span>
-                  </div>
-                  {wsDetails.agentBranch && (
-                    <div className="flex items-center gap-1.5">
-                      <Workflow className="w-3 h-3 shrink-0 text-violet-400" />
-                      <span className="font-mono text-[9px] text-violet-400/80 truncate">{wsDetails.agentBranch}</span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <span className="italic text-muted-foreground/40">Unknown workspace</span>
-              )}
+              {AgentIcon
+                ? <AgentIcon className={`w-6 h-6 ${type === 'needs_input' ? 'text-amber-400' : 'text-emerald-400'}`} />
+                : <span className="block w-6 h-6" />
+              }
+            </div>
+
+            {/* Text content */}
+            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+              {/* Headline: state */}
+              <span className={`font-bold text-sm leading-tight ${
+                type === 'needs_input' ? 'text-amber-400' : 'text-emerald-400'
+              }`}>
+                {type === 'needs_input' ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+                    </span>
+                    Needs Input
+                  </span>
+                ) : 'Finished'}
+              </span>
+
+              {/* Chat title subtext */}
+              <span className="text-[11px] text-foreground/60 truncate leading-snug">
+                {truncatedTitle}
+              </span>
+
+              {/* Footnote: workspace • branch */}
+              <span className="text-[9px] text-muted-foreground/50 truncate mt-0.5 leading-tight">
+                {wsDetails ? (
+                  <>
+                    {wsDetails.workspaceEmoji} {wsDetails.workspaceName}
+                    {wsDetails.agentBranch && (
+                      <span className="text-violet-400/60"> · {wsDetails.agentBranch}</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="italic">Unknown workspace</span>
+                )}
+              </span>
             </div>
           </div>
         ),
