@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ElementType } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, FolderKanban } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, FolderKanban, Settings as SettingsIcon } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -19,6 +19,8 @@ type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
@@ -93,6 +95,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     setLimitStep(1)
     setAgentStep(1)
   }, [activeSection, open])
+
+  // Track viewport for responsive layout
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  // Reset mobile section selection when dialog closes
+  useEffect(() => {
+    if (!open) setMobileSectionSelected(false)
+  }, [open])
 
   // Load settings on open
   useEffect(() => {
@@ -277,75 +291,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
   }
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="w-[600px] h-[400px] max-w-none max-h-none p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg">
-        {/* Sidebar */}
-        <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none">
-          <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-2">
-            Settings
-          </DialogTitle>
-          <button
-            onClick={() => setActiveSection('appearance')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'appearance'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <Palette className="h-3.5 w-3.5" />
-            Appearance
-          </button>
-          <button
-            onClick={() => setActiveSection('terminal')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'terminal'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <Terminal className="h-3.5 w-3.5" />
-            Terminal
-          </button>
-          <button
-            onClick={() => setActiveSection('workspaces')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'workspaces'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <FolderKanban className="h-3.5 w-3.5" />
-            Workspaces
-          </button>
-          <button
-            onClick={() => setActiveSection('agents')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'agents'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <Bot className="h-3.5 w-3.5" />
-            Agents
-          </button>
-          <button
-            onClick={() => setActiveSection('limits')}
-            className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeSection === 'limits'
-                ? 'bg-accent text-accent-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-            }`}
-          >
-            <ChartSpline className="h-3.5 w-3.5" />
-            Limits
-          </button>
-        </div>
+  const selectSection = (section: Section) => {
+    setActiveSection(section)
+    if (isMobile) setMobileSectionSelected(true)
+  }
 
-        {/* Content Pane */}
-        <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+  const backToSections = () => {
+    setMobileSectionSelected(false)
+  }
+
+  const sections: { id: Section; label: string; icon: ElementType }[] = [
+    { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'terminal', label: 'Terminal', icon: Terminal },
+    { id: 'workspaces', label: 'Workspaces', icon: FolderKanban },
+    { id: 'agents', label: 'Agents', icon: Bot },
+    { id: 'limits', label: 'Limits', icon: ChartSpline },
+  ]
+
+  const renderSectionContent = () => (
+    <>
           {activeSection === 'appearance' && (
-            <div className="flex flex-col h-full gap-4">
+            <div className="flex flex-col gap-4">
               <div>
                 <h3 className="text-sm font-medium mb-1">Appearance</h3>
                 <p className="text-xs text-muted-foreground">Customize the layout theme and feel of your workspace.</p>
@@ -427,7 +393,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'agents' && agentStep === 1 && (
-            <div className="flex flex-col h-full gap-4 animate-in fade-in duration-200">
+            <div className="flex flex-col gap-4 animate-in fade-in duration-200">
               <div>
                 <h3 className="text-sm font-medium mb-1">Agents</h3>
                 <p className="text-xs text-muted-foreground">Configure the command each agent runs for launching in the terminal.</p>
@@ -457,8 +423,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'agents' && agentStep === 2 && (
-            <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
+              <div className="flex flex-col gap-2 shrink-0">
                 <div>
                   <button
                     onClick={() => setAgentStep(1)}
@@ -478,78 +444,76 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
-                <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Default Command</label>
-                    <p className="text-[10px] text-muted-foreground font-mono leading-normal">
-                      {agentTypes[selectedAgentId]?.cmd.join(' ') || ''}
-                    </p>
-                  </div>
-                  <div className="border-t border-border pt-3 flex flex-col gap-1.5">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Custom Command (Optional)</label>
-                    <input
-                      type="text"
-                      value={agentCmdDraft}
-                      onChange={(e) => setAgentCmdDraft(e.target.value)}
-                      placeholder={agentTypes[selectedAgentId]?.cmd.join(' ') || 'e.g. claude --dangerously-skip-permissions'}
-                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                    />
-                    <p className="text-[10px] text-muted-foreground">Tokens are split on whitespace. Leave empty to restore the sane default.</p>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <button
-                        onClick={() => {
-                          const trimmed = agentCmdDraft.trim()
-                          if (!trimmed) {
-                            setAgentCmdOverride(selectedAgentId, null)
-                          } else {
-                            setAgentCmdOverride(selectedAgentId, trimmed.split(/\s+/))
-                          }
-                          setAgentStep(1)
-                        }}
-                        className="px-3 py-1.5 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 transition-all cursor-pointer"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => {
-                          setAgentCmdOverride(selectedAgentId, null)
-                          setAgentCmdDraft(agentTypes[selectedAgentId]?.cmd.join(' ') || '')
-                        }}
-                        className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
-                      >
-                        Reset to Default
-                      </button>
-                    </div>
-                  </div>
+              <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Default Command</label>
+                  <p className="text-[10px] text-muted-foreground font-mono leading-normal">
+                    {agentTypes[selectedAgentId]?.cmd.join(' ') || ''}
+                  </p>
                 </div>
-
-                <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0 mt-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col gap-0.5">
-                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enable Agent</label>
-                      <p className="text-[10px] text-muted-foreground">Show in terminal launcher and command palette.</p>
-                    </div>
+                <div className="border-t border-border pt-3 flex flex-col gap-1.5">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Custom Command (Optional)</label>
+                  <input
+                    type="text"
+                    value={agentCmdDraft}
+                    onChange={(e) => setAgentCmdDraft(e.target.value)}
+                    placeholder={agentTypes[selectedAgentId]?.cmd.join(' ') || 'e.g. claude --dangerously-skip-permissions'}
+                    className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Tokens are split on whitespace. Leave empty to restore the sane default.</p>
+                  <div className="flex items-center gap-2 mt-1.5">
                     <button
-                      onClick={() => toggleAgent(selectedAgentId)}
-                      className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring ${
-                        !disabledAgents.includes(selectedAgentId) ? 'bg-primary' : 'bg-muted-foreground/30'
-                      }`}
+                      onClick={() => {
+                        const trimmed = agentCmdDraft.trim()
+                        if (!trimmed) {
+                          setAgentCmdOverride(selectedAgentId, null)
+                        } else {
+                          setAgentCmdOverride(selectedAgentId, trimmed.split(/\s+/))
+                        }
+                        setAgentStep(1)
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 transition-all cursor-pointer"
                     >
-                      <span
-                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
-                          !disabledAgents.includes(selectedAgentId) ? 'translate-x-4' : 'translate-x-0'
-                        }`}
-                      />
+                      Save
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAgentCmdOverride(selectedAgentId, null)
+                        setAgentCmdDraft(agentTypes[selectedAgentId]?.cmd.join(' ') || '')
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                    >
+                      Reset to Default
                     </button>
                   </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enable Agent</label>
+                    <p className="text-[10px] text-muted-foreground">Show in terminal launcher and command palette.</p>
+                  </div>
+                  <button
+                    onClick={() => toggleAgent(selectedAgentId)}
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring ${
+                      !disabledAgents.includes(selectedAgentId) ? 'bg-primary' : 'bg-muted-foreground/30'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                        !disabledAgents.includes(selectedAgentId) ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
                 </div>
               </div>
             </div>
           )}
 
           {activeSection === 'terminal' && (
-            <div className="flex flex-col h-full gap-4">
+            <div className="flex flex-col gap-4">
               <div>
                 <h3 className="text-sm font-medium mb-1">Terminal</h3>
                 <p className="text-xs text-muted-foreground">Configure terminal appearance and default shell.</p>
@@ -608,7 +572,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'workspaces' && (
-            <div className="flex flex-col h-full gap-4">
+            <div className="flex flex-col gap-4">
               <div>
                 <h3 className="text-sm font-medium mb-1">Workspaces</h3>
                 <p className="text-xs text-muted-foreground">Configure what opens by default when creating a new workspace.</p>
@@ -617,7 +581,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex flex-col gap-2 mt-2">
                 <label className="text-xs font-medium">Default Agent / Terminal</label>
                 <p className="text-[10px] text-muted-foreground">Choose what gets launched as the first tab when a new workspace is created.</p>
-                <div className="flex flex-col gap-1.5 mt-1 max-h-[200px] overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+                <div className="flex flex-col gap-1.5 mt-1">
                   <button
                     onClick={() => {
                       setDefaultNewAgent('terminal')
@@ -625,7 +589,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     }}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                       defaultNewAgent === 'terminal'
-                        ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                        ? 'border-primary ring-1 ring-ring bg-primary/10'
                         : 'border-border hover:bg-accent/20'
                     }`}
                   >
@@ -654,7 +618,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             }}
                             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                               defaultNewAgent === agentInfo.id
-                                ? 'border-primary bg-accent/40 ring-1 ring-ring'
+                                ? 'border-primary ring-1 ring-ring bg-primary/10'
                                 : 'border-border hover:bg-accent/20'
                             }`}
                           >
@@ -671,7 +635,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'limits' && limitStep === 1 && (
-            <div className="flex flex-col h-full gap-4 animate-in fade-in duration-200">
+            <div className="flex flex-col gap-4 animate-in fade-in duration-200">
               <div>
                 <h3 className="text-sm font-semibold mb-1">Limits</h3>
                 <p className="text-xs text-muted-foreground">Select a provider to configure credentials and view usage limits.</p>
@@ -705,7 +669,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'limits' && limitStep === 2 && (
-            <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
               <div className="flex flex-col gap-2 shrink-0">
                 <div>
                   <button
@@ -738,7 +702,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
               <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
@@ -995,10 +958,93 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   </div>
                 )}
               </div>
-              </div>
             </div>
           )}
-        </div>
+    </>
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className={`p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg ${
+        isMobile
+          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0'
+          : 'w-[600px] h-[400px] max-w-none max-h-none'
+      }`}>
+        {isMobile ? (
+          <>
+            {/* Mobile: two-step layout */}
+            {!mobileSectionSelected ? (
+              <div className="w-full flex flex-col select-none">
+                <DialogTitle className="text-sm font-semibold text-foreground px-4 py-3 border-b border-border flex items-center gap-2">
+                  <SettingsIcon className="h-4 w-4" />
+                  Settings
+                </DialogTitle>
+                <div className="flex-1 flex flex-col p-3 gap-1.5">
+                  {sections.map((s) => {
+                    const Icon = s.icon
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => selectSection(s.id)}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-foreground hover:bg-accent/40 transition-all"
+                      >
+                        <Icon className="h-4 w-4" />
+                        {s.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="w-full flex flex-col">
+                <div className="flex items-center gap-2 px-3 py-3 border-b border-border shrink-0">
+                  <button
+                    onClick={backToSections}
+                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    title="Back to Settings"
+                  >
+                    <ArrowLeft className="h-4 w-4 shrink-0" />
+                  </button>
+                  <DialogTitle className="text-sm font-semibold text-foreground">
+                    {sections.find((s) => s.id === activeSection)?.label || 'Settings'}
+                  </DialogTitle>
+                </div>
+                <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+                  {renderSectionContent()}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none">
+              <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-2">
+                Settings
+              </DialogTitle>
+              {sections.map((s) => {
+                const Icon = s.icon
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setActiveSection(s.id)}
+                    className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      activeSection === s.id
+                        ? 'bg-accent text-accent-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+              {renderSectionContent()}
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )

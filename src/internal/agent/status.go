@@ -59,8 +59,14 @@ type watcherContext struct {
 // session. In that case watchers should look for the most recent session in
 // the cwd regardless of when it was last updated, instead of only sessions
 // started after the watcher launched.
+//
+// The heartbeat callback should be called on every poll iteration (even when
+// nothing changed) to signal that the watcher is alive and the agent process
+// is still running. This prevents the idle-timeout watchdog from falsely
+// reverting the status to "idle" during long LLM response waits where the
+// underlying transcript/DB file doesn't change for minutes.
 type StatusWatcher interface {
-	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string))
+	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func())
 }
 
 var (
@@ -223,7 +229,11 @@ func handleSessionExit(id string) {
 // with no new updates will be automatically reverted to idle. This prevents
 // the KanbanBoard from showing "working" indefinitely if the agent crashes
 // without triggering a clean session exit.
-const idleTimeout = 30 * time.Second
+//
+// Set to 5 minutes because LLM responses can take several minutes (especially
+// for long tool chains or slow providers). A 30s timeout caused false "idle"
+// transitions while the agent was legitimately waiting for an LLM response.
+const idleTimeout = 5 * time.Minute
 
 func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watchersMu.Lock()
@@ -268,6 +278,8 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
 		lastActivity = time.Now()
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
+	}, func() {
+		lastActivity = time.Now()
 	})
 }
 

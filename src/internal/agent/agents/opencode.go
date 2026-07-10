@@ -37,7 +37,7 @@ type openCodeMessage struct {
 	} `json:"parts,omitempty"`
 }
 
-func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -70,6 +70,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			changed := false
 
 			if info, err := os.Stat(dbPath); err == nil {

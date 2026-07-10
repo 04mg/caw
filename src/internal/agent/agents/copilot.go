@@ -17,7 +17,7 @@ func init() {
 	agent.RegisterStatusWatcher("copilot", &CopilotWatcher{})
 }
 
-func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -40,6 +40,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			info, err := os.Stat(dbPath)
 			if err != nil {
 				continue
