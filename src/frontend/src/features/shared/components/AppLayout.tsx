@@ -27,7 +27,7 @@ import { type Workspace } from '@/features/workspaces/types'
 import { DraggableTabBar } from '@/features/workspaces/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight } from 'lucide-react'
+import { Settings, Folder, PanelRight, Menu } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -35,12 +35,39 @@ import { CommandPalette } from '@/features/command-palette/components/CommandPal
 import { StatusBar } from '@/features/status-bar/components/StatusBar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Checkbox } from '@/components/checkbox'
+import { TerminalPanel } from '@/features/terminal/components/TerminalPanel'
+import { EditorPanel } from '@/features/editor/components/EditorPanel'
+import { MobileControlBar } from '@/features/terminal/components/MobileControlBar'
 
 import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStore'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
+
+function findActiveLeaf(node: LayoutNode, activeId: string): any | null {
+  if (node.type === 'leaf' && node.id === activeId) {
+    return node
+  }
+  if (node.type === 'split') {
+    for (const child of node.children) {
+      const found = findActiveLeaf(child, activeId)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+function findFirstLeaf(node: LayoutNode): any | null {
+  if (node.type === 'leaf') return node
+  if (node.type === 'split') {
+    for (const child of node.children) {
+      const found = findFirstLeaf(child)
+      if (found) return found
+    }
+  }
+  return null
+}
 
 export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
@@ -58,6 +85,22 @@ export function AppLayout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
+
+  // Mobile layout state variables
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [mobileView, setMobileView] = useState<'control_center' | 'console'>('control_center')
+  const [workspacesDrawerOpen, setWorkspacesDrawerOpen] = useState(false)
+  const [explorerDrawerOpen, setExplorerDrawerOpen] = useState(false)
+
+  // Touch Swipe Gesture Variables
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
   const [closeConfirm, setCloseConfirm] = useState<{
     type: 'tab' | 'pane';
     targetId: string;
@@ -954,41 +997,204 @@ export function AppLayout() {
     </div>
   )
 
+  const currentActiveLeaf = activeTab ? (findActiveLeaf(activeTab.layout, activePaneId) || findFirstLeaf(activeTab.layout)) : null
+
+  // Touch handlers for edge swipes
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0]
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return
+    const touch = e.touches[0]
+    const diffX = touch.clientX - touchStartRef.current.x
+    const diffY = touch.clientY - touchStartRef.current.y
+
+    // Ensure horizontal gesture
+    if (Math.abs(diffX) > Math.abs(diffY)) {
+      // Swipe from left edge (start x < 50) to open workspaces drawer
+      if (touchStartRef.current.x < 50 && diffX > 80) {
+        setWorkspacesDrawerOpen(true)
+        touchStartRef.current = null
+      }
+      // Swipe from right edge (start x > width - 50) to open explorer drawer
+      else if (touchStartRef.current.x > window.innerWidth - 50 && diffX < -80) {
+        if (activeWorkspace) {
+          setExplorerDrawerOpen(true)
+          touchStartRef.current = null
+        }
+      }
+    }
+  }
+
+  const handleTouchEnd = () => {
+    touchStartRef.current = null
+  }
+
   return (
     <div className="flex flex-col h-full w-full bg-background select-none">
-      <div className="relative flex-1 min-h-0">
-        <div className="flex h-full w-full">
-          <Group orientation="horizontal" className="flex-1">
-            {/* Left Workspace Panel */}
-            {sidebarCollapsed ? (
+      {isMobile ? (
+        <div 
+          className="flex flex-col h-full w-full overflow-hidden relative"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Top Header */}
+          <header className="flex items-center justify-between h-[50px] border-b border-border bg-secondary/15 px-3 shrink-0">
+            <Button variant="ghost" size="icon" className="animate-none" onClick={() => setWorkspacesDrawerOpen(true)}>
+              <Menu className="h-5 w-5" />
+            </Button>
+
+            {/* Toggle buttons for Home / Console views */}
+            <div className="flex bg-background/50 rounded-lg p-0.5 border border-border text-[11px] font-medium">
+              <button
+                className={`px-3 py-1 rounded-md transition-colors ${mobileView === 'control_center' ? 'bg-secondary text-foreground font-semibold shadow-sm animate-none' : 'text-muted-foreground'}`}
+                onClick={() => setMobileView('control_center')}
+              >
+                Control Center
+              </button>
+              <button
+                className={`px-3 py-1 rounded-md transition-colors ${mobileView === 'console' ? 'bg-secondary text-foreground font-semibold shadow-sm animate-none' : 'text-muted-foreground'}`}
+                disabled={!activeWorkspace || layouts.length === 0}
+                onClick={() => setMobileView('console')}
+              >
+                Console
+              </button>
+            </div>
+
+            {activeWorkspace ? (
+              <Button variant="ghost" size="icon" className="animate-none" onClick={() => setExplorerDrawerOpen(true)}>
+                <Folder className="h-5 w-5" />
+              </Button>
+            ) : (
+              <div className="w-9" />
+            )}
+          </header>
+
+          {/* Workspaces Drawer (80% width with backdrop-blur) */}
+          <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${workspacesDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setWorkspacesDrawerOpen(false)} />
+            <div className={`absolute top-0 bottom-0 left-0 w-[80%] max-w-[320px] bg-background border-r border-border transition-transform duration-300 ease-out ${workspacesDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
               <WorkspacePanel
                 workspaces={workspaces}
                 activeWorkspaceId={activeWorkspaceId}
-                onSelectWorkspace={setActiveWorkspaceId}
+                onSelectWorkspace={(id) => {
+                  setActiveWorkspaceId(id)
+                  setWorkspacesDrawerOpen(false)
+                }}
                 onAddWorkspace={handleAddWorkspace}
                 onDeleteWorkspace={handleDeleteWorkspace}
                 onEditWorkspace={handleEditWorkspace}
                 onReorderWorkspaces={handleReorderWorkspaces}
-                collapsed={true}
-                onToggle={toggleSidebar}
+                collapsed={false}
+                onToggle={() => setWorkspacesDrawerOpen(false)}
                 pickerOpen={pickerOpen}
                 onPickerOpenChange={setPickerOpen}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
+            </div>
+          </div>
+
+          {/* Explorer Drawer (80% width with backdrop-blur) */}
+          <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${explorerDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setExplorerDrawerOpen(false)} />
+            <div className={`absolute top-0 bottom-0 right-0 w-[80%] max-w-[320px] bg-background border-l border-border transition-transform duration-300 ease-out ${explorerDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+              <FolderSidebar
+                workspacePath={currentWorkspacePath}
+                mainWorkspacePath={activeWorkspace?.path || ''}
+                onOpenFile={(path) => {
+                  openFile(path)
+                  setExplorerDrawerOpen(false)
+                  setMobileView('console')
+                }}
+                gitStatuses={gitStatuses}
+                onRefresh={fetchGitStatus}
+                onClose={() => setExplorerDrawerOpen(false)}
+              />
+            </div>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 min-h-0 relative">
+            {mobileView === 'control_center' ? (
+              <KanbanBoard
+                workspaces={workspaces}
+                onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+                  setActiveWorkspaceId(workspaceId)
+                  patchWorkspace(workspaceId, (ws) => ({
+                    ...ws,
+                    activeTabIndex: tabIndex,
+                    activePaneId: paneId,
+                  }))
+                  setMobileView('console')
+                }}
+              />
             ) : (
-              <>
-                <Panel
-                  id="sidebar"
-                  panelRef={sidebarRef}
-                  defaultSize={sidebarDefaultSize}
-                  minSize="15%"
-                  maxSize="50%"
-                  onResize={(size) => {
-                    if (size.asPercentage >= 15) {
-                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                    }
-                  }}
-                >
+              <div className="flex flex-col h-full">
+                {/* Scrollable horizontal tab bar below the header */}
+                {activeWorkspace && layouts.length > 0 && (
+                  <div className="flex items-center border-b border-border bg-secondary/10 h-[36px] shrink-0 overflow-x-auto px-2 select-none scrollbar-none">
+                    {layouts.map((t, idx) => {
+                      const isActive = idx === activeWorkspace.activeTabIndex
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => switchTab(idx)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-t-md border-t border-x transition-colors shrink-0 ${
+                            isActive 
+                              ? 'bg-background border-border text-foreground font-semibold' 
+                              : 'border-transparent text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <span className="truncate max-w-[100px]">{t.name}</span>
+                          <span 
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              closeTab(idx)
+                            }}
+                            className="p-0.5 rounded-full hover:bg-muted text-muted-foreground/60 hover:text-foreground cursor-pointer text-[10px] ml-1 select-none"
+                          >
+                            ✕
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Active Console/Editor Area */}
+                <div className="flex-1 min-h-0 relative">
+                  {currentActiveLeaf ? (
+                    currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} />
+                    ) : (
+                      <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
+                    )
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-3">
+                      <span>No active console or editor open.</span>
+                      <Button onClick={() => addTab()} variant="outline" size="sm">Open Terminal</Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
+                {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
+                  <MobileControlBar terminalId={currentActiveLeaf.id} />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="relative flex-1 min-h-0">
+            <div className="flex h-full w-full">
+              <Group orientation="horizontal" className="flex-1">
+                {/* Left Workspace Panel */}
+                {sidebarCollapsed ? (
                   <WorkspacePanel
                     workspaces={workspaces}
                     activeWorkspaceId={activeWorkspaceId}
@@ -997,112 +1203,140 @@ export function AppLayout() {
                     onDeleteWorkspace={handleDeleteWorkspace}
                     onEditWorkspace={handleEditWorkspace}
                     onReorderWorkspaces={handleReorderWorkspaces}
-                    collapsed={false}
+                    collapsed={true}
                     onToggle={toggleSidebar}
                     pickerOpen={pickerOpen}
                     onPickerOpenChange={setPickerOpen}
                     onOpenSettings={() => setSettingsOpen(true)}
                   />
-                </Panel>
-                <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-              </>
-            )}
+                ) : (
+                  <>
+                    <Panel
+                      id="sidebar"
+                      panelRef={sidebarRef}
+                      defaultSize={sidebarDefaultSize}
+                      minSize="15%"
+                      maxSize="50%"
+                      onResize={(size) => {
+                        if (size.asPercentage >= 15) {
+                          localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
+                        }
+                      }}
+                    >
+                      <WorkspacePanel
+                        workspaces={workspaces}
+                        activeWorkspaceId={activeWorkspaceId}
+                        onSelectWorkspace={setActiveWorkspaceId}
+                        onAddWorkspace={handleAddWorkspace}
+                        onDeleteWorkspace={handleDeleteWorkspace}
+                        onEditWorkspace={handleEditWorkspace}
+                        onReorderWorkspaces={handleReorderWorkspaces}
+                        collapsed={false}
+                        onToggle={toggleSidebar}
+                        pickerOpen={pickerOpen}
+                        onPickerOpenChange={setPickerOpen}
+                        onOpenSettings={() => setSettingsOpen(true)}
+                      />
+                    </Panel>
+                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                  </>
+                )}
 
-            {/* Main Terminals / Editors Content */}
-            <Panel>
-              <div className="flex flex-col h-full">
-                <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
-                  <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
-                    {tabs}
-                  </div>
-                  <div className="flex items-center shrink-0 h-full">
-                    {/* Settings Button */}
-                    <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                        onClick={() => setSettingsOpen(true)}
-                        title="Settings"
-                      >
-                        <Settings className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-
-
-
-                    {/* Folder Button (Only Visible when Sidebar is Collapsed and workspace is active) */}
-                    {activeWorkspace && folderSidebarCollapsed && (
-                      <div className="group flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={toggleFolderSidebar}
-                          title="Workspace Files"
-                        >
-                          <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                          <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
-                        </Button>
+                {/* Main Terminals / Editors Content */}
+                <Panel>
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
+                      <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
+                        {tabs}
                       </div>
-                    )}
+                      <div className="flex items-center shrink-0 h-full">
+                        {/* Settings Button */}
+                        <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                            onClick={() => setSettingsOpen(true)}
+                            title="Settings"
+                          >
+                            <Settings className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+
+                        {/* Folder Button (Only Visible when Sidebar is Collapsed and workspace is active) */}
+                        {activeWorkspace && folderSidebarCollapsed && (
+                          <div className="group flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                              onClick={toggleFolderSidebar}
+                              title="Workspace Files"
+                            >
+                              <Folder className="h-3.5 w-3.5 group-hover:hidden" />
+                              <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {terminalBody}
                   </div>
-                </div>
-                {terminalBody}
-              </div>
-            </Panel>
-
-            {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
-            {activeWorkspace && !folderSidebarCollapsed && (
-              <>
-                <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                <Panel
-                  id="folder-sidebar"
-                  defaultSize="20%"
-                  minSize="15%"
-                  maxSize="50%"
-                >
-                  <FolderSidebar
-                    workspacePath={currentWorkspacePath}
-                    mainWorkspacePath={activeWorkspace.path || ''}
-                    onOpenFile={openFile}
-                    gitStatuses={gitStatuses}
-                    onRefresh={fetchGitStatus}
-                    onClose={() => setFolderSidebarCollapsed(true)}
-                  />
                 </Panel>
-              </>
-            )}
-          </Group>
-        </div>
-        {agentBoardOpen && (
-          <div className="absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150">
-            <KanbanBoard
-              workspaces={workspaces}
-              onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-                setActiveWorkspaceId(workspaceId)
-                patchWorkspace(workspaceId, (ws) => ({
-                  ...ws,
-                  activeTabIndex: tabIndex,
-                  activePaneId: paneId,
-                }))
-                setAgentBoardOpen(false)
-              }}
-            />
-          </div>
-        )}
-      </div>
 
-      <StatusBar
-        workspaceName={activeWorkspace?.name}
-        worktreeBranch={activeWorktreeBranch}
-        agentBoardOpen={agentBoardOpen}
-        onToggleAgentBoard={() => setAgentBoardOpen((v) => !v)}
-        onOpenSettings={(section) => {
-          setSettingsSection(section)
-          setSettingsOpen(true)
-        }}
-      />
+                {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
+                {activeWorkspace && !folderSidebarCollapsed && (
+                  <>
+                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                    <Panel
+                      id="folder-sidebar"
+                      defaultSize="20%"
+                      minSize="15%"
+                      maxSize="50%"
+                    >
+                      <FolderSidebar
+                        workspacePath={currentWorkspacePath}
+                        mainWorkspacePath={activeWorkspace.path || ''}
+                        onOpenFile={openFile}
+                        gitStatuses={gitStatuses}
+                        onRefresh={fetchGitStatus}
+                        onClose={() => setFolderSidebarCollapsed(true)}
+                      />
+                    </Panel>
+                  </>
+                )}
+              </Group>
+            </div>
+            {agentBoardOpen && (
+              <div className="absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150">
+                <KanbanBoard
+                  workspaces={workspaces}
+                  onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+                    setActiveWorkspaceId(workspaceId)
+                    patchWorkspace(workspaceId, (ws) => ({
+                      ...ws,
+                      activeTabIndex: tabIndex,
+                      activePaneId: paneId,
+                    }))
+                    setAgentBoardOpen(false)
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <StatusBar
+            workspaceName={activeWorkspace?.name}
+            worktreeBranch={activeWorktreeBranch}
+            agentBoardOpen={agentBoardOpen}
+            onToggleAgentBoard={() => setAgentBoardOpen((v) => !v)}
+            onOpenSettings={(section) => {
+              setSettingsSection(section)
+              setSettingsOpen(true)
+            }}
+          />
+        </>
+      )}
 
       <SettingsDialog open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setSettingsSection(undefined) }} initialSection={settingsSection} />
 
