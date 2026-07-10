@@ -13,11 +13,7 @@ type: brief description
 - `refactor` — code change with no behavior change
 - `style` — formatting, whitespace, etc.
 
-> These are just message **style** hints for humans/reviewers. What actually
-> drives the version bump is the keyword logic in `.github/workflows/release.yml`
-> (see Versioning below) — not the `type` prefix alone, and **not** the `!` suffix.
-
-## Versioning (driven by `.github/workflows/release.yml`)
+## Versioning
 Releases are produced by `anothrNick/github-tag-action` on every push to `main`.
 The next version is computed from the **git tags** in the repo (there is **no**
 `VERSION` file — the version lives only as a `vX.Y.Z` tag). The action scans the
@@ -31,32 +27,6 @@ finds:
 | `#patch`, `patch:`, `fix:`          | **patch** | `v1.2.4` |
 | nothing recognized → `DEFAULT_BUMP: patch` | **patch** | `v1.2.4` |
 | `[skip ci]`                         | **no tag / no release** | — |
-
-Key corrections to older notes:
-- ❌ `feat!` does **not** trigger a major bump — this action ignores the `!` suffix.
-  Use `BREAKING CHANGE` in the body or `#major` / `major:` in the message instead.
-- ❌ `chore:`, `docs:`, `refactor:`, `style:` do **not** explicitly map to patch.
-  They simply match no keyword, so they fall through to the default **patch** bump.
-- Tags are prefixed with `v` (`TAG_PREFIX: v`), e.g. `v1.3.0`.
-- To skip a release on a non-important commit, include `[skip ci]` in the message.
-
-### Examples
-```
-# major (breaking change)
-git commit -m "redesign terminal grid API\n\nBREAKING CHANGE: removed legacy grid config"
-git commit -m "major: drop Node 18 support"
-
-# minor (new feature)
-feat: add workspace emoji picker
-feature: add command palette
-
-# patch (bug fix or anything else)
-fix: emoji grid not stretching to full width
-chore: restructure repo into src/        # -> patch via DEFAULT_BUMP
-
-# no release
-docs: add build instructions [skip ci]
-```
 
 ## Branches
 ```
