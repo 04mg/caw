@@ -72,7 +72,7 @@ var permissionStepTypes = map[string]bool{
 	"ASK_QUESTION":   true,
 }
 
-func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -104,6 +104,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
 				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)

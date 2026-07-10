@@ -28,7 +28,7 @@ type PiBlock struct {
 	Name string `json:"name,omitempty"` // tool name
 }
 
-func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -55,6 +55,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			if watchedFilePath == "" {
 				searchDir := dir
 				if cwd != "" {

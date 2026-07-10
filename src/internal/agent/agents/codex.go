@@ -34,7 +34,7 @@ type CodexPayload struct {
 	Name string `json:"name,omitempty"`
 }
 
-func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -64,6 +64,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			if watchedFilePath == "" {
 				candidates, err := FindLatestFiles(dir, ".jsonl", lastCheck)
 				if err != nil {

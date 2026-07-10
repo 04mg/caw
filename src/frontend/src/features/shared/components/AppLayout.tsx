@@ -485,14 +485,13 @@ export function AppLayout() {
             (nextS === 'idle' || nextS === 'stopped') &&
             (prevS === 'thinking' || prevS === 'executing')
           ) {
-            // Debounce the "finished" notification: wait 5s before firing.
-            // If the agent resumes working within that window (e.g. the LLM
-            // response was slow and the watchdog briefly reverted to idle),
-            // the pending timer is cancelled above.
+            // Debounce the "finished" notification: wait 3s before firing.
+            // If the agent resumes working within that window (e.g. a brief
+            // status glitch), the pending timer is cancelled above.
             const timer = setTimeout(() => {
               delete pendingFinishedRef.current[sessionId]
               triggerAgentNotification(next, 'finished')
-            }, 5000)
+            }, 3000)
             pendingFinishedRef.current[sessionId] = timer
           }
         }
