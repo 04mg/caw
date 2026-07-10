@@ -27,7 +27,7 @@ import { type Workspace } from '@/features/workspaces/types'
 import { DraggableTabBar } from '@/features/workspaces/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Menu } from 'lucide-react'
+import { Settings, Folder, PanelRight, Menu, Plus } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -38,6 +38,7 @@ import { Checkbox } from '@/components/checkbox'
 import { TerminalPanel } from '@/features/terminal/components/TerminalPanel'
 import { EditorPanel } from '@/features/editor/components/EditorPanel'
 import { MobileControlBar } from '@/features/terminal/components/MobileControlBar'
+import { NewTabMenu } from '@/features/workspaces/components/NewTabMenu'
 
 import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStore'
 import { type AgentStatus } from '@/features/agents/types'
@@ -88,7 +89,7 @@ export function AppLayout() {
 
   // Mobile layout state variables
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
-  const [mobileView, setMobileView] = useState<'control_center' | 'console'>('control_center')
+  const [mobileView, setMobileView] = useState<'control_center' | 'terminals'>('control_center')
   const [workspacesDrawerOpen, setWorkspacesDrawerOpen] = useState(false)
   const [explorerDrawerOpen, setExplorerDrawerOpen] = useState(false)
 
@@ -1047,7 +1048,7 @@ export function AppLayout() {
               <Menu className="h-5 w-5" />
             </Button>
 
-            {/* Toggle buttons for Home / Console views */}
+            {/* Toggle buttons for Home / Terminals views */}
             <div className="flex bg-background/50 rounded-lg p-0.5 border border-border text-[11px] font-medium">
               <button
                 className={`px-3 py-1 rounded-md transition-colors ${mobileView === 'control_center' ? 'bg-secondary text-foreground font-semibold shadow-sm animate-none' : 'text-muted-foreground'}`}
@@ -1056,11 +1057,10 @@ export function AppLayout() {
                 Control Center
               </button>
               <button
-                className={`px-3 py-1 rounded-md transition-colors ${mobileView === 'console' ? 'bg-secondary text-foreground font-semibold shadow-sm animate-none' : 'text-muted-foreground'}`}
-                disabled={!activeWorkspace || layouts.length === 0}
-                onClick={() => setMobileView('console')}
+                className={`px-3 py-1 rounded-md transition-colors ${mobileView === 'terminals' ? 'bg-secondary text-foreground font-semibold shadow-sm animate-none' : 'text-muted-foreground'}`}
+                onClick={() => setMobileView('terminals')}
               >
-                Console
+                Terminals
               </button>
             </div>
 
@@ -1100,14 +1100,14 @@ export function AppLayout() {
           {/* Explorer Drawer (80% width with backdrop-blur) */}
           <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${explorerDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
             <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setExplorerDrawerOpen(false)} />
-            <div className={`absolute top-0 bottom-0 right-0 w-[80%] max-w-[320px] bg-background border-l border-border transition-transform duration-300 ease-out ${explorerDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className={`absolute top-0 bottom-0 right-0 w-[80%] max-w-[320px] bg-background border-l border-border transition-transform duration-300 ease-out ${explorerDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
               <FolderSidebar
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
                 onOpenFile={(path) => {
                   openFile(path)
                   setExplorerDrawerOpen(false)
-                  setMobileView('console')
+                  setMobileView('terminals')
                 }}
                 gitStatuses={gitStatuses}
                 onRefresh={fetchGitStatus}
@@ -1117,25 +1117,40 @@ export function AppLayout() {
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 min-h-0 relative">
+          <div className="flex-1 min-h-0 relative flex flex-col">
             {mobileView === 'control_center' ? (
-              <KanbanBoard
-                workspaces={workspaces}
-                onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-                  setActiveWorkspaceId(workspaceId)
-                  patchWorkspace(workspaceId, (ws) => ({
-                    ...ws,
-                    activeTabIndex: tabIndex,
-                    activePaneId: paneId,
-                  }))
-                  setMobileView('console')
-                }}
-              />
+              <>
+                <div className="flex-1 min-h-0">
+                  <KanbanBoard
+                    workspaces={workspaces}
+                    onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+                      setActiveWorkspaceId(workspaceId)
+                      patchWorkspace(workspaceId, (ws) => ({
+                        ...ws,
+                        activeTabIndex: tabIndex,
+                        activePaneId: paneId,
+                      }))
+                      setMobileView('terminals')
+                    }}
+                  />
+                </div>
+                <StatusBar
+                  workspaceName={activeWorkspace?.name}
+                  worktreeBranch={activeWorktreeBranch}
+                  agentBoardOpen={agentBoardOpen}
+                  onToggleAgentBoard={() => setMobileView('terminals')}
+                  onOpenSettings={(section) => {
+                    setSettingsSection(section)
+                    setSettingsOpen(true)
+                  }}
+                  hideControlCenter
+                />
+              </>
             ) : (
               <div className="flex flex-col h-full">
                 {/* Scrollable horizontal tab bar below the header */}
                 {activeWorkspace && layouts.length > 0 && (
-                  <div className="flex items-center border-b border-border bg-secondary/10 h-[36px] shrink-0 overflow-x-auto px-2 select-none scrollbar-none">
+                  <div className="flex items-center border-b border-border bg-secondary/10 h-[36px] shrink-0 overflow-x-auto pl-2 select-none scrollbar-none">
                     {layouts.map((t, idx) => {
                       const isActive = idx === activeWorkspace.activeTabIndex
                       return (
@@ -1161,10 +1176,18 @@ export function AppLayout() {
                         </button>
                       )
                     })}
+                    {/* Add button reusing the desktop dropdown menu */}
+                    <NewTabMenu
+                      onAdd={addTab}
+                      enableWorktrees={activeWorkspace.enableWorktrees}
+                      onToggleWorktrees={toggleWorktrees}
+                      triggerClassName="h-[36px] px-2 border-r-0"
+                      align="start"
+                    />
                   </div>
                 )}
 
-                {/* Active Console/Editor Area */}
+                {/* Active Terminals/Editor Area */}
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
@@ -1173,9 +1196,23 @@ export function AppLayout() {
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
                     )
                   ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-3">
-                      <span>No active console or editor open.</span>
-                      <Button onClick={() => addTab()} variant="outline" size="sm">Open Terminal</Button>
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-4 px-6 text-center">
+                      <div className="p-4 rounded-full bg-muted/30 border border-border/30">
+                        <Plus className="w-7 h-7 text-muted-foreground/40" />
+                      </div>
+                      <span>No terminals or agents open.</span>
+                      <NewTabMenu
+                        onAdd={addTab}
+                        enableWorktrees={activeWorkspace?.enableWorktrees}
+                        onToggleWorktrees={toggleWorktrees}
+                        align="center"
+                        triggerTitle="New terminal / agent"
+                      >
+                        <Button variant="outline" size="sm" className="gap-1.5">
+                          <Plus className="h-3.5 w-3.5" />
+                          New Terminal / Agent
+                        </Button>
+                      </NewTabMenu>
                     </div>
                   )}
                 </div>

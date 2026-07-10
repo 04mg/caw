@@ -348,6 +348,22 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   ]
 
   if (isMobile) {
+    const totalAgents = groupedAgents.idle.length + groupedAgents.working.length + groupedAgents.needs_input.length
+    if (totalAgents === 0) {
+      return (
+        <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
+          <div className="p-4 rounded-full bg-muted/30 border border-border/30">
+            <Workflow className="w-8 h-8 text-muted-foreground/40" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-semibold text-foreground/80">No agents running</span>
+            <span className="text-xs text-muted-foreground/60">
+              Start a new agent or terminal from the Terminals tab.
+            </span>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
         {MOBILE_COLUMNS.map((col) => {
