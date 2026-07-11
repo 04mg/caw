@@ -85,7 +85,12 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 				if err != nil {
 					continue
 				}
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
 				for _, c := range candidates {
+					if !ptyRecentlyActive {
+						break
+					}
 					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
@@ -121,35 +126,38 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 
 				// Mid-session re-bind for /new and /resume.
 				if silentTicks >= rebindSilenceTicks {
-					rebindDir := dir
-					if cwd != "" {
-						cleanCwd := filepath.Clean(cwd)
-						projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
-						targetDir := filepath.Join(dir, projDir)
-						if _, err := os.Stat(targetDir); err != nil {
-							projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
-							targetDirAlt := filepath.Join(dir, projDirAlt)
-							if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
-								targetDir = targetDirAlt
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						rebindDir := dir
+						if cwd != "" {
+							cleanCwd := filepath.Clean(cwd)
+							projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+							targetDir := filepath.Join(dir, projDir)
+							if _, err := os.Stat(targetDir); err != nil {
+								projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
+								targetDirAlt := filepath.Join(dir, projDirAlt)
+								if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
+									targetDir = targetDirAlt
+								}
+							}
+							if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+								rebindDir = targetDir
 							}
 						}
-						if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
-							rebindDir = targetDir
+						cands, _ := FindLatestFiles(rebindDir, ".jsonl", lastActivity)
+						var others []RebindCandidate
+						for _, c := range cands {
+							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
 						}
-					}
-					cands, _ := FindLatestFiles(rebindDir, ".jsonl", lastActivity)
-					var others []RebindCandidate
-					for _, c := range cands {
-						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
-					}
-					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, cwd, newKey) {
-							UnclaimSession(agentID, cwd, watchedFilePath)
-							watchedFilePath = newKey
-							lastFileSize = 0
-							lastCheck = time.Now()
-							silentTicks = 0
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						if newKey != "" && newKey != watchedFilePath {
+							if ClaimSession(agentID, cwd, newKey) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newKey
+								lastFileSize = 0
+								lastCheck = time.Now()
+								silentTicks = 0
+							}
 						}
 					}
 				}

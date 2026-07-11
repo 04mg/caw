@@ -75,7 +75,12 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 				if err != nil {
 					continue
 				}
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
 				for _, c := range candidates {
+					if !ptyRecentlyActive {
+						break
+					}
 					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
@@ -111,19 +116,22 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 
 				// Mid-session re-bind for /new and /resume.
 				if silentTicks >= rebindSilenceTicks {
-					cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
-					var others []RebindCandidate
-					for _, c := range cands {
-						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
-					}
-					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, cwd, newKey) {
-							UnclaimSession(agentID, cwd, watchedFilePath)
-							watchedFilePath = newKey
-							lastFileSize = 0
-							lastCheck = time.Now()
-							silentTicks = 0
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
+						var others []RebindCandidate
+						for _, c := range cands {
+							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+						}
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						if newKey != "" && newKey != watchedFilePath {
+							if ClaimSession(agentID, cwd, newKey) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newKey
+								lastFileSize = 0
+								lastCheck = time.Now()
+								silentTicks = 0
+							}
 						}
 					}
 				}
