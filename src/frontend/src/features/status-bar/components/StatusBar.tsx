@@ -298,7 +298,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-3 md:px-4 flex items-start md:items-center justify-between text-xs text-foreground md:text-muted-foreground select-none font-sans pb-4 md:pb-0 pt-2 md:pt-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
+		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-start md:items-center justify-between text-xs text-foreground md:text-muted-foreground select-none font-sans pb-4 md:pb-0 pt-2 md:pt-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
 		<div className="flex items-center gap-2">
 			{!hideControlCenter && (
 				<>
