@@ -97,6 +97,7 @@ export function AppLayout() {
 
   // Touch Swipe Gesture Variables
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const controlBarZoneRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
@@ -1083,12 +1084,17 @@ export function AppLayout() {
 
   // Touch handlers for edge swipes
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) return
     const touch = e.touches[0]
     touchStartRef.current = { x: touch.clientX, y: touch.clientY }
   }
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!touchStartRef.current) return
+    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) {
+      touchStartRef.current = null
+      return
+    }
     const touch = e.touches[0]
     const diffX = touch.clientX - touchStartRef.current.x
     const diffY = touch.clientY - touchStartRef.current.y
@@ -1310,9 +1316,11 @@ export function AppLayout() {
                 </div>
 
                 {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
-                {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
-                  <MobileControlBar terminalId={currentActiveLeaf.id} />
-                )}
+                <div ref={controlBarZoneRef}>
+                  {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
+                    <MobileControlBar terminalId={currentActiveLeaf.id} />
+                  )}
+                </div>
 
                 <StatusBar
                   workspaceName={activeWorkspace?.name}

@@ -149,6 +149,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
 export const stickyModifiers = {
   ctrl: false,
   alt: false,
+  shift: false,
 }
 
 const stickySubscribers = new Set<() => void>()
@@ -163,19 +164,26 @@ function notifySticky() {
 
 export function toggleStickyCtrl() {
   stickyModifiers.ctrl = !stickyModifiers.ctrl
-  if (stickyModifiers.ctrl) stickyModifiers.alt = false
+  if (stickyModifiers.ctrl) { stickyModifiers.alt = false; stickyModifiers.shift = false }
   notifySticky()
 }
 
 export function toggleStickyAlt() {
   stickyModifiers.alt = !stickyModifiers.alt
-  if (stickyModifiers.alt) stickyModifiers.ctrl = false
+  if (stickyModifiers.alt) { stickyModifiers.ctrl = false; stickyModifiers.shift = false }
+  notifySticky()
+}
+
+export function toggleStickyShift() {
+  stickyModifiers.shift = !stickyModifiers.shift
+  if (stickyModifiers.shift) { stickyModifiers.ctrl = false; stickyModifiers.alt = false }
   notifySticky()
 }
 
 export function resetStickyModifiers() {
   stickyModifiers.ctrl = false
   stickyModifiers.alt = false
+  stickyModifiers.shift = false
   notifySticky()
 }
 
@@ -210,6 +218,17 @@ function wireInput(inst: TerminalInstance) {
         resetStickyModifiers()
       } else if (stickyModifiers.alt && data.length === 1) {
         finalData = '\x1b' + data
+        resetStickyModifiers()
+      } else if (stickyModifiers.shift && data.length === 1) {
+        // Uppercase letters; for other characters, xterm.js already applied
+        // the shift modifier internally before emitting onData, so we only
+        // need to handle the case where the user pressed a key without a
+        // physical shift (sticky mode sends the raw key). Uppercasing letters
+        // gives the expected shifted result.
+        const code = data.charCodeAt(0)
+        if (code >= 97 && code <= 122) {
+          finalData = String.fromCharCode(code - 32)
+        }
         resetStickyModifiers()
       }
       inst.ws.send(JSON.stringify({ type: 'input', data: finalData }))

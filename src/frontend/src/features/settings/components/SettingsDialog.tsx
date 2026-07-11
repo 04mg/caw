@@ -195,10 +195,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         })
         .catch(() => {})
       if (pushSupported && navigator.serviceWorker) {
-        navigator.serviceWorker.ready.then((reg) => {
-          reg.pushManager.getSubscription().then((sub) => {
+        navigator.serviceWorker.ready.then(async (reg) => {
+          try {
+            const sub = await reg.pushManager.getSubscription()
             setPushSubscribed(!!sub)
-          }).catch(() => {})
+          } catch {
+            setPushSubscribed(false)
+          }
         })
       }
 
@@ -1105,7 +1108,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <button
                         onClick={async () => {
                           setPushError('')
-                          if (pushEnabled) {
+                          if (pushEnabled && pushSubscribed) {
+                            // ===== DISABLE BRANCH =====
                             setPushBusy(true)
                             try {
                               const reg = await navigator.serviceWorker.ready
@@ -1130,6 +1134,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             }
                             setPushBusy(false)
                           } else {
+                            // ===== ENABLE / RE-SUBSCRIBE BRANCH =====
+                            // Covers both first-time enable AND the case where
+                            // iOS evicted the local subscription on PWA reopen
+                            // (pushEnabled=true, pushSubscribed=false).
                             setPushBusy(true)
                             try {
                               if (Notification.permission === 'denied') {
