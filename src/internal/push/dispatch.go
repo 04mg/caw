@@ -155,8 +155,10 @@ func sendToSubscription(store *state.Store, sub state.PushSubscription, payload 
 	}
 	defer resp.Body.Close()
 
-	// 410 Gone or 404 Not Found means the subscription is expired/invalid.
-	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
+	// 410 Gone, 404 Not Found, 401 Unauthorized, or 403 Forbidden means the
+	// subscription is expired/invalid and should be removed.
+	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound ||
+		resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		_ = store.RemovePushSubscription(sub.Endpoint)
 		return
 	}
