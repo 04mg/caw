@@ -208,6 +208,21 @@ func (s *Store) Set(as AppState) {
 	tx.Exec("DELETE FROM layout_nodes")
 	tx.Exec("DELETE FROM tab_layouts")
 	tx.Exec("DELETE FROM workspaces")
+
+	// Preserve push-related settings (VAPID keys, push prefs) that must
+	// survive workspace state saves. Store.Set() does DELETE FROM settings,
+	// which would wipe them otherwise.
+	var preservedSettings [][2]string
+	for _, key := range []string{
+		"vapid_public_key", "vapid_private_key",
+		"push_enabled", "push_needs_input", "push_finished",
+	} {
+		var val string
+		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
+			preservedSettings = append(preservedSettings, [2]string{key, val})
+		}
+	}
+
 	tx.Exec("DELETE FROM settings")
 
 	if as.Workspaces == nil {
@@ -216,6 +231,11 @@ func (s *Store) Set(as AppState) {
 
 	// Save active workspace ID
 	tx.Exec("INSERT INTO settings (key, value) VALUES ('active_workspace_id', ?)", as.ActiveWorkspaceID)
+
+	// Restore push-related settings that were preserved across the DELETE.
+	for _, kv := range preservedSettings {
+		tx.Exec("INSERT INTO settings (key, value) VALUES (?, ?)", kv[0], kv[1])
+	}
 
 	for _, w := range as.Workspaces {
 		if w.Layouts == nil {
