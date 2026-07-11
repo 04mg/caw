@@ -35,7 +35,11 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
 	const agentID = "pi"
-	lookback := 2 * time.Second
+	// On resume (--continue), the agent reattaches to a pre-existing session
+	// whose transcript may predate this watcher. Widen the search window to
+	// 1 hour so the resumed session is found. For a fresh start, only look
+	// for files modified after the watcher started (no negative offset).
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -43,6 +47,9 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	// Re-bind bookkeeping for /new and /resume detection.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if watchedFilePath != "" {
@@ -74,7 +81,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 						searchDir = targetDir
 					}
 				}
-				candidates, err := FindLatestFiles(searchDir, ".jsonl", lastCheck)
+				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
 				}
@@ -83,6 +90,8 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
+						lastActivity = c.ModTime
+						silentTicks = 0
 						break
 					}
 				}
@@ -99,10 +108,50 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 						}
 						w.parsePiLog(watchedFilePath, lastFileSize, resume, wrappedCallback)
 						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
 					}
 				} else {
 					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re-bind for /new and /resume.
+				if silentTicks >= rebindSilenceTicks {
+					rebindDir := dir
+					if cwd != "" {
+						cleanCwd := filepath.Clean(cwd)
+						projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+						targetDir := filepath.Join(dir, projDir)
+						if _, err := os.Stat(targetDir); err != nil {
+							projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
+							targetDirAlt := filepath.Join(dir, projDirAlt)
+							if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
+								targetDir = targetDirAlt
+							}
+						}
+						if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+							rebindDir = targetDir
+						}
+					}
+					cands, _ := FindLatestFiles(rebindDir, ".jsonl", lastActivity)
+					var others []RebindCandidate
+					for _, c := range cands {
+						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+					}
+					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+					if newKey != "" && newKey != watchedFilePath {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newKey
+							lastFileSize = 0
+							lastCheck = time.Now()
+							silentTicks = 0
+						}
+					}
 				}
 			}
 		}

@@ -43,8 +43,10 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	const agentID = "codex"
 	// On resume (codex resume --last), the agent reattaches to a pre-existing
 	// session whose transcript file may predate this watcher. Widen the
-	// search window to 1 hour so the resumed session is found.
-	lookback := 1 * time.Second
+	// search window to 1 hour so the resumed session is found. For a fresh
+	// start, only look for files modified after the watcher started (no
+	// negative offset) to avoid grabbing a sibling agent's session.
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -52,6 +54,9 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	// Re-bind bookkeeping for /new and /resume detection.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if watchedFilePath != "" {
@@ -66,7 +71,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidates, err := FindLatestFiles(dir, ".jsonl", lastCheck)
+				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
 				}
@@ -75,6 +80,8 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
+						lastActivity = c.ModTime
+						silentTicks = 0
 						break
 					}
 				}
@@ -91,10 +98,34 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 						}
 						w.parseCodexLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
 					}
 				} else {
 					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re-bind for /new and /resume.
+				if silentTicks >= rebindSilenceTicks {
+					cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
+					var others []RebindCandidate
+					for _, c := range cands {
+						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+					}
+					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+					if newKey != "" && newKey != watchedFilePath {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newKey
+							lastFileSize = 0
+							lastCheck = time.Now()
+							silentTicks = 0
+						}
+					}
 				}
 			}
 		}
