@@ -28,7 +28,7 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
   }
 
   return (
-    <div className="flex gap-1.5 overflow-x-auto py-1.5 px-3 bg-secondary/35 border-t border-border/60 scrollbar-none shrink-0 select-none items-center w-full justify-between">
+    <div className="flex gap-1.5 overflow-x-auto py-1.5 px-3 bg-secondary/35 border-t border-border/60 scrollbar-none shrink-0 select-none items-center w-full justify-between" onMouseDown={(e) => e.preventDefault()}>
       {/* Sticky Modifiers with toggled color states */}
       <div className="flex gap-1 shrink-0">
         <Button
