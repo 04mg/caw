@@ -368,7 +368,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       <div className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
-          if (agents.length === 0) return null // Skip entirely if empty
 
           const ColIcon = col.icon
           return (
@@ -385,7 +384,16 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 </span>
               </div>
               <div className="flex flex-col gap-2">
-                {agents.map(renderCard)}
+                {agents.length > 0 ? (
+                  agents.map(renderCard)
+                ) : (
+                  <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
+                    <div className="p-2 rounded-full bg-muted/40">
+                      <ColIcon className="w-3.5 h-3.5 text-foreground" />
+                    </div>
+                    <span>No agents in {col.title}</span>
+                  </div>
+                )}
               </div>
             </div>
           )
