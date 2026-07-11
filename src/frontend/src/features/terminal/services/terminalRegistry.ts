@@ -22,6 +22,12 @@ export interface TerminalInstance {
    * buffer cap evicted the original mode-set sequence.
    */
   _modes: Map<number, boolean>
+  /**
+   * @internal Set to true while the user is actively scrolling (touch drag
+   * or momentum). When true, safeScrollToBottom is suppressed so incoming
+   * output does not yank the view back to the bottom.
+   */
+  userScrolling: boolean
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -194,6 +200,13 @@ export function sendTerminalInput(leafId: string, data: string) {
   }
 }
 
+export function setTerminalUserScrolling(leafId: string, scrolling: boolean) {
+  const inst = registry.get(leafId)
+  if (inst) {
+    inst.userScrolling = scrolling
+  }
+}
+
 function wireInput(inst: TerminalInstance) {
   inst.term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
@@ -265,9 +278,10 @@ function syncModes(inst: TerminalInstance): string {
   return '\x1b[?' + set.join(';') + 'h'
 }
 
-function safeScrollToBottom(term: Terminal) {
+function safeScrollToBottom(inst: TerminalInstance) {
+  if (inst.userScrolling) return
   try {
-    term.scrollToBottom()
+    inst.term.scrollToBottom()
   } catch { /* ignore if not attached to DOM */ }
 }
 
@@ -276,7 +290,7 @@ function flushPending(inst: TerminalInstance) {
   inst._pendingQueue = []
   for (const data of queue) {
     inst.term.write(data, () => {
-      safeScrollToBottom(inst.term)
+      safeScrollToBottom(inst)
     })
     inst.buffer.push(data)
     if (inst.buffer.length > 10000) inst.buffer.shift()
@@ -305,7 +319,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
           return
         }
         inst.term.write(msg.data, () => {
-          safeScrollToBottom(inst.term)
+          safeScrollToBottom(inst)
         })
         inst.buffer.push(msg.data)
         if (inst.buffer.length > 10000) inst.buffer.shift()
@@ -390,7 +404,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map() }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
