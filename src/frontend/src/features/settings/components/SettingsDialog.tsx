@@ -1310,7 +1310,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             ) : (
               <div className="w-full flex flex-col">
-                <div className="flex items-center gap-2 px-4 h-[44px] shrink-0">
+                <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-border">
                   <button
                     onClick={() => {
                       if ((activeSection === 'agents' && agentStep === 2) || (activeSection === 'limits' && limitStep === 2)) {
