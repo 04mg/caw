@@ -3,6 +3,7 @@ package push
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -30,6 +31,23 @@ var (
 )
 
 const finishedDebounce = 3 * time.Second
+
+// agentDisplayName maps internal agent IDs to human-readable names for push notifications.
+var agentDisplayName = map[string]string{
+	"claude":   "Claude",
+	"codex":    "Codex",
+	"copilot":  "Copilot",
+	"agy":      "Antigravity",
+	"opencode": "OpenCode",
+	"pi":       "Pi",
+}
+
+func agentName(agentID string) string {
+	if name, ok := agentDisplayName[agentID]; ok {
+		return name
+	}
+	return "Agent"
+}
 
 // Dispatch sends a push notification for the given event type to all stored
 // subscriptions, respecting the user's push preferences. It runs non-blocking
@@ -61,15 +79,16 @@ func Dispatch(store *state.Store, eventType, sessionID, agentID, title, workspac
 		return
 	}
 
-	// Build the payload
-	body := "Agent is waiting for your input."
+	// Build the payload — title is the agent action, body is the task title (secondary)
+	name := agentName(agentID)
+	notifTitle := fmt.Sprintf("%s is waiting for your input", name)
 	if eventType == "finished" {
-		body = "Agent has finished its task."
+		notifTitle = fmt.Sprintf("%s has finished its task", name)
 	}
 	payload := PushPayload{
 		Type:      eventType,
-		Title:     title,
-		Body:      body,
+		Title:     notifTitle,
+		Body:      title,
 		SessionID: sessionID,
 		Workspace: workspace,
 		AgentID:   agentID,
