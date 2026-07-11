@@ -112,18 +112,21 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			heartbeat()
 			if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
-				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-				if err == nil && len(candidates) > 0 {
-					watchedFilePath = candidates[0]
-					lastFileSize = 0
-					// After locking on a file, only look for newer transcripts
-					// from this point on (prevents switching to a new session
-					// that hasn't started yet).
-					lastCheck = time.Now()
-					if info, err := os.Stat(watchedFilePath); err == nil {
-						lastActivity = info.ModTime()
+				// Gate on PTY activity: only claim if this watcher's PTY has
+				// recently produced output, preventing a silent watcher from
+				// stealing a session created by an active sibling agent.
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second {
+					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+					if err == nil && len(candidates) > 0 {
+						watchedFilePath = candidates[0]
+						lastFileSize = 0
+						lastCheck = time.Now()
+						if info, err := os.Stat(watchedFilePath); err == nil {
+							lastActivity = info.ModTime()
+						}
+						silentTicks = 0
 					}
-					silentTicks = 0
 				}
 			}
 			if watchedFilePath != "" {
@@ -152,19 +155,22 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 
 				// Mid-session re bind for /new and /resume.
 				if silentTicks >= rebindSilenceTicks {
-					cands, _ := listAntigravityCandidates(dir, cwd, lastActivity)
-					var others []RebindCandidate
-					for _, c := range cands {
-						others = append(others, RebindCandidate{Key: c.path, ModTime: c.modTime})
-					}
-					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, cwd, newKey) {
-							UnclaimSession(agentID, cwd, watchedFilePath)
-							watchedFilePath = newKey
-							lastFileSize = 0
-							lastCheck = time.Now()
-							silentTicks = 0
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						cands, _ := listAntigravityCandidates(dir, cwd, lastActivity)
+						var others []RebindCandidate
+						for _, c := range cands {
+							others = append(others, RebindCandidate{Key: c.path, ModTime: c.modTime})
+						}
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						if newKey != "" && newKey != watchedFilePath {
+							if ClaimSession(agentID, cwd, newKey) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newKey
+								lastFileSize = 0
+								lastCheck = time.Now()
+								silentTicks = 0
+							}
 						}
 					}
 				}

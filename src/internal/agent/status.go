@@ -85,6 +85,12 @@ var (
 	// pushStore is set by SetPushStore at server startup so that agent status
 	// transitions can trigger web push notifications.
 	pushStore *state.Store
+	// ptyActivity tracks the last time each leaf/session id received bytes
+	// from its PTY. Updated via OnPtyActivity from terminal.ReadLoop and read
+	// by watchers to correlate lazily-created internal agent sessions to the
+	// correct PTY when multiple agents of the same type share a cwd.
+	ptyActivity   = make(map[string]time.Time)
+	ptyActivityMu sync.RWMutex
 )
 
 // SetPushStore wires the state store into the agent package so that status
@@ -95,6 +101,29 @@ func SetPushStore(s *state.Store) { pushStore = s }
 func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
+	terminal.OnPtyActivity = handlePtyActivity
+}
+
+// handlePtyActivity records that the PTY for the given leaf/session id just
+// produced output. Called from terminal.ReadLoop on every read.
+func handlePtyActivity(id string, n int) {
+	if n <= 0 {
+		return
+	}
+	ptyActivityMu.Lock()
+	ptyActivity[id] = time.Now()
+	ptyActivityMu.Unlock()
+}
+
+// LastPtyActivity returns the timestamp of the most recent PTY output for the
+// given leaf/session id, or the zero time if no activity has been recorded.
+// Used by watchers to determine whether their agent process is currently
+// producing output, which disambiguates which internal session belongs to
+// which PTY when multiple agents of the same type share a cwd.
+func LastPtyActivity(sessionID string) time.Time {
+	ptyActivityMu.RLock()
+	defer ptyActivityMu.RUnlock()
+	return ptyActivity[sessionID]
 }
 
 // RegisterStatusWatcher allows status providers to register themselves

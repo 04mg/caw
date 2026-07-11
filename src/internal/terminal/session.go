@@ -235,6 +235,9 @@ func (s *Session) ReadLoop() {
 		n, err := s.Pty.ptmx.Read(buf)
 		if n > 0 {
 			data := buf[:n]
+			if OnPtyActivity != nil {
+				OnPtyActivity(s.ID, n)
+			}
 			s.mu.Lock()
 			// Track mode state from the raw stream before anything else:
 			// this runs on every live chunk, so the 256KiB ring trim below
