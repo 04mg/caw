@@ -10,6 +10,7 @@ export interface LazyFileNodeProps {
   startExpanded?: boolean
   onOpenFile: (path: string) => void
   gitStatuses: Record<string, string>
+  gitIgnored?: Record<string, boolean>
   editingPath: string | null
   createTarget: { parentPath: string; type: 'file' | 'dir' } | null
   clipboard: { path: string } | null
@@ -39,6 +40,7 @@ export function LazyFileNode({
   startExpanded = false,
   onOpenFile,
   gitStatuses,
+  gitIgnored,
   editingPath,
   createTarget,
   clipboard,
@@ -179,14 +181,45 @@ export function LazyFileNode({
   }
 
   const statusXY = gitStatuses[path] || ''
-  const isModified = statusXY.includes('M')
-  const isUntracked = statusXY.includes('?')
-  const isAdded = statusXY.includes('A')
+  const isIgnored = !!(gitIgnored && gitIgnored[path])
+
+  // For files, the status comes directly from gitStatuses[path].
+  // For folders, derive the effective status from any descendant that has
+  // a git status, so a folder shows a label when it contains a file or
+  // subfolder with a diff.
+  let effectiveXY = statusXY
+  if (isDir && !effectiveXY) {
+    const prefix = path.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '') + '/'
+    let folderIsModified = false
+    let folderIsAdded = false
+    let folderIsUntracked = false
+    for (const p in gitStatuses) {
+      const norm = p.replace(/\\/g, '/').toLowerCase()
+      if (norm.startsWith(prefix)) {
+        const s = gitStatuses[p]
+        if (s.includes('M')) folderIsModified = true
+        else if (s.includes('A')) folderIsAdded = true
+        else if (s.includes('?')) folderIsUntracked = true
+      }
+    }
+    if (folderIsModified) effectiveXY = 'M'
+    else if (folderIsAdded) effectiveXY = 'A'
+    else if (folderIsUntracked) effectiveXY = '?'
+  }
+
+  const isModified = effectiveXY.includes('M')
+  const isUntracked = effectiveXY.includes('?')
+  const isAdded = effectiveXY.includes('A')
 
   let statusBadge = null
   let textClass = ''
-  if (isModified) {
+  let iconClass = ''
+  if (isIgnored) {
+    textClass = 'text-muted-foreground/40'
+    iconClass = 'text-muted-foreground/40'
+  } else if (isModified) {
     textClass = 'text-yellow-500'
+    iconClass = 'text-yellow-500'
     statusBadge = (
       <span className="text-[9px] font-bold text-yellow-600 bg-yellow-500/15 border border-yellow-500/30 px-1 rounded shrink-0" title="Modified">
         M
@@ -194,6 +227,7 @@ export function LazyFileNode({
     )
   } else if (isAdded) {
     textClass = 'text-green-500'
+    iconClass = 'text-green-500'
     statusBadge = (
       <span className="text-[9px] font-bold text-green-600 bg-green-500/15 border border-green-500/30 px-1 rounded shrink-0" title="Added">
         A
@@ -201,6 +235,7 @@ export function LazyFileNode({
     )
   } else if (isUntracked) {
     textClass = 'text-red-400'
+    iconClass = 'text-red-400'
     statusBadge = (
       <span className="text-[9px] font-bold text-red-500 bg-red-500/15 border border-red-500/30 px-1 rounded shrink-0" title="Untracked">
         U
@@ -238,15 +273,15 @@ export function LazyFileNode({
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
               )}
               {expanded ? (
-                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <FolderOpen className={`h-3.5 w-3.5 shrink-0 ${iconClass || 'text-muted-foreground/70'}`} />
               ) : (
-                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <Folder className={`h-3.5 w-3.5 shrink-0 ${iconClass || 'text-muted-foreground/70'}`} />
               )}
             </>
           ) : (
             <>
               <span className="w-3.5" />
-              <FileCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+              <FileCode className={`h-3.5 w-3.5 shrink-0 ${iconClass || 'text-muted-foreground/70'}`} />
             </>
           )}
 
@@ -261,7 +296,7 @@ export function LazyFileNode({
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="truncate flex-1 font-medium text-muted-foreground">{name}</span>
+            <span className={`truncate flex-1 font-medium ${textClass || 'text-muted-foreground'}`}>{name}</span>
           )}
 
           {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50 shrink-0" />}
@@ -291,6 +326,7 @@ export function LazyFileNode({
               depth={depth + 1}
               onOpenFile={onOpenFile}
               gitStatuses={gitStatuses}
+              gitIgnored={gitIgnored}
               editingPath={editingPath}
               createTarget={createTarget}
               clipboard={clipboard}

@@ -26,6 +26,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
+  const [scrollSensitivity, setScrollSensitivity] = useState(0.025)
+  const [scrollFriction, setScrollFriction] = useState(0.88)
+  const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.015)
+  const [scrollGrace, setScrollGrace] = useState(1200)
   const [antigravityKey, setAntigravityKey] = useState('')
   const [opencodeCookie, setOpencodeCookie] = useState('')
   const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
@@ -160,6 +164,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
+
+      setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.025'))
+      setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.88'))
+      setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.015'))
+      setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
 
       setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
 
@@ -623,6 +632,111 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     )}
                   </div>
                   <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
+                </div>
+
+                <div className="pt-4 mt-2 border-t border-border">
+                  <div className="flex flex-col gap-1 mb-3">
+                    <label className="text-xs font-medium">Touch Scroll</label>
+                    <p className="text-[10px] text-muted-foreground">Tune mobile touch scroll behavior for the terminal. Values apply on the next terminal interaction.</p>
+                  </div>
+
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Scroll Sensitivity</label>
+                      <div className="flex items-center gap-3">
+                        <Slider
+                          min={0.005}
+                          max={0.1}
+                          step={0.005}
+                          value={[scrollSensitivity]}
+                          onValueChange={(val) => {
+                            const nextVal = val[0]
+                            setScrollSensitivity(nextVal)
+                            localStorage.setItem('caw:terminalScrollSensitivity', String(nextVal))
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollSensitivity.toFixed(3)}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">How many terminal lines a pixel of drag travels. Higher is more sensitive.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Momentum Friction</label>
+                      <div className="flex items-center gap-3">
+                        <Slider
+                          min={0.5}
+                          max={0.99}
+                          step={0.01}
+                          value={[scrollFriction]}
+                          onValueChange={(val) => {
+                            const nextVal = val[0]
+                            setScrollFriction(nextVal)
+                            localStorage.setItem('caw:terminalScrollFriction', String(nextVal))
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollFriction.toFixed(2)}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Velocity retained per frame after releasing. Higher coasts longer.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Velocity Threshold</label>
+                      <div className="flex items-center gap-3">
+                        <Slider
+                          min={0.005}
+                          max={0.1}
+                          step={0.005}
+                          value={[scrollVelocityThreshold]}
+                          onValueChange={(val) => {
+                            const nextVal = val[0]
+                            setScrollVelocityThreshold(nextVal)
+                            localStorage.setItem('caw:terminalScrollVelocityThreshold', String(nextVal))
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollVelocityThreshold.toFixed(3)}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Minimum velocity to keep momentum scrolling. Lower coasts from smaller flicks.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Grace Period (ms)</label>
+                      <div className="flex items-center gap-3">
+                        <Slider
+                          min={200}
+                          max={3000}
+                          step={100}
+                          value={[scrollGrace]}
+                          onValueChange={(val) => {
+                            const nextVal = val[0]
+                            setScrollGrace(nextVal)
+                            localStorage.setItem('caw:terminalScrollGrace', String(nextVal))
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollGrace}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">How long after scrolling before auto-follow resumes. Higher keeps your scroll position longer.</p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setScrollSensitivity(0.025)
+                        setScrollFriction(0.88)
+                        setScrollVelocityThreshold(0.015)
+                        setScrollGrace(1200)
+                        localStorage.removeItem('caw:terminalScrollSensitivity')
+                        localStorage.removeItem('caw:terminalScrollFriction')
+                        localStorage.removeItem('caw:terminalScrollVelocityThreshold')
+                        localStorage.removeItem('caw:terminalScrollGrace')
+                      }}
+                      className="self-start px-2.5 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors cursor-pointer"
+                    >
+                      Reset to Defaults
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1367,8 +1481,29 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               })}
             </div>
 
-            <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
-              {renderSectionContent()}
+            <div className="flex-1 flex flex-col">
+              {((activeSection === 'agents' && agentStep === 2) || (activeSection === 'limits' && limitStep === 2)) && (
+                <div className="flex items-center gap-2 px-4 h-[40px] shrink-0 border-b border-border">
+                  <button
+                    onClick={() => {
+                      if (activeSection === 'agents') setAgentStep(1)
+                      else setLimitStep(1)
+                    }}
+                    className="p-1 -ml-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    title="Back"
+                  >
+                    <ArrowLeft className="h-4 w-4 shrink-0" />
+                  </button>
+                  <span className="text-sm font-semibold text-foreground select-none">
+                    {activeSection === 'agents' && agentStep === 2
+                      ? (agentTypes[selectedAgentId]?.label || 'Agent') + ' Configuration'
+                      : ({ claude: 'Claude', codex: 'Codex', copilot: 'GitHub Copilot', antigravity: 'Antigravity', opencode: 'OpenCode Go', ollama: 'Ollama', openrouter: 'OpenRouter' }[selectedLimitProvider] || 'Provider') + ' Configuration'}
+                  </span>
+                </div>
+              )}
+              <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+                {renderSectionContent()}
+              </div>
             </div>
           </>
         )}

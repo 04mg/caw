@@ -60,9 +60,24 @@ func (h *Handler) Original(c *gin.Context) {
 	httpx.OK(c, ContentResponse{Content: content})
 }
 
+func (h *Handler) Ignored(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		httpx.BadRequest(c, "path required")
+		return
+	}
+	result, err := h.svc.Ignored(path)
+	if err != nil {
+		httpx.BadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, result)
+}
+
 func Register(rg *gin.RouterGroup) {
 	h := NewHandler(NewService())
 	rg.GET("/git/statuses", h.Status)
 	rg.GET("/git/diffs", h.Diff)
 	rg.GET("/git/originals", h.Original)
+	rg.GET("/git/ignored", h.Ignored)
 }

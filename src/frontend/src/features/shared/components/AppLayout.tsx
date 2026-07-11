@@ -85,6 +85,7 @@ export function AppLayout() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
+  const [gitIgnored, setGitIgnored] = useState<Record<string, boolean>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
@@ -207,18 +208,29 @@ export function AppLayout() {
   const fetchGitStatus = useCallback(async () => {
     if (!currentWorkspacePath) {
       setGitStatuses({})
+      setGitIgnored({})
       return
     }
     try {
-      const res = await fetch(`/api/git/statuses?path=${encodeURIComponent(currentWorkspacePath)}`)
-      if (res.ok) {
-        const json = await res.json()
+      const [statusRes, ignoredRes] = await Promise.all([
+        fetch(`/api/git/statuses?path=${encodeURIComponent(currentWorkspacePath)}`),
+        fetch(`/api/git/ignored?path=${encodeURIComponent(currentWorkspacePath)}`),
+      ])
+      if (statusRes.ok) {
+        const json = await statusRes.json()
         setGitStatuses(json?.data || {})
       } else {
         setGitStatuses({})
       }
+      if (ignoredRes.ok) {
+        const json = await ignoredRes.json()
+        setGitIgnored(json?.data || {})
+      } else {
+        setGitIgnored({})
+      }
     } catch {
       setGitStatuses({})
+      setGitIgnored({})
     }
   }, [currentWorkspacePath])
 
@@ -1199,6 +1211,7 @@ export function AppLayout() {
                   setMobileView('terminals')
                 }}
                 gitStatuses={gitStatuses}
+                gitIgnored={gitIgnored}
                 onRefresh={fetchGitStatus}
                 onClose={() => setExplorerDrawerOpen(false)}
               />
@@ -1450,6 +1463,7 @@ export function AppLayout() {
                         mainWorkspacePath={activeWorkspace.path || ''}
                         onOpenFile={openFile}
                         gitStatuses={gitStatuses}
+                        gitIgnored={gitIgnored}
                         onRefresh={fetchGitStatus}
                         onClose={() => setFolderSidebarCollapsed(true)}
                       />
