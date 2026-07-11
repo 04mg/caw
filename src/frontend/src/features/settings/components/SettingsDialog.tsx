@@ -1163,6 +1163,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                 return
                               }
                               const reg = await navigator.serviceWorker.ready
+                              const existing = await reg.pushManager.getSubscription()
+                              if (existing) {
+                                await existing.unsubscribe()
+                                await fetch('/api/push/subscribe', {
+                                  method: 'DELETE',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ endpoint: existing.endpoint }),
+                                }).catch(() => {})
+                              }
                               const sub = await reg.pushManager.subscribe({
                                 userVisibleOnly: true,
                                 applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
