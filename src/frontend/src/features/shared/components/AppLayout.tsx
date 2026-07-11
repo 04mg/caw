@@ -1103,12 +1103,14 @@ export function AppLayout() {
     if (Math.abs(diffX) > Math.abs(diffY)) {
       // Swipe from left edge (start x < 50) to open workspaces drawer
       if (touchStartRef.current.x < 50 && diffX > 80) {
+        setExplorerDrawerOpen(false)
         setWorkspacesDrawerOpen(true)
         touchStartRef.current = null
       }
       // Swipe from right edge (start x > width - 50) to open explorer drawer
       else if (touchStartRef.current.x > window.innerWidth - 50 && diffX < -80) {
         if (activeWorkspace) {
+          setWorkspacesDrawerOpen(false)
           setExplorerDrawerOpen(true)
           touchStartRef.current = null
         }
@@ -1131,7 +1133,7 @@ export function AppLayout() {
         >
           {/* Top Header */}
           <header className="flex items-center justify-between h-[50px] border-b border-border bg-secondary/15 px-3 shrink-0">
-            <Button variant="ghost" size="icon" className="animate-none" onClick={() => setWorkspacesDrawerOpen(true)}>
+            <Button variant="ghost" size="icon" className="animate-none" onClick={() => { setExplorerDrawerOpen(false); setWorkspacesDrawerOpen(true) }}>
               <Menu className="h-5 w-5" />
             </Button>
 
@@ -1152,7 +1154,7 @@ export function AppLayout() {
             </div>
 
             {activeWorkspace ? (
-              <Button variant="ghost" size="icon" className="animate-none" onClick={() => setExplorerDrawerOpen(true)}>
+              <Button variant="ghost" size="icon" className="animate-none" onClick={() => { setWorkspacesDrawerOpen(false); setExplorerDrawerOpen(true) }}>
                 <Folder className="h-5 w-5" />
               </Button>
             ) : (
@@ -1161,9 +1163,9 @@ export function AppLayout() {
           </header>
 
           {/* Workspaces Drawer (80% width with backdrop-blur) */}
-          <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${workspacesDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setWorkspacesDrawerOpen(false)} />
-            <div className={`absolute top-0 bottom-0 left-0 w-[80%] max-w-[320px] bg-background border-r border-border transition-transform duration-300 ease-out ${workspacesDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className={`fixed inset-0 z-50 ${workspacesDrawerOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+            <div className={`absolute inset-0 bg-black/60 backdrop-blur-md transition-opacity duration-200 ${workspacesDrawerOpen ? 'opacity-100' : 'opacity-0'}`} onClick={() => setWorkspacesDrawerOpen(false)} />
+            <div className={`absolute top-0 bottom-0 left-0 w-[80%] max-w-[320px] bg-background border-r border-border transition-transform duration-300 ease-out ${workspacesDrawerOpen ? 'translate-x-0 delay-150' : '-translate-x-full'}`}>
               <WorkspacePanel
                 workspaces={workspaces}
                 activeWorkspaceId={activeWorkspaceId}
@@ -1185,9 +1187,9 @@ export function AppLayout() {
           </div>
 
           {/* Explorer Drawer (80% width with backdrop-blur) */}
-          <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${explorerDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setExplorerDrawerOpen(false)} />
-            <div className={`absolute top-0 bottom-0 right-0 w-[80%] max-w-[320px] bg-background border-l border-border transition-transform duration-300 ease-out ${explorerDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className={`fixed inset-0 z-50 ${explorerDrawerOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+            <div className={`absolute inset-0 bg-black/60 backdrop-blur-md transition-opacity duration-200 ${explorerDrawerOpen ? 'opacity-100' : 'opacity-0'}`} onClick={() => setExplorerDrawerOpen(false)} />
+            <div className={`absolute top-0 bottom-0 right-0 w-[80%] max-w-[320px] bg-background border-l border-border transition-transform duration-300 ease-out ${explorerDrawerOpen ? 'translate-x-0 delay-150' : 'translate-x-full'}`}>
               <FolderSidebar
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
