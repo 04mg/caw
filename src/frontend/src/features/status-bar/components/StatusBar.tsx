@@ -328,7 +328,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 							onClick={() => onOpenSettings()}
 							className={cn("shrink-0 transition-colors cursor-pointer", isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
 						>
-							<Settings className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
+							<Settings className={cn(isMobile ? "h-5 w-5 ml-1" : "h-3.5 w-3.5")} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent side="top" className="select-none">
@@ -364,7 +364,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-				<button className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer">
+				<button className={cn("flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer", !isMobile && "px-2")}>
 					{isLoading ? (
 						<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
 					) : (
