@@ -147,8 +147,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     const el = elRef.current
     if (!el) return
 
-    const LINES_PER_PX = 0.12
-    const FRICTION = 0.94
+    const LINES_PER_PX = 0.05
+    const FRICTION = 0.92
     const VELOCITY_THRESHOLD = 0.02
     const SCROLL_GRACE_MS = 1200
 
