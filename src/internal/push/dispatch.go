@@ -90,7 +90,7 @@ func Dispatch(store *state.Store, eventType, sessionID, agentID, title, workspac
 	var ttl int
 	if eventType == "needs_input" {
 		urgency = webpush.UrgencyHigh
-		ttl = 0 // immediate, do not store
+		ttl = 2419200 // 28 days max — Apple rejects TTL=0
 	} else {
 		urgency = webpush.UrgencyNormal
 		ttl = 3600
@@ -143,7 +143,7 @@ func sendToSubscription(store *state.Store, sub state.PushSubscription, payload 
 	defer cancel()
 
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, subscription, &webpush.Options{
-		Subscriber:      "mailto:admin@caw.local",
+		Subscriber:      "noreply@caw.app",
 		VAPIDPublicKey:  vapidKeys.public,
 		VAPIDPrivateKey: vapidKeys.private,
 		TTL:             ttl,
@@ -155,10 +155,8 @@ func sendToSubscription(store *state.Store, sub state.PushSubscription, payload 
 	}
 	defer resp.Body.Close()
 
-	// 410 Gone, 404 Not Found, 401 Unauthorized, or 403 Forbidden means the
-	// subscription is expired/invalid and should be removed.
-	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound ||
-		resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	// 410 Gone or 404 Not Found means the subscription is permanently expired.
+	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 		_ = store.RemovePushSubscription(sub.Endpoint)
 		return
 	}

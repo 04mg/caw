@@ -1177,7 +1177,12 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                 applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
                               })
                               const subJSON = sub.toJSON()
-                              await fetch('/api/push/subscribe', {
+                              if (!subJSON.endpoint || !subJSON.keys?.p256dh || !subJSON.keys?.auth) {
+                                setPushError('Subscription created but missing keys. Browser may not support push fully.')
+                                setPushBusy(false)
+                                return
+                              }
+                              const subscribeRes = await fetch('/api/push/subscribe', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
@@ -1185,6 +1190,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                   keys: subJSON.keys,
                                 }),
                               })
+                              if (!subscribeRes.ok) {
+                                setPushError('Failed to register subscription with server.')
+                                setPushBusy(false)
+                                return
+                              }
                               setPushSubscribed(true)
                               setPushEnabled(true)
                               await fetch('/api/push/prefs', {
