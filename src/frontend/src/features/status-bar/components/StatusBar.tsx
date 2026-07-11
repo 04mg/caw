@@ -94,6 +94,13 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
+	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+
+	useEffect(() => {
+		const onResize = () => setIsMobile(window.innerWidth < 768)
+		window.addEventListener('resize', onResize)
+		return () => window.removeEventListener('resize', onResize)
+	}, [])
 
 	const fetchSettings = useCallback(async () => {
 		try {
@@ -210,7 +217,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			const item = group?.items.find(i => i.name === itemName)
 			if (item) {
 				const display = formatQuotaValue(item.used, item.limit, item.unit)
-				return { text: `${providerLabel} (${item.label}): ${display.text}`, isError: false, percentage: display.percentage }
+				return { text: isMobile ? `${providerLabel} ${display.text}` : `${providerLabel} (${item.label}): ${display.text}`, isError: false, percentage: display.percentage }
 			}
 		}
 
@@ -257,7 +264,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		}
 
 		const display = formatQuotaValue(q.used, q.limit, q.unit)
-		return { text: `${providerLabel} (${typeLabel}): ${display.text}`, isError: false, percentage: display.percentage }
+		return { text: isMobile ? `${providerLabel} ${display.text}` : `${providerLabel} (${typeLabel}): ${display.text}`, isError: false, percentage: display.percentage }
 	}
 
 	const activeDisplay = getQuotaDisplay()
@@ -291,7 +298,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-2 md:pb-0" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }}>
+		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-4 md:pb-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
 		<div className="flex items-center gap-2">
 			{!hideControlCenter && (
 				<>
@@ -332,21 +339,25 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			{hideControlCenter && (
 				<span className="h-4 w-px bg-border shrink-0" />
 			)}
-			{workspaceName ? (
-				<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-			) : (
-				<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-			)}
-			<span className="text-[11px] font-sans text-muted-foreground">
-				{workspaceName || 'Ready'}
-			</span>
-			{worktreeBranch && (
+			{!isMobile && (
 				<>
-					<span className="text-border select-none">·</span>
-					<span className="flex items-center gap-1 text-muted-foreground">
-						<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
-						<span className="text-[11px] font-sans">{worktreeBranch}</span>
+					{workspaceName ? (
+						<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+					) : (
+						<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+					)}
+					<span className="text-[11px] font-sans text-muted-foreground">
+						{workspaceName || 'Ready'}
 					</span>
+					{worktreeBranch && (
+						<>
+							<span className="text-border select-none">·</span>
+							<span className="flex items-center gap-1 text-muted-foreground">
+								<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
+								<span className="text-[11px] font-sans">{worktreeBranch}</span>
+							</span>
+						</>
+					)}
 				</>
 			)}
 		</div>
