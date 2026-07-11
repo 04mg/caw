@@ -298,7 +298,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-4 md:pb-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
+		<div className="min-h-[50px] md:min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-3 md:px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-4 md:pb-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
 		<div className="flex items-center gap-2">
 			{!hideControlCenter && (
 				<>
@@ -311,14 +311,14 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									agentBoardOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"
 								)}
 							>
-								<SquareKanban className="h-3.5 w-3.5" />
+								<SquareKanban className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="top" className="select-none">
 							Control Center
 						</TooltipContent>
 					</Tooltip>
-					<span className="h-4 w-px bg-border shrink-0" />
+					{!isMobile && <span className="h-4 w-px bg-border shrink-0" />}
 				</>
 			)}
 			{hideControlCenter && (
@@ -328,7 +328,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 							onClick={() => onOpenSettings()}
 							className="shrink-0 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
 						>
-							<Settings className="h-3.5 w-3.5" />
+							<Settings className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent side="top" className="select-none">
@@ -336,7 +336,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					</TooltipContent>
 				</Tooltip>
 			)}
-			{hideControlCenter && (
+			{hideControlCenter && !isMobile && (
 				<span className="h-4 w-px bg-border shrink-0" />
 			)}
 			{!isMobile && (
