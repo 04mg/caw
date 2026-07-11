@@ -322,14 +322,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     )
   }
 
-  // Define mobile columns (Needs Input -> Working -> Idle)
+  // Define mobile columns (Idle -> Working -> Needs Input, same as desktop)
   const MOBILE_COLUMNS: Column[] = [
     {
-      id: 'needs_input',
-      title: 'Needs Input',
-      icon: Construction,
-      colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
-      glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
+      id: 'idle',
+      title: 'Idle',
+      icon: Coffee,
+      colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
+      glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
     },
     {
       id: 'working',
@@ -339,11 +339,11 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
     },
     {
-      id: 'idle',
-      title: 'Idle',
-      icon: Coffee,
-      colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
-      glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
+      id: 'needs_input',
+      title: 'Needs Input',
+      icon: Construction,
+      colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
+      glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
     },
   ]
 
