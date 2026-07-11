@@ -1579,13 +1579,15 @@ export function AppLayout() {
         </linearGradient>
       </svg>
 
-      {/* Agent status toast notifications — positioned above StatusBar */}
-      <Toaster
-        position="bottom-right"
-        visibleToasts={5}
-        gap={8}
-        toastOptions={{ unstyled: true, classNames: { toast: '' } }}
-      />
+      {/* Agent status toast notifications — positioned above StatusBar (desktop only) */}
+      {!isMobile && (
+        <Toaster
+          position="bottom-right"
+          visibleToasts={5}
+          gap={8}
+          toastOptions={{ unstyled: true, classNames: { toast: '' } }}
+        />
+      )}
     </div>
   )
 }
