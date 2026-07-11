@@ -298,7 +298,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-3 md:px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-4 md:pb-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined, paddingTop: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
+		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-3 md:px-4 flex items-center justify-between text-xs text-foreground md:text-muted-foreground select-none font-sans pb-4 md:pb-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined, paddingTop: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
 		<div className="flex items-center gap-2">
 			{!hideControlCenter && (
 				<>
@@ -308,7 +308,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								onClick={onToggleAgentBoard}
 								className={cn(
 									"shrink-0 transition-colors cursor-pointer",
-									agentBoardOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"
+									agentBoardOpen ? "text-primary" : isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground"
 								)}
 							>
 								<SquareKanban className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
@@ -326,7 +326,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					<TooltipTrigger asChild>
 						<button
 							onClick={() => onOpenSettings()}
-							className="shrink-0 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+							className={cn("shrink-0 transition-colors cursor-pointer", isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
 						>
 							<Settings className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
 						</button>
