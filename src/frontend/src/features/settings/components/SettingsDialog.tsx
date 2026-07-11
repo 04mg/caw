@@ -492,15 +492,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
               <div className="flex flex-col gap-2 shrink-0">
                 <div>
-                  <button
-                    onClick={() => setAgentStep(1)}
-                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring"
-                    title="Back to Agents"
-                  >
-                    <ArrowLeft className="h-4 w-4 shrink-0" />
-                  </button>
-                </div>
-                <div>
                   <h3 className="text-sm font-semibold select-none">
                     {agentTypes[selectedAgentId]?.label || 'Agent'} Configuration
                   </h3>
@@ -737,15 +728,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'limits' && limitStep === 2 && (
             <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
               <div className="flex flex-col gap-2 shrink-0">
-                <div>
-                  <button
-                    onClick={() => setLimitStep(1)}
-                    className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring"
-                    title="Back to Providers"
-                  >
-                    <ArrowLeft className="h-4 w-4 shrink-0" />
-                  </button>
-                </div>
                 <div>
                   <h3 className="text-sm font-semibold select-none">
                     {selectedLimitProvider === 'claude' && 'Claude Configuration'}
@@ -1293,10 +1275,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent hideClose={isMobile} className={`p-0 flex flex-row overflow-hidden bg-background border border-border sm:rounded-lg ${
+      <DialogContent hideClose={isMobile} className={`p-0 flex flex-row overflow-hidden bg-background ${
         isMobile
-          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0'
-          : 'w-[600px] h-[400px] max-w-none max-h-none'
+          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
+          : 'w-[600px] h-[400px] max-w-none max-h-none border border-border sm:rounded-lg'
       }`}>
         {isMobile ? (
           <>
@@ -1328,16 +1310,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             ) : (
               <div className="w-full flex flex-col">
-                <div className="flex items-center gap-2 px-4 h-[44px] border-b border-border shrink-0">
+                <div className="flex items-center gap-2 px-4 h-[44px] shrink-0">
                   <button
-                    onClick={backToSections}
+                    onClick={() => {
+                      if ((activeSection === 'agents' && agentStep === 2) || (activeSection === 'limits' && limitStep === 2)) {
+                        setAgentStep(1)
+                        setLimitStep(1)
+                      } else {
+                        backToSections()
+                      }
+                    }}
                     className="p-1 -ml-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                    title="Back to Settings"
+                    title="Back"
                   >
                     <ArrowLeft className="h-4 w-4 shrink-0" />
                   </button>
                   <DialogTitle className="text-sm font-semibold text-foreground">
-                    {sections.find((s) => s.id === activeSection)?.label || 'Settings'}
+                    {activeSection === 'agents' && agentStep === 2
+                      ? (agentTypes[selectedAgentId]?.label || 'Agent') + ' Configuration'
+                      : activeSection === 'limits' && limitStep === 2
+                        ? ({ claude: 'Claude', codex: 'Codex', copilot: 'GitHub Copilot', antigravity: 'Antigravity', opencode: 'OpenCode Go', ollama: 'Ollama', openrouter: 'OpenRouter' }[selectedLimitProvider] || 'Provider') + ' Configuration'
+                        : sections.find((s) => s.id === activeSection)?.label || 'Settings'}
                   </DialogTitle>
                   <DialogClose className="ml-auto p-1 -mr-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer">
                     <X className="h-4 w-4" />

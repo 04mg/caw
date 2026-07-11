@@ -291,7 +291,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-center justify-between text-xs text-muted-foreground select-none font-sans pb-2 md:pb-0" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }}>
 		<div className="flex items-center gap-2">
 			{!hideControlCenter && (
 				<>
