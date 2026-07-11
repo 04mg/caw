@@ -97,7 +97,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 							}
 							callback(status, tool, details, sessionTitle)
 						}
-						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
+						w.parsePiLog(watchedFilePath, lastFileSize, resume, wrappedCallback)
 						lastFileSize = info.Size()
 					}
 				} else {
@@ -128,7 +128,7 @@ func parseOnePiLogLine(line string) (PiMessage, bool) {
 	return PiMessage{}, false
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) parsePiLog(filePath string, offset int64, resume bool, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
@@ -169,15 +169,18 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		return
 	}
 
-	if offset == 0 {
-		// Initial full read: report only the final state to avoid replaying the
-		// whole session history as a burst of transitions.
+	if offset == 0 && resume {
+		// Resumed session: report only the final state to avoid replaying
+		// the whole prior session history as a burst of transitions.
 		last := states[len(states)-1]
 		callback(last.status, last.tool, "", sessionTitle)
 		return
 	}
 
-	// Incremental read: emit every transition.
+	// Incremental read (or fresh session initial read): emit every deduped
+	// transition. For a fresh session where the whole turn was already written
+	// before the first poll (e.g. a fast one-shot response), this captures the
+	// thinking→idle transition so status/push notifications fire correctly.
 	var lastState string
 	for _, st := range states {
 		state := st.status + "|" + st.tool
