@@ -49,9 +49,10 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// On resume (--continue), the agent reattaches to a pre-existing session
 	// whose transcript file may have been last modified before this watcher
 	// started. Widen the search window to 1 hour so the resumed session is
-	// found; for a fresh start, only look for files modified in the last
-	// second to avoid grabbing a stale session.
-	lookback := 1 * time.Second
+	// found; for a fresh start, only look for files modified after the
+	// watcher started (no negative offset) to avoid grabbing a sibling
+	// agent's session that was created moments before this watcher launched.
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -59,6 +60,11 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	// Re-bind bookkeeping: lastActivity is the mtime of the most recently
+	// read chunk of the watched file; silentTicks counts consecutive polls
+	// with no new data. Used by ShouldRebind to detect /new and /resume.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if watchedFilePath != "" {
@@ -73,7 +79,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidates, err := FindLatestFiles(searchDir, ".jsonl", lastCheck)
+				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
 				}
@@ -82,6 +88,8 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
+						lastActivity = c.ModTime
+						silentTicks = 0
 						break
 					}
 				}
@@ -98,11 +106,38 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 						}
 						w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
 					}
 				} else {
 					// File disappeared — release claim and search again next tick.
 					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re-bind: detect /new and /resume issued inside
+				// the running agent. When the current file has been silent
+				// for a few polls and another same-cwd file has just received
+				// writes, atomically switch to it.
+				if silentTicks >= rebindSilenceTicks {
+					cands, _ := FindLatestFiles(searchDir, ".jsonl", lastActivity)
+					var others []RebindCandidate
+					for _, c := range cands {
+						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+					}
+					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+					if newKey != "" && newKey != watchedFilePath {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newKey
+							lastFileSize = 0
+							lastCheck = time.Now()
+							silentTicks = 0
+						}
+					}
 				}
 			}
 		}
