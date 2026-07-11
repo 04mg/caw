@@ -64,6 +64,35 @@ func (s *Service) Status(path string) (map[string]string, error) {
 	return statuses, nil
 }
 
+func (s *Service) Ignored(path string) (map[string]bool, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("git", "status", "--porcelain", "--ignored", "-u")
+	cmd.Dir = abs
+	output, err := cmd.Output()
+	if err != nil {
+		return map[string]bool{}, nil
+	}
+	ignored := make(map[string]bool, 64)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		statusXY := line[:2]
+		if statusXY != "!!" {
+			continue
+		}
+		filePath := line[3:]
+		filePath = strings.Trim(filePath, "\"")
+		absFilePath := filepath.Join(abs, filePath)
+		ignored[absFilePath] = true
+	}
+	return ignored, nil
+}
+
 func (s *Service) Diff(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

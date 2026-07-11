@@ -64,7 +64,7 @@ func (s *Service) ListDir(path string) ([]FileNode, error) {
 	children := []FileNode{}
 	for _, e := range entries {
 		name := e.Name()
-		if name[0] == '.' && name != "." && name != ".." {
+		if name == "." || name == ".." {
 			continue
 		}
 		if !e.IsDir() {
@@ -151,7 +151,7 @@ func (s *Service) ListAll(path string) ([]FileNode, error) {
 	children := []FileNode{}
 	for _, e := range entries {
 		name := e.Name()
-		if name[0] == '.' && name != "." && name != ".." {
+		if name == "." || name == ".." {
 			continue
 		}
 		isDir := e.IsDir()

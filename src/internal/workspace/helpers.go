@@ -25,7 +25,7 @@ func buildTree(dir string, depth int) (FileNode, error) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name[0] == '.' {
+		if name == "." || name == ".." {
 			continue
 		}
 		child, err := buildTree(filepath.Join(dir, name), depth-1)
@@ -50,7 +50,7 @@ func searchAll(dir, q string, results *[]FileNode, depth, maxDepth, maxResults i
 			return
 		}
 		name := e.Name()
-		if name == "" || name[0] == '.' {
+		if name == "" || name == "." || name == ".." {
 			continue
 		}
 		path := filepath.Join(dir, name)

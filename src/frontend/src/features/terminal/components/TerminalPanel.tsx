@@ -147,10 +147,10 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     const el = elRef.current
     if (!el) return
 
-    const LINES_PER_PX = 0.025
-    const FRICTION = 0.88
-    const VELOCITY_THRESHOLD = 0.015
-    const SCROLL_GRACE_MS = 1200
+    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.025')
+    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.88')
+    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.015')
+    const SCROLL_GRACE_MS = parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10)
 
     let lastY = 0
     let lastX = 0

@@ -17,6 +17,7 @@ interface FolderSidebarProps {
   workspacePath: string
   onOpenFile: (path: string) => void
   gitStatuses: Record<string, string>
+  gitIgnored?: Record<string, boolean>
   onRefresh: () => void
   noHeader?: boolean
   mainWorkspacePath?: string
@@ -27,6 +28,7 @@ export function FolderSidebar({
   workspacePath,
   onOpenFile,
   gitStatuses,
+  gitIgnored,
   onRefresh,
   noHeader,
   mainWorkspacePath,
@@ -272,6 +274,7 @@ export function FolderSidebar({
               startExpanded
               onOpenFile={onOpenFile}
               gitStatuses={gitStatuses}
+              gitIgnored={gitIgnored}
               editingPath={editingPath}
               createTarget={createTarget}
               clipboard={clipboard}
