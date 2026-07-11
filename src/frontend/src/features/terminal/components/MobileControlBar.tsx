@@ -3,6 +3,7 @@ import { Button } from '@/components/button'
 import {
   toggleStickyCtrl,
   toggleStickyAlt,
+  toggleStickyShift,
   subscribeStickyModifiers,
   stickyModifiers,
   sendTerminalInput
@@ -14,11 +15,11 @@ interface MobileControlBarProps {
 }
 
 export function MobileControlBar({ terminalId }: MobileControlBarProps) {
-  const [sticky, setSticky] = useState({ ctrl: false, alt: false })
+  const [sticky, setSticky] = useState({ ctrl: false, alt: false, shift: false })
 
   useEffect(() => {
     return subscribeStickyModifiers(() => {
-      setSticky({ ctrl: stickyModifiers.ctrl, alt: stickyModifiers.alt })
+      setSticky({ ctrl: stickyModifiers.ctrl, alt: stickyModifiers.alt, shift: stickyModifiers.shift })
     })
   }, [terminalId])
 
@@ -51,6 +52,17 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
           onClick={toggleStickyAlt}
         >
           ALT
+        </Button>
+        <Button
+          variant={sticky.shift ? 'default' : 'ghost'}
+          className={`h-7 px-2.5 text-xs font-bold transition-all border ${
+            sticky.shift 
+              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 font-extrabold shadow-sm animate-none' 
+              : 'border-border/30 text-muted-foreground'
+          }`}
+          onClick={toggleStickyShift}
+        >
+          SHIFT
         </Button>
       </div>
 
