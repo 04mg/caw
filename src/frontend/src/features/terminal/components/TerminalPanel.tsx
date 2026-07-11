@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, getTerminal, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, getTerminal, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -142,6 +142,115 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       inst.term.focus()
     }
   }, [isActive, terminalId])
+
+  useEffect(() => {
+    const el = elRef.current
+    if (!el) return
+
+    const LINES_PER_PX = 0.12
+    const FRICTION = 0.94
+    const VELOCITY_THRESHOLD = 0.02
+    const SCROLL_GRACE_MS = 1200
+
+    let lastY = 0
+    let lastX = 0
+    let lastTime = 0
+    let velocity = 0
+    let active = false
+    let rafId = 0
+    let graceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
+      const target = el.querySelector('.xterm-viewport') || el
+      if (!target) return
+      target.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: deltaY,
+        deltaMode: WheelEvent.DOM_DELTA_LINE,
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+      }))
+    }
+
+    const beginGrace = () => {
+      if (graceTimer) clearTimeout(graceTimer)
+      graceTimer = setTimeout(() => {
+        setTerminalUserScrolling(terminalId, false)
+        graceTimer = null
+      }, SCROLL_GRACE_MS)
+    }
+
+    const momentum = () => {
+      if (Math.abs(velocity) < VELOCITY_THRESHOLD) {
+        rafId = 0
+        beginGrace()
+        return
+      }
+      const delta = velocity * 16 * LINES_PER_PX
+      dispatchWheel(delta, lastX, lastY)
+      velocity *= FRICTION
+      rafId = requestAnimationFrame(momentum)
+    }
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+        rafId = 0
+      }
+      if (graceTimer) {
+        clearTimeout(graceTimer)
+        graceTimer = null
+      }
+      const t = e.touches[0]
+      lastY = t.clientY
+      lastX = t.clientX
+      lastTime = Date.now()
+      velocity = 0
+      active = true
+      setTerminalUserScrolling(terminalId, true)
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!active || e.touches.length !== 1) return
+      e.preventDefault()
+      const t = e.touches[0]
+      const now = Date.now()
+      const dy = lastY - t.clientY
+      const dt = Math.max(1, now - lastTime)
+      velocity = dy / dt
+      lastY = t.clientY
+      lastX = t.clientX
+      lastTime = now
+      dispatchWheel(dy * LINES_PER_PX, t.clientX, t.clientY)
+    }
+
+    const onTouchEnd = () => {
+      if (!active) return
+      active = false
+      if (Math.abs(velocity) >= VELOCITY_THRESHOLD) {
+        rafId = requestAnimationFrame(momentum)
+      } else {
+        beginGrace()
+      }
+    }
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true })
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId)
+      if (graceTimer) clearTimeout(graceTimer)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      setTerminalUserScrolling(terminalId, false)
+    }
+  }, [terminalId])
 
   useEffect(() => {
     if (!contextMenu) return
