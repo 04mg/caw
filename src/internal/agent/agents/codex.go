@@ -46,7 +46,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	// search window to 1 hour so the resumed session is found. For a fresh
 	// start, only look for files modified after the watcher started (no
 	// negative offset) to avoid grabbing a sibling agent's session.
-	lookback := 0 * time.Second
+	lookback := 30 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -71,17 +71,12 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
-				if err != nil {
-					continue
-				}
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
-				for _, c := range candidates {
-					if !ptyRecentlyActive {
-						break
-					}
-					if ClaimSession(agentID, cwd, c.Path) {
+			candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
+			if err != nil {
+				continue
+			}
+			for _, c := range candidates {
+				if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
