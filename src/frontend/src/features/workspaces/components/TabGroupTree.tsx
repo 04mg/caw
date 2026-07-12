@@ -176,8 +176,8 @@ export function TabGroupTree({
               <Separator
                 className={
                   orientation === 'horizontal'
-                    ? 'w-[2px] bg-border hover:bg-ring transition-colors cursor-col-resize shrink-0'
-                    : 'h-[2px] bg-border hover:bg-ring transition-colors cursor-row-resize shrink-0'
+                    ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize shrink-0'
+                    : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize shrink-0'
                 }
               />
             )}

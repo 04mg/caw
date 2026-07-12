@@ -102,8 +102,7 @@ export function TabGroupView({
     }
   }
 
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation()
+  const handlePointerUp = () => {
     if (!draggedTabId || !activeZone) return
     if (activeZone === 'center') {
       onMoveTabToGroup(draggedTabId, group.id)
