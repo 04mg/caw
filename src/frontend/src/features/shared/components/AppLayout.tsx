@@ -1424,33 +1424,20 @@ export function AppLayout() {
           {/* Main Content Area */}
           <div className="flex-1 min-h-0 relative flex flex-col">
             {mobileView === 'control_center' ? (
-              <>
-                <div className="flex-1 min-h-0">
-                  <KanbanBoard
-                    workspaces={workspaces}
-                    onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-                      setActiveWorkspaceId(workspaceId)
-                      patchWorkspace(workspaceId, (ws) => ({
-                        ...ws,
-                        activeTabIndex: tabIndex,
-                        activePaneId: paneId,
-                      }))
-                      setMobileView('terminals')
-                    }}
-                  />
-                </div>
-                <StatusBar
-                  workspaceName={activeWorkspace?.name}
-                  worktreeBranch={activeWorktreeBranch}
-                  agentBoardOpen={agentBoardOpen}
-                  onToggleAgentBoard={() => setMobileView('terminals')}
-                  onOpenSettings={(section) => {
-                    setSettingsSection(section)
-                    setSettingsOpen(true)
+              <div className="flex-1 min-h-0">
+                <KanbanBoard
+                  workspaces={workspaces}
+                  onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
+                    setActiveWorkspaceId(workspaceId)
+                    patchWorkspace(workspaceId, (ws) => ({
+                      ...ws,
+                      activeTabIndex: tabIndex,
+                      activePaneId: paneId,
+                    }))
+                    setMobileView('terminals')
                   }}
-                  hideControlCenter
                 />
-              </>
+              </div>
             ) : (
               <div className="flex flex-col h-full">
                 {/* Scrollable horizontal tab bar below the header */}
@@ -1545,20 +1532,22 @@ export function AppLayout() {
                   )}
                 </div>
 
-                <StatusBar
-                  workspaceName={activeWorkspace?.name}
-                  worktreeBranch={activeWorktreeBranch}
-                  agentBoardOpen={agentBoardOpen}
-                  onToggleAgentBoard={() => setMobileView('control_center')}
-                  onOpenSettings={(section) => {
-                    setSettingsSection(section)
-                    setSettingsOpen(true)
-                  }}
-                  hideControlCenter
-                />
               </div>
             )}
           </div>
+
+          {/* Global Status Bar - stays mounted across mobile view switches to avoid reloading usage limits */}
+          <StatusBar
+            workspaceName={activeWorkspace?.name}
+            worktreeBranch={activeWorktreeBranch}
+            agentBoardOpen={agentBoardOpen}
+            onToggleAgentBoard={() => setMobileView(mobileView === 'control_center' ? 'terminals' : 'control_center')}
+            onOpenSettings={(section) => {
+              setSettingsSection(section)
+              setSettingsOpen(true)
+            }}
+            hideControlCenter
+          />
         </div>
       ) : (
         <>
