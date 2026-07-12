@@ -137,6 +137,13 @@ html, body, #root {
   touch-action: none;
 }
 
+.xterm-keyboard-open .xterm,
+.xterm-keyboard-open .xterm-viewport,
+.xterm-keyboard-open .xterm-screen {
+  touch-action: auto !important;
+  overflow: visible !important;
+}
+
 .xterm,
 .xterm-viewport,
 .xterm-screen,

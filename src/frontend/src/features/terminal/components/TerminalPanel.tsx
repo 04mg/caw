@@ -48,9 +48,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
   const lastDimsRef = useRef<string>('')
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
-  const scrollBarRef = useRef<HTMLDivElement>(null)
-  const scrollThumbRef = useRef<HTMLDivElement>(null)
-  const scrollDragRef = useRef<{ startY: number; startThumbTop: number } | null>(null)
+  const keyboardOpenRef = useRef(false)
 
   const cmdKey = useMemo(() => JSON.stringify(cmd ?? []), [cmd])
   const stableCmd = useMemo(() => cmd, [cmdKey])
@@ -147,133 +145,28 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
   }, [isActive, terminalId])
 
   useEffect(() => {
-    const el = elRef.current
-    const scrollBar = scrollBarRef.current
-    const thumb = scrollThumbRef.current
-    if (!el || !scrollBar || !thumb) return
-
-    let rafId = 0
-
-    const updateThumb = () => {
-      rafId = 0
-      const vp = el.querySelector('.xterm-viewport') as HTMLElement | null
-      if (!vp) return
-      const scrollTop = vp.scrollTop
-      const scrollHeight = vp.scrollHeight
-      const clientHeight = vp.clientHeight
-      const barHeight = scrollBar.clientHeight
-      if (scrollHeight <= clientHeight) {
-        thumb.style.display = 'none'
-        return
+    const vv = window.visualViewport
+    if (!vv) return
+    const baseline = vv.height
+    const onResize = () => {
+      const shrunk = baseline - vv.height
+      const open = shrunk > baseline * 0.18
+      keyboardOpenRef.current = open
+      const el = elRef.current
+      if (el) {
+        if (open) el.classList.add('xterm-keyboard-open')
+        else el.classList.remove('xterm-keyboard-open')
       }
-      thumb.style.display = ''
-      const thumbHeight = Math.max(24, (clientHeight / scrollHeight) * barHeight)
-      const maxThumbTop = barHeight - thumbHeight
-      const thumbTop = (scrollTop / (scrollHeight - clientHeight)) * maxThumbTop
-      thumb.style.height = `${thumbHeight}px`
-      thumb.style.top = `${thumbTop}px`
     }
-
-    const scheduleUpdate = () => {
-      if (rafId) return
-      rafId = requestAnimationFrame(updateThumb)
-    }
-
-    const vp = el.querySelector('.xterm-viewport') as HTMLElement | null
-    if (vp) {
-      vp.addEventListener('scroll', scheduleUpdate, { passive: true })
-    }
-    const ro = new ResizeObserver(scheduleUpdate)
-    ro.observe(el)
-    const interval = setInterval(scheduleUpdate, 200)
-    scheduleUpdate()
-
+    vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onResize)
     return () => {
-      if (rafId) cancelAnimationFrame(rafId)
-      if (vp) vp.removeEventListener('scroll', scheduleUpdate)
-      ro.disconnect()
-      clearInterval(interval)
+      vv.removeEventListener('resize', onResize)
+      vv.removeEventListener('scroll', onResize)
+      const el = elRef.current
+      if (el) el.classList.remove('xterm-keyboard-open')
     }
-  }, [terminalId])
-
-  const handleScrollMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const el = elRef.current
-    const vp = el?.querySelector('.xterm-viewport') as HTMLElement | null
-    if (!vp) return
-    const thumb = scrollThumbRef.current
-    if (!thumb) return
-    scrollDragRef.current = {
-      startY: e.clientY,
-      startThumbTop: parseFloat(thumb.style.top || '0'),
-    }
-
-    const onMove = (ev: MouseEvent) => {
-      const drag = scrollDragRef.current
-      if (!drag) return
-      const scrollBar = scrollBarRef.current
-      if (!scrollBar) return
-      const barHeight = scrollBar.clientHeight
-      const thumbHeight = thumb.offsetHeight
-      const maxThumbTop = barHeight - thumbHeight
-      const dy = ev.clientY - drag.startY
-      const newThumbTop = Math.max(0, Math.min(maxThumbTop, drag.startThumbTop + dy))
-      const scrollRatio = maxThumbTop > 0 ? newThumbTop / maxThumbTop : 0
-      const scrollHeight = vp.scrollHeight - vp.clientHeight
-      vp.scrollTop = scrollRatio * scrollHeight
-    }
-
-    const onUp = () => {
-      scrollDragRef.current = null
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
-
-  const handleScrollTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const el = elRef.current
-    const vp = el?.querySelector('.xterm-viewport') as HTMLElement | null
-    if (!vp) return
-    const thumb = scrollThumbRef.current
-    if (!thumb) return
-    const touch = e.touches[0]
-    scrollDragRef.current = {
-      startY: touch.clientY,
-      startThumbTop: parseFloat(thumb.style.top || '0'),
-    }
-
-    const onMove = (ev: TouchEvent) => {
-      const drag = scrollDragRef.current
-      if (!drag || ev.touches.length !== 1) return
-      const scrollBar = scrollBarRef.current
-      if (!scrollBar) return
-      const barHeight = scrollBar.clientHeight
-      const thumbHeight = thumb.offsetHeight
-      const maxThumbTop = barHeight - thumbHeight
-      const dy = ev.touches[0].clientY - drag.startY
-      const newThumbTop = Math.max(0, Math.min(maxThumbTop, drag.startThumbTop + dy))
-      const scrollRatio = maxThumbTop > 0 ? newThumbTop / maxThumbTop : 0
-      const scrollHeight = vp.scrollHeight - vp.clientHeight
-      vp.scrollTop = scrollRatio * scrollHeight
-    }
-
-    const onEnd = () => {
-      scrollDragRef.current = null
-      window.removeEventListener('touchmove', onMove)
-      window.removeEventListener('touchend', onEnd)
-      window.removeEventListener('touchcancel', onEnd)
-    }
-
-    window.addEventListener('touchmove', onMove, { passive: false })
-    window.addEventListener('touchend', onEnd)
-    window.addEventListener('touchcancel', onEnd)
-  }
+  }, [])
 
   useEffect(() => {
     const el = elRef.current
@@ -327,6 +220,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return
+      if (keyboardOpenRef.current) return
       if (rafId) {
         cancelAnimationFrame(rafId)
         rafId = 0
@@ -446,18 +340,6 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       onContextMenu={handleContextMenu}
     >
       <div ref={elRef} className="h-full w-full overflow-hidden" />
-      <div
-        ref={scrollBarRef}
-        className="absolute top-0 right-0 bottom-0 w-2 bg-black/60 hover:bg-black/80 transition-colors cursor-pointer touch-none z-10"
-        onMouseDown={handleScrollMouseDown}
-        onTouchStart={handleScrollTouchStart}
-      >
-        <div
-          ref={scrollThumbRef}
-          className="absolute left-0 right-0 bg-white/25 hover:bg-white/40 rounded-sm transition-colors"
-          style={{ height: '40px', top: '0px' }}
-        />
-      </div>
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button
