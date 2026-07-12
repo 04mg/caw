@@ -57,6 +57,9 @@ export function sanitizeTabGroups(
 ): TabGroupsNode | null {
   if (node.type === 'group') {
     const tabs = node.tabs.filter((t) => validTabIds.includes(t))
+    if (tabs.length === 0) {
+      return null
+    }
     const activeTabIndex = Math.max(0, Math.min(node.activeTabIndex, tabs.length - 1))
     return { ...node, tabs, activeTabIndex }
   }

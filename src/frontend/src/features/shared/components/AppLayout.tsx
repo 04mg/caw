@@ -13,6 +13,7 @@ import {
   collectLeafIds,
   countLeaves,
   setSplitSizes,
+  findAgentId,
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
@@ -27,7 +28,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -90,14 +91,28 @@ export function AppLayout() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
+  const [dragMousePos, setDragMousePos] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
-    if (!draggedTabId) return
-    const handleGlobalPointerUp = () => {
-      setTimeout(() => setDraggedTabId(null), 50)
+    if (!draggedTabId) {
+      setDragMousePos(null)
+      return
     }
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      setDragMousePos({ x: e.clientX, y: e.clientY })
+    }
+    const handleGlobalPointerUp = () => {
+      setTimeout(() => {
+        setDraggedTabId(null)
+        setDragMousePos(null)
+      }, 50)
+    }
+    window.addEventListener('pointermove', handleGlobalPointerMove)
     window.addEventListener('pointerup', handleGlobalPointerUp)
-    return () => window.removeEventListener('pointerup', handleGlobalPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handleGlobalPointerMove)
+      window.removeEventListener('pointerup', handleGlobalPointerUp)
+    }
   }, [draggedTabId])
 
   // Mobile layout state variables
@@ -1605,11 +1620,13 @@ export function AppLayout() {
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
                         const { tree, activeGroupId } = ensureTabGroups(activeWorkspace)
+                        const firstGroupId = collectGroups(tree)[0]?.id || ''
                         return (
                           <TabGroupTree
                             workspace={activeWorkspace}
                             node={tree}
                             activeGroupId={activeGroupId}
+                            firstGroupId={firstGroupId}
                             draggedTabId={draggedTabId}
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
@@ -1797,6 +1814,40 @@ export function AppLayout() {
           toastOptions={{ unstyled: true, classNames: { toast: '' } }}
         />
       )}
+
+      {/* VS Code-style floating dragged tab preview */}
+      {(() => {
+        const draggedTabLayout = activeWorkspace?.layouts.find((l) => l.id === draggedTabId)
+        if (!draggedTabId || !dragMousePos || !draggedTabLayout) return null
+        return (
+          <div
+            className="fixed pointer-events-none z-50 opacity-80 shadow-2xl border border-primary/30 bg-background rounded-md px-3 py-1.5 flex items-center gap-1.5 text-xs text-foreground"
+            style={{
+              top: dragMousePos.y - 15,
+              left: dragMousePos.x - 50,
+            }}
+          >
+            {(() => {
+              const isDiff = draggedTabLayout.layout.type === 'leaf' && draggedTabLayout.layout.isDiff
+              const filePath = draggedTabLayout.layout.type === 'leaf' && draggedTabLayout.layout.filePath
+              const agentId = findAgentId(draggedTabLayout.layout)
+              if (isDiff) {
+                return <GitBranch className="h-3.5 w-3.5 text-primary shrink-0" />
+              }
+              if (filePath) {
+                return <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              }
+              const agent = agentId ? agentTypes[agentId] : null
+              if (agent && agent.icon) {
+                const IconComponent = agent.icon
+                return <IconComponent size={14} className="h-3.5 w-3.5 shrink-0" />
+              }
+              return <Terminal className="h-3 w-3 shrink-0" />
+            })()}
+            <span className="font-medium">{draggedTabLayout.name}</span>
+          </div>
+        )
+      })()}
     </div>
   )
 }
