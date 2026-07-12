@@ -63,7 +63,7 @@ interface TabGroupTreeProps {
   workspace: Workspace
   node: TabGroupsNode
   activeGroupId: string
-  firstGroupId: string
+  lastGroupId: string
   draggedTabId: string | null
   activePaneId: string
   gitStatuses: Record<string, string>
@@ -98,7 +98,7 @@ export function TabGroupTree({
   workspace,
   node,
   activeGroupId,
-  firstGroupId,
+  lastGroupId,
   draggedTabId,
   activePaneId,
   gitStatuses,
@@ -128,7 +128,7 @@ export function TabGroupTree({
         workspace={workspace}
         group={node}
         isActive={node.id === activeGroupId}
-        isFirstGroup={node.id === firstGroupId}
+        isLastGroup={node.id === lastGroupId}
         draggedTabId={draggedTabId}
         activePaneId={activePaneId}
         gitStatuses={gitStatuses}
@@ -186,7 +186,7 @@ export function TabGroupTree({
                 workspace={workspace}
                 node={child}
                 activeGroupId={activeGroupId}
-                firstGroupId={firstGroupId}
+                lastGroupId={lastGroupId}
                 draggedTabId={draggedTabId}
                 activePaneId={activePaneId}
                 gitStatuses={gitStatuses}
