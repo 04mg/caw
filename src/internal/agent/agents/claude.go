@@ -19,6 +19,7 @@ func init() {
 
 type ClaudeLogLine struct {
 	Type    string         `json:"type"`
+	Subtype string         `json:"subtype,omitempty"`
 	Message *ClaudeMessage `json:"message,omitempty"`
 }
 
@@ -222,66 +223,63 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	sessionTitle = CleanPrompt(sessionTitle)
 
 	// Reverse pass: determine the current status from the last meaningful entry.
+	var lastAssistantTool string
+	var lastAssistantText string
+	var seenUser bool
+
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine ClaudeLogLine
 		if err := json.Unmarshal([]byte(lines[i]), &logLine); err != nil {
 			continue
 		}
 
-		if logLine.Type == "result" {
+		if logLine.Type == "result" || (logLine.Type == "system" && logLine.Subtype == "turn_duration") {
 			callback("idle", "", "", sessionTitle)
 			return
 		}
 
 		if logLine.Message != nil {
 			msg := logLine.Message
-			switch msg.Role {
-			case "user":
-				callback("thinking", "", "", sessionTitle)
-				return
-
-			case "assistant":
-				var lastToolName string
-				var hasText bool
-				var textContent string
-
+			if msg.Role == "user" {
+				seenUser = true
+				break
+			} else if msg.Role == "assistant" {
 				blocks, _ := parseClaudeContent(msg.Content)
 				for _, b := range blocks {
-					switch b.Type {
-					case "tool_use":
-						lastToolName = b.Name
-					case "text":
-						hasText = true
-						textContent = b.Text
-					case "thinking":
-						// Extended thinking block — agent is actively reasoning.
-						// Don't override with a "has tool" or "has text" decision yet;
-						// keep scanning the block list for more concrete signals.
+					if b.Type == "tool_use" && b.Name != "" {
+						lastAssistantTool = b.Name
+					} else if b.Type == "text" && b.Text != "" {
+						lastAssistantText = b.Text
 					}
 				}
-
-				if lastToolName != "" {
-					callback("executing", lastToolName, "", sessionTitle)
-					return
-				}
-				if hasText {
-					status := "idle"
-					textContentLower := strings.ToLower(textContent)
-					if strings.Contains(textContentLower, "[y/n]") ||
-						strings.Contains(textContentLower, "[y/N]") ||
-						strings.Contains(textContentLower, "[Y/n]") ||
-						strings.Contains(textContentLower, "(y/n)") ||
-						strings.Contains(textContentLower, "confirm") ||
-						strings.Contains(textContentLower, "approve") {
-						status = "waiting_input"
-					}
-					callback(status, "", textContent, sessionTitle)
-					return
-				}
-				// Assistant message with only thinking blocks → still thinking.
-				callback("thinking", "", "", sessionTitle)
-				return
 			}
 		}
 	}
+
+	if lastAssistantTool != "" {
+		callback("executing", lastAssistantTool, "", sessionTitle)
+		return
+	}
+
+	if lastAssistantText != "" {
+		status := "idle"
+		textContentLower := strings.ToLower(lastAssistantText)
+		if strings.Contains(textContentLower, "[y/n]") ||
+			strings.Contains(textContentLower, "[y/N]") ||
+			strings.Contains(textContentLower, "[Y/n]") ||
+			strings.Contains(textContentLower, "(y/n)") ||
+			strings.Contains(textContentLower, "confirm") ||
+			strings.Contains(textContentLower, "approve") {
+			status = "waiting_input"
+		}
+		callback(status, "", lastAssistantText, sessionTitle)
+		return
+	}
+
+	if seenUser || len(lines) > 0 {
+		callback("thinking", "", "", sessionTitle)
+		return
+	}
+
+	callback("idle", "", "", sessionTitle)
 }
