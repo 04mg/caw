@@ -44,7 +44,7 @@ export const agentTypes: Record<string, AgentType> = {
   claude: {
     id: 'claude',
     label: 'Claude Code',
-    cmd: ['claude', '--dangerously-skip-permissions'],
+    cmd: ['claude'],
     icon: Claude.Color,
   },
   codex: {
@@ -68,7 +68,7 @@ export const agentTypes: Record<string, AgentType> = {
   opencode: {
     id: 'opencode',
     label: 'OpenCode',
-    cmd: ['opencode', '--dangerously-skip-permissions'],
+    cmd: ['opencode', '--auto'],
     icon: OpenCode,
   },
   pi: {

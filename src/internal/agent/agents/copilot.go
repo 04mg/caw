@@ -176,10 +176,10 @@ func findCopilotEventsFile(stateDir, cwd string, after time.Time, resume bool, a
 	if len(cands) == 0 {
 		return ""
 	}
-	// Sort oldest-first so the earliest watcher claims the earliest session.
+	// Sort newest-first (most recently modified first) to ensure we claim the most recent session.
 	for i := 0; i < len(cands)-1; i++ {
 		for j := i + 1; j < len(cands); j++ {
-			if cands[j].modTime.Before(cands[i].modTime) {
+			if cands[j].modTime.After(cands[i].modTime) {
 				cands[i], cands[j] = cands[j], cands[i]
 			}
 		}
@@ -280,7 +280,11 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 			}
 			if len(msg.ToolRequests) > 0 {
 				toolName := msg.ToolRequests[0].Name
-				callback("executing", toolName, "", sessionTitle)
+				status := "executing"
+				if toolName == "ask_user" {
+					status = "waiting_input"
+				}
+				callback(status, toolName, "", sessionTitle)
 				return
 			}
 			if msg.ReasoningText != "" && msg.Content == "" {
