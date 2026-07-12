@@ -1,6 +1,6 @@
 <!-- Header -->
   <p align="center">
-    <img src="assets/logo.svg" alt="Caw" width="200">
+    <img src="assets/logo.png" alt="Caw" width="200">
   </p>
 
   <h1 align="center">Caw</h1>
@@ -116,4 +116,4 @@ Caw can show live usage limits and reset times for the following providers:
 
 ## Contributing
 
-See [CONVENTIONS.md](CONVENTIONS.md) for commit and branch naming conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for commit and branch naming conventions.
