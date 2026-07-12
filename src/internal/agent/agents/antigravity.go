@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -71,6 +72,11 @@ var permissionStepTypes = map[string]bool{
 	"ASK_PERMISSION": true,
 	"ASK_QUESTION":   true,
 }
+
+var (
+	taskStartRx  = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskFinishRx = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+)
 
 func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -309,7 +315,8 @@ func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]
 }
 
 func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
-	lines, err := ReadNewLines(filePath, offset)
+	// Always read from the beginning to correctly track background tasks
+	lines, err := ReadNewLines(filePath, 0)
 	if err != nil || len(lines) == 0 {
 		return
 	}
@@ -318,6 +325,8 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	var sessionTitle string
 	var lastType string
 	var lastToolNames []string
+
+	runningTasks := make(map[string]bool)
 
 	for _, line := range lines {
 		var step antigravityStep
@@ -355,6 +364,17 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				lastType = step.Type
 			}
 		}
+
+		// Check for background tasks started in this step
+		if step.Status == "RUNNING" {
+			if m := taskStartRx.FindStringSubmatch(step.Content); len(m) > 1 {
+				runningTasks[m[1]] = true
+			}
+		}
+		// Also scan step content (e.g. SYSTEM_MESSAGE, PLANNER_RESPONSE, etc.) for finished tasks
+		if m := taskFinishRx.FindStringSubmatch(step.Content); len(m) > 1 {
+			delete(runningTasks, m[1])
+		}
 	}
 
 	// Determine current status from the last step type written to the transcript.
@@ -367,6 +387,15 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 
 	case "PLANNER_RESPONSE":
 		if len(lastToolNames) == 0 {
+			if len(runningTasks) > 0 {
+				var activeTask string
+				for t := range runningTasks {
+					activeTask = t
+					break
+				}
+				callback("executing", "background_task", activeTask, sessionTitle)
+				return
+			}
 			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
 			callback("idle", "", "", sessionTitle)
 			return
@@ -392,6 +421,15 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		if toolStepTypes[lastType] {
 			// A tool result was just written; the planner is about to respond.
 			callback("thinking", "", "", sessionTitle)
+			return
+		}
+		if len(runningTasks) > 0 {
+			var activeTask string
+			for t := range runningTasks {
+				activeTask = t
+				break
+			}
+			callback("executing", "background_task", activeTask, sessionTitle)
 			return
 		}
 		// Unknown step type — stay thinking.
