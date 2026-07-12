@@ -21,6 +21,7 @@ interface DraggableTabBarProps {
   onAdd: (cmd?: string[], agentId?: string, label?: string) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
+  onDragStart?: (tabId: string) => void
 }
 
 export function DraggableTabBar({
@@ -32,6 +33,7 @@ export function DraggableTabBar({
   onAdd,
   enableWorktrees,
   onToggleWorktrees,
+  onDragStart,
 }: DraggableTabBarProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -54,6 +56,21 @@ export function DraggableTabBar({
   const onPointerMove = useCallback(
     (e: PointerEvent<HTMLButtonElement>, index: number) => {
       if (dragIndex !== index) return
+
+      const container = e.currentTarget.parentElement
+      if (container) {
+        const r = container.getBoundingClientRect()
+        if (e.clientY < r.top - 20 || e.clientY > r.bottom + 20) {
+          setDragIndex(null)
+          setDragOverIndex(null)
+          setDragOffset(0)
+          dragStartXRef.current = 0
+          ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
+          onDragStart?.(tabs[index].id)
+          return
+        }
+      }
+
       const delta = e.clientX - dragStartXRef.current
       setDragOffset(delta)
 
@@ -73,7 +90,7 @@ export function DraggableTabBar({
         setDragOverIndex(hoverIdx)
       }
     },
-    [dragIndex, dragOverIndex, tabs.length],
+    [dragIndex, dragOverIndex, tabs, onDragStart],
   )
 
   const onPointerUp = useCallback(
