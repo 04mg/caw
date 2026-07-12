@@ -1620,13 +1620,14 @@ export function AppLayout() {
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
                         const { tree, activeGroupId } = ensureTabGroups(activeWorkspace)
-                        const firstGroupId = collectGroups(tree)[0]?.id || ''
+                        const groups = collectGroups(tree)
+                        const lastGroupId = groups[groups.length - 1]?.id || ''
                         return (
                           <TabGroupTree
                             workspace={activeWorkspace}
                             node={tree}
                             activeGroupId={activeGroupId}
-                            firstGroupId={firstGroupId}
+                            lastGroupId={lastGroupId}
                             draggedTabId={draggedTabId}
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
