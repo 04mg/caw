@@ -29,7 +29,7 @@ Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, or Pi side
 
 </td>
 <td width="50%">
-  <picture><source srcset="assets/feature-wall/multi-agent.gif" type="image/gif"><img src="assets/feature-wall/multi-agent.jpg" alt="Caw running multiple AI coding agents in browser terminal panes" width="100%" style="border-radius: 12px;" /></picture>
+  <picture><source srcset="assets/feature-wall/multi-agent.gif" type="image/gif"><img src="assets/feature-wall/multi-agent.jpg" alt="Caw running multiple AI coding agents in browser terminal panes" width="100%" /></picture>
 </td>
 </tr>
 <tr>
@@ -41,7 +41,7 @@ Stop babysitting terminals. Caw watches each agent's transcript and shows its re
 
 </td>
 <td width="50%">
-  <picture><source srcset="assets/feature-wall/status-board.gif" type="image/gif"><img src="assets/feature-wall/status-board.jpg" alt="Caw Agent Control Center showing agent statuses: Idle, Working, Needs Input" width="100%" style="border-radius: 12px;" /></picture>
+  <picture><source srcset="assets/feature-wall/status-board.gif" type="image/gif"><img src="assets/feature-wall/status-board.jpg" alt="Caw Agent Control Center showing agent statuses: Idle, Working, Needs Input" width="100%" /></picture>
 </td>
 </tr>
 <tr>
@@ -53,7 +53,7 @@ Each agent works in its own isolated git worktree and branch, created and cleane
 
 </td>
 <td width="50%">
-  <picture><source srcset="assets/feature-wall/parallel-worktrees.gif" type="image/gif"><img src="assets/feature-wall/parallel-worktrees.jpg" alt="Caw running agents in isolated git worktrees" width="100%" style="border-radius: 12px;" /></picture>
+  <picture><source srcset="assets/feature-wall/parallel-worktrees.gif" type="image/gif"><img src="assets/feature-wall/parallel-worktrees.jpg" alt="Caw running agents in isolated git worktrees" width="100%" /></picture>
 </td>
 </tr>
 <tr>
@@ -65,7 +65,7 @@ Walk away and stay in the loop. Get a push notification when an agent needs your
 
 </td>
 <td width="50%">
-  <picture><source srcset="assets/feature-wall/push-notifications.gif" type="image/gif"><img src="assets/feature-wall/push-notifications.jpg" alt="Caw push notification on a phone and browser when an agent needs input or finishes" width="100%" style="border-radius: 12px;" /></picture>
+  <picture><source srcset="assets/feature-wall/push-notifications.gif" type="image/gif"><img src="assets/feature-wall/push-notifications.jpg" alt="Caw push notification on a phone and browser when an agent needs input or finishes" width="100%" /></picture>
 </td>
 </tr>
 <tr>
@@ -77,7 +77,7 @@ Keep an eye on your spend. Caw shows live usage limits and reset times for Claud
 
 </td>
 <td width="50%">
-  <picture><source srcset="assets/feature-wall/quota-monitoring.gif" type="image/gif"><img src="assets/feature-wall/quota-monitoring.jpg" alt="Caw usage quota monitoring for multiple providers" width="100%" style="border-radius: 12px;" /></picture>
+  <picture><source srcset="assets/feature-wall/quota-monitoring.gif" type="image/gif"><img src="assets/feature-wall/quota-monitoring.jpg" alt="Caw usage quota monitoring for multiple providers" width="100%" /></picture>
 </td>
 </tr>
 </table>
