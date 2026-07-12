@@ -3,15 +3,16 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/04mg/caw/internal/httputil"
+	"github.com/04mg/caw/internal/push"
+	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
+	"github.com/04mg/caw/internal/ws"
 )
 
 // AgentStatus represents the current tracked state of an agent
@@ -24,6 +25,11 @@ type AgentStatus struct {
 	Details   string    `json:"details,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+	// Sequence is a monotonically increasing value assigned when a session is
+	// first tracked. It reflects the order in which agents were opened and is
+	// used to keep a stable ordering in the UI instead of relying on the map
+	// iteration order or timestamps (which can reorder when re-fetching).
+	Sequence int64 `json:"sequence"`
 }
 
 // Event represents a WebSocket event message
@@ -37,6 +43,7 @@ type Event struct {
 	Details   string    `json:"details,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+	Sequence  int64     `json:"sequence"`
 }
 
 type watcherContext struct {
@@ -54,25 +61,14 @@ type watcherContext struct {
 // session. In that case watchers should look for the most recent session in
 // the cwd regardless of when it was last updated, instead of only sessions
 // started after the watcher launched.
+//
+// The heartbeat callback should be called on every poll iteration (even when
+// nothing changed) to signal that the watcher is alive and the agent process
+// is still running. This prevents the idle-timeout watchdog from falsely
+// reverting the status to "idle" during long LLM response waits where the
+// underlying transcript/DB file doesn't change for minutes.
 type StatusWatcher interface {
-	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string))
-}
-
-// wsClient wraps a websocket connection with a dedicated write mutex.
-// gorilla/websocket does NOT support concurrent writes to the same
-// connection, and the status endpoint receives broadcasts from many goroutines
-// (handleSessionStart/Exit, updateStatus) while the read loop runs on its own
-// goroutine. A per-connection write lock serializes every WriteMessage so we
-// never trigger "concurrent write to websocket connection" panics.
-type wsClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
-
-func (c *wsClient) writeMessage(msgType int, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.conn.WriteMessage(msgType, data)
+	Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func())
 }
 
 var (
@@ -80,18 +76,54 @@ var (
 	statusesMu     sync.RWMutex
 	activeSessions = make(map[string]*watcherContext)
 	activeSesMu    sync.Mutex
-	wsClients      = make(map[*wsClient]bool)
-	wsClientsMu    sync.Mutex
-	wsUpgrader     = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	watchers   = make(map[string]StatusWatcher)
-	watchersMu sync.Mutex
+	statusHub      = ws.NewHub()
+	watchers       = make(map[string]StatusWatcher)
+	watchersMu     sync.Mutex
+	// statusSeq is a monotonic counter used to assign a stable opening-order
+	// sequence to each agent session. It is only mutated under statusesMu.
+	statusSeq int64
+	// pushStore is set by SetPushStore at server startup so that agent status
+	// transitions can trigger web push notifications.
+	pushStore *state.Store
+	// ptyActivity tracks the last time each leaf/session id received bytes
+	// from its PTY. Updated via OnPtyActivity from terminal.ReadLoop and read
+	// by watchers to correlate lazily-created internal agent sessions to the
+	// correct PTY when multiple agents of the same type share a cwd.
+	ptyActivity   = make(map[string]time.Time)
+	ptyActivityMu sync.RWMutex
 )
+
+// SetPushStore wires the state store into the agent package so that status
+// transitions can dispatch web push notifications. Called once from
+// server.New().
+func SetPushStore(s *state.Store) { pushStore = s }
 
 func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
+	terminal.OnPtyActivity = handlePtyActivity
+}
+
+// handlePtyActivity records that the PTY for the given leaf/session id just
+// produced output. Called from terminal.ReadLoop on every read.
+func handlePtyActivity(id string, n int) {
+	if n <= 0 {
+		return
+	}
+	ptyActivityMu.Lock()
+	ptyActivity[id] = time.Now()
+	ptyActivityMu.Unlock()
+}
+
+// LastPtyActivity returns the timestamp of the most recent PTY output for the
+// given leaf/session id, or the zero time if no activity has been recorded.
+// Used by watchers to determine whether their agent process is currently
+// producing output, which disambiguates which internal session belongs to
+// which PTY when multiple agents of the same type share a cwd.
+func LastPtyActivity(sessionID string) time.Time {
+	ptyActivityMu.RLock()
+	defer ptyActivityMu.RUnlock()
+	return ptyActivity[sessionID]
 }
 
 // RegisterStatusWatcher allows status providers to register themselves
@@ -101,80 +133,16 @@ func RegisterStatusWatcher(agentID string, w StatusWatcher) {
 	watchersMu.Unlock()
 }
 
-// RegisterStatusWS registers the /ws/agents/statuses endpoint
-func RegisterStatusWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
-		c, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
+func StatusHub() *ws.Hub { return statusHub }
 
-		wc := &wsClient{conn: c}
-
-		wsClientsMu.Lock()
-		wsClients[wc] = true
-		wsClientsMu.Unlock()
-
-		defer func() {
-			wsClientsMu.Lock()
-			delete(wsClients, wc)
-			wsClientsMu.Unlock()
-			c.Close()
-		}()
-
-		// Send initial statuses
-		statusesMu.RLock()
-		for _, s := range statuses {
-			msg, _ := json.Marshal(Event{
-				Type:      "agent_status",
-				SessionID: s.SessionID,
-				AgentID:   s.AgentID,
-				Status:    s.Status,
-				Tool:      s.Tool,
-				Details:   s.Details,
-				Title:     s.Title,
-				Timestamp: s.Timestamp,
-			})
-			_ = wc.writeMessage(websocket.TextMessage, msg)
-		}
-		statusesMu.RUnlock()
-
-		// Keep connection alive
-		for {
-			if _, _, err := c.ReadMessage(); err != nil {
-				break
-			}
-		}
-	})
-
-	// Also expose standard HTTP GET for current status list
-	mux.HandleFunc("GET /api/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
-		statusesMu.RLock()
-		list := make([]AgentStatus, 0, len(statuses))
-		for _, s := range statuses {
-			list = append(list, s)
-		}
-		statusesMu.RUnlock()
-		httputil.WriteJSON(w, list)
-	})
-}
+func marshalEvent(ev Event) ([]byte, error) { return json.Marshal(ev) }
 
 func broadcastEvent(ev Event) {
-	msg, err := json.Marshal(ev)
+	msg, err := marshalEvent(ev)
 	if err != nil {
 		return
 	}
-
-	wsClientsMu.Lock()
-	clients := make([]*wsClient, 0, len(wsClients))
-	for wc := range wsClients {
-		clients = append(clients, wc)
-	}
-	wsClientsMu.Unlock()
-
-	for _, wc := range clients {
-		_ = wc.writeMessage(websocket.TextMessage, msg)
-	}
+	statusHub.Broadcast(websocket.TextMessage, msg)
 }
 
 func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {
@@ -186,6 +154,12 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		return // no change
 	}
 
+	seq := prev.Sequence
+	if !exists {
+		statusSeq++
+		seq = statusSeq
+	}
+
 	s := AgentStatus{
 		SessionID: sessionID,
 		AgentID:   agentID,
@@ -195,6 +169,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		Details:   details,
 		Title:     title,
 		Timestamp: now,
+		Sequence:  seq,
 	}
 	statuses[sessionID] = s
 	statusesMu.Unlock()
@@ -209,7 +184,22 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		Details:   details,
 		Title:     title,
 		Timestamp: now,
+		Sequence:  seq,
 	})
+
+	if pushStore != nil {
+		switch status {
+		case "waiting_input":
+			push.CancelFinishedDebounced(sessionID)
+			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
+		case "thinking", "executing":
+			push.CancelFinishedDebounced(sessionID)
+		case "idle", "stopped":
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") {
+				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
+			}
+		}
+	}
 }
 
 func handleSessionStart(id string, cmd []string, cwd string) {
@@ -275,6 +265,7 @@ func handleSessionExit(id string) {
 
 	if exists {
 		wCtx.cancel()
+		push.CancelFinishedDebounced(id)
 		statusesMu.Lock()
 		delete(statuses, id)
 		statusesMu.Unlock()
@@ -292,7 +283,11 @@ func handleSessionExit(id string) {
 // with no new updates will be automatically reverted to idle. This prevents
 // the KanbanBoard from showing "working" indefinitely if the agent crashes
 // without triggering a clean session exit.
-const idleTimeout = 30 * time.Second
+//
+// Set to 5 minutes because LLM responses can take several minutes (especially
+// for long tool chains or slow providers). A 30s timeout caused false "idle"
+// transitions while the agent was legitimately waiting for an LLM response.
+const idleTimeout = 5 * time.Minute
 
 func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watchersMu.Lock()
@@ -337,6 +332,8 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
 		lastActivity = time.Now()
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
+	}, func() {
+		lastActivity = time.Now()
 	})
 }
 

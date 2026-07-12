@@ -28,15 +28,18 @@ type PiBlock struct {
 	Name string `json:"name,omitempty"` // tool name
 }
 
-func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent", "sessions")
 	const agentID = "pi"
-	// Increase lookback to 5 minutes to avoid clock skew / file creation delay issues
-	lookback := 5 * time.Minute
+	// On resume (--continue), the agent reattaches to a pre-existing session
+	// whose transcript may predate this watcher. Widen the search window to
+	// 1 hour so the resumed session is found. For a fresh start, only look
+	// for files modified after the watcher started (no negative offset).
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -44,6 +47,9 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	// Re-bind bookkeeping for /new and /resume detection.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if watchedFilePath != "" {
@@ -56,6 +62,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			if watchedFilePath == "" {
 				searchDir := dir
 				if cwd != "" {
@@ -74,15 +81,22 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 						searchDir = targetDir
 					}
 				}
-				candidates, err := FindLatestFiles(searchDir, ".jsonl", lastCheck)
+				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
 				}
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
 				for _, c := range candidates {
+					if !ptyRecentlyActive {
+						break
+					}
 					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
+						lastActivity = c.ModTime
+						silentTicks = 0
 						break
 					}
 				}
@@ -97,12 +111,55 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 							}
 							callback(status, tool, details, sessionTitle)
 						}
-						w.parsePiLog(watchedFilePath, lastFileSize, wrappedCallback)
+						w.parsePiLog(watchedFilePath, lastFileSize, resume, wrappedCallback)
 						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
 					}
 				} else {
 					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re-bind for /new and /resume.
+				if silentTicks >= rebindSilenceTicks {
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						rebindDir := dir
+						if cwd != "" {
+							cleanCwd := filepath.Clean(cwd)
+							projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+							targetDir := filepath.Join(dir, projDir)
+							if _, err := os.Stat(targetDir); err != nil {
+								projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
+								targetDirAlt := filepath.Join(dir, projDirAlt)
+								if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
+									targetDir = targetDirAlt
+								}
+							}
+							if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+								rebindDir = targetDir
+							}
+						}
+						cands, _ := FindLatestFiles(rebindDir, ".jsonl", lastActivity)
+						var others []RebindCandidate
+						for _, c := range cands {
+							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+						}
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						if newKey != "" && newKey != watchedFilePath {
+							if ClaimSession(agentID, cwd, newKey) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newKey
+								lastFileSize = 0
+								lastCheck = time.Now()
+								silentTicks = 0
+							}
+						}
+					}
 				}
 			}
 		}
@@ -128,13 +185,13 @@ func parseOnePiLogLine(line string) (PiMessage, bool) {
 	return PiMessage{}, false
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
+func (w *PiWatcher) parsePiLog(filePath string, offset int64, resume bool, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the first user prompt.
+	// Forward pass: collect the first user prompt (session title).
 	var sessionTitle string
 	for _, line := range lines {
 		if msg, ok := parseOnePiLogLine(line); ok {
@@ -151,56 +208,91 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, callback func(stat
 		}
 	}
 
-	// Reverse pass: determine current status from the last meaningful entry.
-	for i := len(lines) - 1; i >= 0; i-- {
-		msg, ok := parseOnePiLogLine(lines[i])
+	// Forward pass: emit status events for the new log lines.
+	var states []struct{ status, tool string }
+	for _, line := range lines {
+		msg, ok := parseOnePiLogLine(line)
 		if !ok {
 			continue
 		}
+		status, tool := piStatusForMessage(msg)
+		if status == "" {
+			continue
+		}
+		states = append(states, struct{ status, tool string }{status, tool})
+	}
 
-		roleLower := strings.ToLower(msg.Role)
+	if len(states) == 0 {
+		return
+	}
 
-		if roleLower == "user" {
-			callback("thinking", "", "", sessionTitle)
-			return
+	if offset == 0 && resume {
+		// Resumed session: report only the final state to avoid replaying
+		// the whole prior session history as a burst of transitions.
+		last := states[len(states)-1]
+		callback(last.status, last.tool, "", sessionTitle)
+		return
+	}
+
+	// Incremental read (or fresh session initial read): emit every deduped
+	// transition. For a fresh session where the whole turn was already written
+	// before the first poll (e.g. a fast one-shot response), this captures the
+	// thinking→idle transition so status/push notifications fire correctly.
+	var lastState string
+	for _, st := range states {
+		state := st.status + "|" + st.tool
+		if state == lastState {
+			continue
+		}
+		lastState = state
+		callback(st.status, st.tool, "", sessionTitle)
+	}
+}
+
+// piStatusForMessage derives the working/idle state represented by a single
+// pi log message. It returns an empty status string when the message does not
+// represent a meaningful state change.
+func piStatusForMessage(msg PiMessage) (status, tool string) {
+	roleLower := strings.ToLower(msg.Role)
+
+	if roleLower == "user" {
+		return "thinking", ""
+	}
+
+	if roleLower == "toolresult" || roleLower == "tool" {
+		return "thinking", ""
+	}
+
+	if roleLower == "assistant" || roleLower == "agent" {
+		var lastToolName string
+		var hasText bool
+		var textContent string
+		for _, b := range msg.Content {
+			if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
+				lastToolName = b.Name
+			} else if b.Type == "text" {
+				hasText = true
+				textContent = b.Text
+			}
 		}
 
-		if roleLower == "toolresult" || roleLower == "tool" {
-			callback("thinking", "", "", sessionTitle)
-			return
+		if lastToolName != "" {
+			return "executing", lastToolName
 		}
-
-		if roleLower == "assistant" || roleLower == "agent" {
-			var lastToolName string
-			var hasText bool
-			var textContent string
-			for _, b := range msg.Content {
-				if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
-					lastToolName = b.Name
-				} else if b.Type == "text" {
-					hasText = true
-					textContent = b.Text
-				}
+		if hasText {
+			status := "idle"
+			textContentLower := strings.ToLower(textContent)
+			if strings.Contains(textContentLower, "[y/n]") ||
+				strings.Contains(textContentLower, "[y/N]") ||
+				strings.Contains(textContentLower, "[Y/n]") ||
+				strings.Contains(textContentLower, "(y/n)") ||
+				strings.Contains(textContentLower, "confirm") ||
+				strings.Contains(textContentLower, "approve") {
+				status = "waiting_input"
 			}
-
-			if lastToolName != "" {
-				callback("executing", lastToolName, "", sessionTitle)
-				return
-			}
-			if hasText {
-				status := "idle"
-				textContentLower := strings.ToLower(textContent)
-				if strings.Contains(textContentLower, "[y/n]") ||
-					strings.Contains(textContentLower, "[y/N]") ||
-					strings.Contains(textContentLower, "[Y/n]") ||
-					strings.Contains(textContentLower, "(y/n)") ||
-					strings.Contains(textContentLower, "confirm") ||
-					strings.Contains(textContentLower, "approve") {
-					status = "waiting_input"
-				}
-				callback(status, "", "", sessionTitle)
-				return
-			}
+			return status, ""
 		}
 	}
+
+	return "", ""
 }

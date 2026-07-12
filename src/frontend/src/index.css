@@ -134,6 +134,15 @@ html, body, #root {
 
 .xterm {
   height: 100%;
+  touch-action: none;
+  border-bottom: none !important;
+}
+
+.xterm-keyboard-open .xterm,
+.xterm-keyboard-open .xterm-viewport,
+.xterm-keyboard-open .xterm-screen {
+  touch-action: auto !important;
+  overflow: visible !important;
 }
 
 .xterm,
@@ -157,6 +166,7 @@ html, body, #root {
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
   background-color: transparent !important;
+  touch-action: none;
 }
 
 .xterm-viewport::-webkit-scrollbar {

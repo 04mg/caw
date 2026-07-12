@@ -62,7 +62,7 @@ func findWorkspaceRoot(path string) string {
 
 func getTrashDir(filePath string) (string, error) {
 	wsRoot := findWorkspaceRoot(filePath)
-	trashDir := filepath.Join(wsRoot, ".wterm_trash")
+	trashDir := filepath.Join(wsRoot, ".caw_trash")
 	if err := os.MkdirAll(trashDir, 0755); err != nil {
 		return "", err
 	}

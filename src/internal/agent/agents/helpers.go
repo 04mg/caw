@@ -77,6 +77,84 @@ func FindLatestFiles(baseDir string, ext string, after time.Time) ([]FileCandida
 	return candidates, nil
 }
 
+// FindEarliestFiles is the ascending-order counterpart of FindLatestFiles.
+// It returns candidates sorted by modification time ASCENDING (oldest first)
+// so that, when multiple agents of the same type start in the same cwd, the
+// earliest-started watcher claims the earliest qualifying session and the
+// latest-started watcher claims the latest — preserving the natural 1:1
+// mapping between PTY start order and internal-session creation order.
+func FindEarliestFiles(baseDir string, ext string, after time.Time) ([]FileCandidate, error) {
+	candidates, err := FindLatestFiles(baseDir, ext, after)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].ModTime.Before(candidates[j].ModTime)
+	})
+	return candidates, nil
+}
+
+// ----- Mid-session re-binding (handles /new and /resume inside a running agent) -----
+//
+// When the user issues /new or /resume inside a running agent TUI, the PTY
+// stays alive (so OnSessionStart never fires) but the agent switches to a
+// different internal session: a new transcript file / DB row for /new, or a
+// pre-existing one for /resume. The watcher was bound at PTY start and would
+// otherwise keep reporting the stale session forever, so the Kanban card
+// shows the wrong title/status/tool even though navigation stays correct.
+//
+// The re-bind layer works as follows:
+//   - Every poll, the watcher tracks whether it saw new data for its current
+//     session (silentTicks resets to 0 on activity, increments otherwise).
+//   - When the current session has been silent for at least rebindSilenceTicks
+//     polls AND another candidate in the same group has been modified more
+//     recently than the current session's last activity, the watcher attempts
+//     to atomically switch: Unclaim the old key, Claim the new key.
+//   - The claim registry remains the source of truth; if the new key is
+//     already claimed by another watcher, the switch is aborted and retried
+//     on the next tick.
+
+const rebindSilenceTicks = 3 // ~1.5s at the 500ms poll interval
+
+// RebindCandidate is a generic same-group candidate evaluated by ShouldRebind.
+type RebindCandidate struct {
+	Key     string
+	ModTime time.Time
+}
+
+// ShouldRebind reports whether the watcher should switch from its currently
+// bound session (currentKey, last updated at lastActivity) to a different
+// candidate. Returns the recommended new key, or "" to stay put.
+//
+// The switch is recommended only when ALL of the following hold:
+//   - silentTicks >= rebindSilenceTicks (the current session has had no new
+//     data for a few consecutive polls, so it's not just a transient LLM
+//     response pause).
+//   - Some other candidate has ModTime.After(lastActivity) — i.e. it has
+//     received writes more recently than the current session's last known
+//     activity. This covers both /new (brand-new file) and /resume (an older
+//     file that just got a new message).
+//
+// The caller is still responsible for calling ClaimSession on the returned
+// key; ShouldRebind does not touch the registry.
+func ShouldRebind(silentTicks int, currentKey string, lastActivity time.Time, others []RebindCandidate) string {
+	if silentTicks < rebindSilenceTicks {
+		return ""
+	}
+	var bestKey string
+	var bestTime time.Time
+	for _, o := range others {
+		if o.Key == currentKey || o.Key == "" {
+			continue
+		}
+		if o.ModTime.After(lastActivity) && o.ModTime.After(bestTime) {
+			bestKey = o.Key
+			bestTime = o.ModTime
+		}
+	}
+	return bestKey
+}
+
 // ----- Session claim registry --------------------------------------------
 //
 // When two agents of the same type run in the same workspace, their watchers

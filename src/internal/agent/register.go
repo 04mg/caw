@@ -1,169 +1,119 @@
 package agent
 
 import (
-	"bytes"
-	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"sort"
 
-	"github.com/google/uuid"
-	"github.com/04mg/caw/internal/httputil"
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
+
+	"github.com/04mg/caw/internal/httpx"
+	"github.com/04mg/caw/internal/ws"
 )
 
-type Info struct {
-	ID    string   `json:"id"`
-	Label string   `json:"label"`
-	Cmd   []string `json:"cmd"`
+type Handler struct {
+	svc *Service
 }
 
-type SetupWorkspaceRequest struct {
-	ProjectPath     string `json:"projectPath"`
-	AgentID         string `json:"agentId"`
-	EnableWorktrees bool   `json:"enableWorktrees"`
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
 }
 
-type SetupWorkspaceResponse struct {
-	IsGit        bool   `json:"isGit"`
-	WorktreePath string `json:"worktreePath"`
-	BranchName   string `json:"branchName"`
-	BaseBranch   string `json:"baseBranch"`
+func (h *Handler) ListAgents(c *gin.Context) {
+	httpx.OK(c, h.svc.ListAgents())
 }
 
-type CheckChangesRequest struct {
-	WorktreePath string `json:"worktreePath"`
-	BranchName   string `json:"branchName"`
-	BaseBranch   string `json:"baseBranch"`
-}
-
-type CheckChangesResponse struct {
-	HasUncommitted     bool `json:"hasUncommitted"`
-	HasUnmergedCommits bool `json:"hasUnmergedCommits"`
-}
-
-func Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/agents", func(w http.ResponseWriter, r *http.Request) {
-		agentsList := []Info{
-			{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}},
-			{ID: "codex", Label: "Codex CLI", Cmd: []string{"codex", "--sandbox", "workspace-write", "--ask-for-approval", "never"}},
-			{ID: "copilot", Label: "GitHub Copilot", Cmd: []string{"copilot", "--allow-all-tools", "--allow-all-paths"}},
-			{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},
-			{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--dangerously-skip-permissions"}},
-			{ID: "pi", Label: "Pi", Cmd: []string{"pi"}},
+func (h *Handler) SetupWorkspace(c *gin.Context) {
+	var req SetupWorkspaceRequest
+	if !httpx.Bind(c, &req) {
+		return
+	}
+	resp, err := h.svc.SetupWorkspace(req)
+	if err != nil {
+		if err == ErrProjectPathRequired {
+			httpx.BadRequest(c, err.Error())
+			return
 		}
-		available := []Info{}
-		for _, a := range agentsList {
-			if _, err := exec.LookPath(a.Cmd[0]); err == nil {
-				available = append(available, a)
-			}
-		}
-		httputil.WriteJSON(w, available)
+		httpx.Internal(c, err.Error())
+		return
+	}
+	httpx.OK(c, resp)
+}
+
+func (h *Handler) CheckChanges(c *gin.Context) {
+	worktreePath := c.Query("worktreePath")
+	branchName := c.Query("branchName")
+	baseBranch := c.Query("baseBranch")
+
+	resp, err := h.svc.CheckChanges(worktreePath, branchName, baseBranch)
+	if err != nil {
+		httpx.BadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, resp)
+}
+
+func (h *Handler) ListStatuses(c *gin.Context) {
+	statusesMu.RLock()
+	list := make([]AgentStatus, 0, len(statuses))
+	for _, s := range statuses {
+		list = append(list, s)
+	}
+	statusesMu.RUnlock()
+	// Return in stable opening order so the UI doesn't reshuffle on every
+	// re-fetch (map iteration order is not deterministic).
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Sequence < list[j].Sequence
 	})
+	httpx.OK(c, list)
+}
 
-	mux.HandleFunc("POST /api/agents", func(w http.ResponseWriter, r *http.Request) {
-		var req SetupWorkspaceRequest
-		if err := httputil.ReadJSON(r, &req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+func Register(rg *gin.RouterGroup) {
+	h := NewHandler(NewService())
+	rg.GET("/agents", h.ListAgents)
+	rg.POST("/agents", h.SetupWorkspace)
+	rg.GET("/agents/changes", h.CheckChanges)
+	rg.GET("/agents/statuses", h.ListStatuses)
+}
 
-		if req.ProjectPath == "" {
-			http.Error(w, "projectPath required", http.StatusBadRequest)
-			return
-		}
+func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
+	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	wc := hub.Register(c)
+	defer func() {
+		hub.Unregister(wc)
+		c.Close()
+	}()
 
-		if !req.EnableWorktrees {
-			httputil.WriteJSON(w, SetupWorkspaceResponse{
-				IsGit:        false,
-				WorktreePath: req.ProjectPath,
-			})
-			return
-		}
-
-		// Check if projectPath is a git repository
-		cmdCheck := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-		cmdCheck.Dir = req.ProjectPath
-		if err := cmdCheck.Run(); err != nil {
-			// Not a git repo, return fallback path
-			httputil.WriteJSON(w, SetupWorkspaceResponse{
-				IsGit:        false,
-				WorktreePath: req.ProjectPath,
-			})
-			return
-		}
-
-		// It is a git repo, find current active branch
-		cmdBranch := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-		cmdBranch.Dir = req.ProjectPath
-		branchOut, err := cmdBranch.Output()
-		baseBranch := "main"
-		if err == nil {
-			baseBranch = strings.TrimSpace(string(branchOut))
-		}
-
-		// Generate unique agent run ID and branch name
-		uid := uuid.New().String()
-		shortID := uid[:8]
-		branchName := fmt.Sprintf("caw/agent-%s", shortID)
-
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home, _ = os.UserConfigDir()
-		}
-		projectName := filepath.Base(req.ProjectPath)
-		worktreePath := filepath.Join(home, ".caw", "worktrees", projectName, shortID)
-
-		// Create worktree parent directory
-		_ = os.MkdirAll(filepath.Dir(worktreePath), 0755)
-
-		// Run: git worktree add -b <branchName> <worktreePath> <baseBranch>
-		cmdAdd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
-		cmdAdd.Dir = req.ProjectPath
-		var stderr bytes.Buffer
-		cmdAdd.Stderr = &stderr
-		if err := cmdAdd.Run(); err != nil {
-			http.Error(w, fmt.Sprintf("failed to create git worktree: %v (stderr: %s)", err, stderr.String()), http.StatusInternalServerError)
-			return
-		}
-
-		httputil.WriteJSON(w, SetupWorkspaceResponse{
-			IsGit:        true,
-			WorktreePath: worktreePath,
-			BranchName:   branchName,
-			BaseBranch:   baseBranch,
+	statusesMu.RLock()
+	states := make([]AgentStatus, 0, len(statuses))
+	for _, s := range statuses {
+		states = append(states, s)
+	}
+	statusesMu.RUnlock()
+	sort.Slice(states, func(i, j int) bool {
+		return states[i].Sequence < states[j].Sequence
+	})
+	for _, s := range states {
+		msg, _ := marshalEvent(Event{
+			Type:      "agent_status",
+			SessionID: s.SessionID,
+			AgentID:   s.AgentID,
+			Status:    s.Status,
+			Tool:      s.Tool,
+			Details:   s.Details,
+			Title:     s.Title,
+			Timestamp: s.Timestamp,
+			Sequence:  s.Sequence,
 		})
-	})
+		_ = wc.WriteMessage(websocket.TextMessage, msg)
+	}
 
-	mux.HandleFunc("GET /api/agents/changes", func(w http.ResponseWriter, r *http.Request) {
-		worktreePath := r.URL.Query().Get("worktreePath")
-		branchName := r.URL.Query().Get("branchName")
-		baseBranch := r.URL.Query().Get("baseBranch")
-
-		if worktreePath == "" {
-			http.Error(w, "worktreePath required", http.StatusBadRequest)
-			return
+	for {
+		if _, _, err := c.ReadMessage(); err != nil {
+			break
 		}
-
-		// Check for uncommitted changes
-		cmdStatus := exec.Command("git", "status", "--porcelain", "-u")
-		cmdStatus.Dir = worktreePath
-		statusOut, err := cmdStatus.Output()
-		hasUncommitted := err == nil && len(strings.TrimSpace(string(statusOut))) > 0
-
-		// Check for unmerged commits
-		hasUnmergedCommits := false
-		if baseBranch != "" && branchName != "" {
-			cmdLog := exec.Command("git", "log", fmt.Sprintf("%s..%s", baseBranch, branchName), "--oneline")
-			cmdLog.Dir = worktreePath
-			logOut, err := cmdLog.Output()
-			hasUnmergedCommits = err == nil && len(strings.TrimSpace(string(logOut))) > 0
-		}
-
-		httputil.WriteJSON(w, CheckChangesResponse{
-			HasUncommitted:     hasUncommitted,
-			HasUnmergedCommits: hasUnmergedCommits,
-		})
-	})
+	}
 }
