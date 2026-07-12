@@ -1,4 +1,19 @@
 import { type Workspace, type BackendState } from '../types'
+import { normalizeLayout } from '@/features/shared/utils/layout'
+
+function fixWorkspace(ws: Workspace): Workspace {
+  if (!Array.isArray(ws.layouts)) {
+    ws.layouts = []
+    ws.activeTabIndex = 0
+    ws.activePaneId = ''
+  } else {
+    ws.layouts = ws.layouts.map((t) => ({ ...t, layout: normalizeLayout(t.layout) }))
+  }
+  if (ws.enableWorktrees === undefined) {
+    ws.enableWorktrees = false
+  }
+  return ws
+}
 
 
 
@@ -19,14 +34,7 @@ function ensureWs() {
       const data = JSON.parse(e.data) as BackendState
       if (!data || !Array.isArray(data.workspaces)) return
       for (const ws of data.workspaces) {
-        if (!Array.isArray(ws.layouts)) {
-          ws.layouts = []
-          ws.activeTabIndex = 0
-          ws.activePaneId = ''
-        }
-        if (ws.enableWorktrees === undefined) {
-          ws.enableWorktrees = false
-        }
+        fixWorkspace(ws)
       }
       for (const l of listeners) l(data)
     } catch { /* ignore */ }
@@ -50,14 +58,7 @@ export async function loadState(): Promise<BackendState> {
     const data = (await res.json())?.data as BackendState
     if (!data || !Array.isArray(data.workspaces)) return { ...empty }
     for (const ws of data.workspaces) {
-      if (!Array.isArray(ws.layouts)) {
-        ws.layouts = []
-        ws.activeTabIndex = 0
-        ws.activePaneId = ''
-      }
-      if (ws.enableWorktrees === undefined) {
-        ws.enableWorktrees = false
-      }
+      fixWorkspace(ws)
     }
     return {
       workspaces: data.workspaces,

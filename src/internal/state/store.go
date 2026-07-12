@@ -166,6 +166,7 @@ func (s *Store) loadLayoutTree(tabID, parentID string) LayoutNode {
 
 	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch)
 	if err != nil {
+		ln.Type = "empty"
 		return ln
 	}
 	ln.IsDiff = isDiff != 0

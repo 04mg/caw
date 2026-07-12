@@ -1,6 +1,6 @@
 <!-- Header -->
   <p align="center">
-    <img src="assets/logo.png" alt="Caw" width="110" />
+    <img src="assets/logo.svg" alt="Caw" width="100" />
   </p>
 
   <h1 align="center">Caw</h1>
