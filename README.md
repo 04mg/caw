@@ -22,11 +22,8 @@
 <table>
 <tr>
 <td width="50%" valign="middle">
-
 ### Run Agents in the Browser
-
 Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, or Pi side-by-side — Caw auto-detects which agents are installed and spins up a terminal pane for each.
-
 </td>
 <td width="50%">
   <picture><source srcset="assets/feature-wall/multi-agent.gif" type="image/gif"><img src="assets/feature-wall/multi-agent.jpg" alt="Caw running multiple AI coding agents in browser terminal panes" width="100%" style="border-radius: 12px;" /></picture>
@@ -34,11 +31,8 @@ Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, or Pi side
 </tr>
 <tr>
 <td width="50%" valign="middle">
-
 ### Agent Control Center
-
 Stop babysitting terminals. Caw watches each agent's transcript and shows its real-time state — Working, Needs Input, or Idle — on a live Kanban board.
-
 </td>
 <td width="50%">
   <picture><source srcset="assets/feature-wall/status-board.gif" type="image/gif"><img src="assets/feature-wall/status-board.jpg" alt="Caw Agent Control Center showing agent statuses: Idle, Working, Needs Input" width="100%" style="border-radius: 12px;" /></picture>
@@ -46,11 +40,8 @@ Stop babysitting terminals. Caw watches each agent's transcript and shows its re
 </tr>
 <tr>
 <td width="50%" valign="middle">
-
 ### Parallel Git Worktrees
-
 Each agent works in its own isolated git worktree and branch, created and cleaned up automatically — fan prompts across agents in parallel with zero file clashes.
-
 </td>
 <td width="50%">
   <picture><source srcset="assets/feature-wall/parallel-worktrees.gif" type="image/gif"><img src="assets/feature-wall/parallel-worktrees.jpg" alt="Caw running agents in isolated git worktrees" width="100%" style="border-radius: 12px;" /></picture>
@@ -58,11 +49,8 @@ Each agent works in its own isolated git worktree and branch, created and cleane
 </tr>
 <tr>
 <td width="50%" valign="middle">
-
 ### Push Notifications
-
 Walk away and stay in the loop. Get a push notification when an agent needs your input or finishes its task — on your desktop browser or on your phone.
-
 </td>
 <td width="50%">
   <picture><source srcset="assets/feature-wall/push-notifications.gif" type="image/gif"><img src="assets/feature-wall/push-notifications.jpg" alt="Caw push notification on a phone and browser when an agent needs input or finishes" width="100%" style="border-radius: 12px;" /></picture>
@@ -70,11 +58,8 @@ Walk away and stay in the loop. Get a push notification when an agent needs your
 </tr>
 <tr>
 <td width="50%" valign="middle">
-
 ### Usage Quota Monitoring
-
 Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Ollama, and OpenRouter.
-
 </td>
 <td width="50%">
   <picture><source srcset="assets/feature-wall/quota-monitoring.gif" type="image/gif"><img src="assets/feature-wall/quota-monitoring.jpg" alt="Caw usage quota monitoring for multiple providers" width="100%" style="border-radius: 12px;" /></picture>
