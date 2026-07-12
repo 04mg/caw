@@ -120,9 +120,7 @@ export function TabGroupView({
 
   return (
     <div
-      className={`flex flex-col h-full overflow-hidden transition-all bg-background border border-border/40 ${
-        isActive ? 'ring-1 ring-inset ring-primary/10 border-primary/20' : ''
-      }`}
+      className="flex flex-col h-full overflow-hidden bg-background"
       onPointerDown={() => {
         if (!isActive) {
           onSetActiveGroup(group.id)
