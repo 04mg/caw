@@ -1,150 +1,83 @@
 package git
 
 import (
-	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
+	"github.com/gin-gonic/gin"
 
-	"github.com/04mg/caw/internal/httputil"
+	"github.com/04mg/caw/internal/httpx"
 )
 
-func Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/git/statuses", handleStatus)
-	mux.HandleFunc("GET /api/git/diffs", handleDiff)
-	mux.HandleFunc("GET /api/git/originals", handleOriginal)
+type Handler struct {
+	svc *Service
 }
 
-var (
-	statusCache     map[string]string
-	statusCacheRepo string
-	statusCacheTime time.Time
-	statusCacheMu   sync.Mutex
-	statusCacheTTL  = 2 * time.Second
-)
-
-func handleStatus(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	statusCacheMu.Lock()
-	if abs == statusCacheRepo && time.Since(statusCacheTime) < statusCacheTTL && statusCache != nil {
-		result := statusCache
-		statusCacheMu.Unlock()
-		httputil.WriteJSON(w, result)
-		return
-	}
-	statusCacheMu.Unlock()
-
-	cmd := exec.Command("git", "status", "--porcelain", "-u")
-	cmd.Dir = abs
-	output, err := cmd.Output()
-	if err != nil {
-		httputil.WriteJSON(w, map[string]string{})
-		return
-	}
-
-	statuses := make(map[string]string, 64)
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if len(line) < 4 {
-			continue
-		}
-		statusXY := line[:2]
-		filePath := line[3:]
-		filePath = strings.Trim(filePath, "\"")
-		absFilePath := filepath.Join(abs, filePath)
-		statuses[absFilePath] = statusXY
-	}
-
-	statusCacheMu.Lock()
-	statusCache = statuses
-	statusCacheRepo = abs
-	statusCacheTime = time.Now()
-	statusCacheMu.Unlock()
-
-	httputil.WriteJSON(w, statuses)
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
 }
 
-func handleDiff(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
+func (h *Handler) Status(c *gin.Context) {
+	path := c.Query("path")
 	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
+		httpx.BadRequest(c, "path required")
 		return
 	}
-	abs, err := filepath.Abs(path)
+	result, err := h.svc.Status(path)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.BadRequest(c, err.Error())
 		return
 	}
-	cmd := exec.Command("git", "diff", "HEAD")
-	cmd.Dir = abs
-	output, err := cmd.Output()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(output)
+	httpx.OK(c, result)
 }
 
-func handleOriginal(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
+func (h *Handler) Diff(c *gin.Context) {
+	path := c.Query("path")
 	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
+		httpx.BadRequest(c, "path required")
 		return
 	}
-	abs, err := filepath.Abs(path)
+	content, err := h.svc.Diff(path)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.InternalErr(c, err)
 		return
 	}
+	httpx.OK(c, ContentResponse{Content: content})
+}
 
-	dir := filepath.Dir(abs)
-	var gitRoot string
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			gitRoot = dir
-			break
+func (h *Handler) Original(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		httpx.BadRequest(c, "path required")
+		return
+	}
+	content, err := h.svc.Original(path)
+	if err != nil {
+		if err == ErrNotGitRepo {
+			httpx.BadRequest(c, err.Error())
+			return
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	if gitRoot == "" {
-		http.Error(w, "not a git repository", http.StatusBadRequest)
+		httpx.InternalErr(c, err)
 		return
 	}
+	httpx.OK(c, ContentResponse{Content: content})
+}
 
-	relPath, err := filepath.Rel(gitRoot, abs)
+func (h *Handler) Ignored(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		httpx.BadRequest(c, "path required")
+		return
+	}
+	result, err := h.svc.Ignored(path)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.BadRequest(c, err.Error())
 		return
 	}
-	relPath = filepath.ToSlash(relPath)
+	httpx.OK(c, result)
+}
 
-	cmd := exec.Command("git", "show", "HEAD:"+relPath)
-	cmd.Dir = gitRoot
-	output, err := cmd.Output()
-	if err != nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(""))
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(output)
+func Register(rg *gin.RouterGroup) {
+	h := NewHandler(NewService())
+	rg.GET("/git/statuses", h.Status)
+	rg.GET("/git/diffs", h.Diff)
+	rg.GET("/git/originals", h.Original)
+	rg.GET("/git/ignored", h.Ignored)
 }

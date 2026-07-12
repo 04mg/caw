@@ -17,7 +17,7 @@ func init() {
 	agent.RegisterStatusWatcher("copilot", &CopilotWatcher{})
 }
 
-func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -27,7 +27,13 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 
 	var lastDBMod time.Time
 	var copilotSessionID string
-	watcherStart := time.Now().Add(-2 * time.Second)
+	// For a fresh start, only match sessions created after the watcher
+	// started (no negative offset). On resume, the session may predate the
+	// watcher so the recency filter is skipped in findUnclaimedCopilotSession.
+	watcherStart := time.Now()
+	// Re-bind bookkeeping for /new and /resume detection.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if copilotSessionID != "" {
@@ -40,19 +46,52 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			info, err := os.Stat(dbPath)
 			if err != nil {
 				continue
 			}
 			if info.ModTime() == lastDBMod {
-				continue
+				silentTicks++
+				// Still run the re-bind check below even when the DB mtime
+				// hasn't changed, since a /resume into an older session may
+				// not bump the top-level db file mtime immediately.
+			} else {
+				lastDBMod = info.ModTime()
 			}
-			lastDBMod = info.ModTime()
 			if copilotSessionID == "" {
-				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID, resume)
+				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
+				if copilotSessionID != "" {
+					lastActivity = time.Now()
+					silentTicks = 0
+				}
 			}
 			if copilotSessionID != "" {
-				w.parseCopilotDB(dbPath, cwd, copilotSessionID, callback)
+				before := lastActivity
+				w.parseCopilotDB(dbPath, cwd, copilotSessionID, func(status, tool, details, title string) {
+					lastActivity = time.Now()
+					callback(status, tool, details, title)
+				})
+				if lastActivity.Equal(before) {
+					silentTicks++
+				} else {
+					silentTicks = 0
+				}
+			} else {
+				silentTicks++
+			}
+
+			// Mid-session re-bind for /new and /resume.
+			if copilotSessionID != "" && silentTicks >= rebindSilenceTicks {
+				newKey := findRebindCopilotSession(dbPath, cwd, lastActivity, copilotSessionID, sessionID)
+				if newKey != "" && newKey != copilotSessionID {
+					if ClaimSession(agentID, cwd, newKey) {
+						UnclaimSession(agentID, cwd, copilotSessionID)
+						copilotSessionID = newKey
+						silentTicks = 0
+						lastActivity = time.Now()
+					}
+				}
 			}
 		}
 	}
@@ -60,10 +99,13 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 
 // findUnclaimedCopilotSession enumerates candidate Copilot sessions in the
 // session-store db (filtered by cwd when possible and started after
-// watcherStart) and returns the id of the most recent one that is not already
-// claimed by another watcher of the same agent type+cwd. When a session is
-// found it is immediately claimed.
-func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
+// watcherStart) and returns the id of the earliest one (oldest first) that is
+// not already claimed by another watcher of the same agent type+cwd.
+//
+// PTY activity correlation gates claiming: only a watcher whose PTY has
+// recently produced output may claim a new session, preventing a silent
+// watcher from stealing a session created by an active sibling agent.
+func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, ptyID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return ""
@@ -78,7 +120,7 @@ func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Ti
 
 	if cwd != "" {
 		rows, qerr := db.Query(
-			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at DESC",
+			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at ASC",
 			cwd,
 		)
 		if qerr == nil {
@@ -92,7 +134,7 @@ func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Ti
 	}
 	if len(candidates) == 0 {
 		rows, qerr := db.Query(
-			"SELECT id, updated_at FROM sessions ORDER BY updated_at DESC",
+			"SELECT id, updated_at FROM sessions ORDER BY updated_at ASC",
 		)
 		if qerr == nil {
 			for rows.Next() {
@@ -103,6 +145,9 @@ func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Ti
 			rows.Close()
 		}
 	}
+
+	lastPtyOut := agent.LastPtyActivity(ptyID)
+	ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
 
 	for _, r := range candidates {
 		// On resume, skip the recency filter — the session may predate the
@@ -115,11 +160,63 @@ func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Ti
 				}
 			}
 		}
+		if !ptyRecentlyActive {
+			continue
+		}
 		if ClaimSession(agentID, cwd, r.id) {
 			return r.id
 		}
 	}
 	return ""
+}
+
+// findRebindCopilotSession looks for a different Copilot session in the same
+// cwd whose updated_at is more recent than lastActivity. Used by the
+// mid-session re-bind pass to detect /new and /resume. Gates on PTY activity.
+// It does NOT claim the returned session; the caller is responsible for
+// calling ClaimSession.
+func findRebindCopilotSession(dbPath string, cwd string, lastActivity time.Time, currentID string, ptyID string) string {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	lastPtyOut := agent.LastPtyActivity(ptyID)
+	if time.Since(lastPtyOut) > 3*time.Second {
+		return ""
+	}
+
+	var bestID string
+	var bestTime time.Time
+
+	if cwd != "" {
+		rows, qerr := db.Query(
+			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at DESC",
+			cwd,
+		)
+		if qerr == nil {
+			for rows.Next() {
+				var id, updatedAt string
+				if rows.Scan(&id, &updatedAt) != nil {
+					continue
+				}
+				if id == currentID {
+					continue
+				}
+				t, err := time.Parse(time.RFC3339, updatedAt)
+				if err != nil {
+					continue
+				}
+				if t.After(lastActivity) && t.After(bestTime) {
+					bestID = id
+					bestTime = t
+				}
+			}
+			rows.Close()
+		}
+	}
+	return bestID
 }
 
 func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilotSessionID string, callback func(status, tool, details, title string)) {

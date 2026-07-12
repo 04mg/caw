@@ -74,6 +74,12 @@ func (s *Store) migrate() {
 		agent_id   TEXT NOT NULL DEFAULT '',
 		cwd        TEXT NOT NULL DEFAULT '',
 		started_at TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS push_subscriptions (
+		endpoint   TEXT PRIMARY KEY,
+		p256dh     TEXT NOT NULL,
+		auth       TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
@@ -81,6 +87,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN enable_worktrees INTEGER DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN agent_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN tab_groups_json TEXT DEFAULT ''")
 }
 
 func (s *Store) Get() AppState {
@@ -97,7 +104,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, '') FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -106,7 +113,7 @@ func (s *Store) Get() AppState {
 	for wRows.Next() {
 		var w Workspace
 		var enableWorktrees int
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees); err != nil {
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON); err != nil {
 			continue
 		}
 		w.EnableWorktrees = enableWorktrees != 0
@@ -159,6 +166,7 @@ func (s *Store) loadLayoutTree(tabID, parentID string) LayoutNode {
 
 	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch)
 	if err != nil {
+		ln.Type = "empty"
 		return ln
 	}
 	ln.IsDiff = isDiff != 0
@@ -202,6 +210,21 @@ func (s *Store) Set(as AppState) {
 	tx.Exec("DELETE FROM layout_nodes")
 	tx.Exec("DELETE FROM tab_layouts")
 	tx.Exec("DELETE FROM workspaces")
+
+	// Preserve push-related settings (VAPID keys, push prefs) that must
+	// survive workspace state saves. Store.Set() does DELETE FROM settings,
+	// which would wipe them otherwise.
+	var preservedSettings [][2]string
+	for _, key := range []string{
+		"vapid_public_key", "vapid_private_key",
+		"push_enabled", "push_needs_input", "push_finished",
+	} {
+		var val string
+		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
+			preservedSettings = append(preservedSettings, [2]string{key, val})
+		}
+	}
+
 	tx.Exec("DELETE FROM settings")
 
 	if as.Workspaces == nil {
@@ -210,6 +233,11 @@ func (s *Store) Set(as AppState) {
 
 	// Save active workspace ID
 	tx.Exec("INSERT INTO settings (key, value) VALUES ('active_workspace_id', ?)", as.ActiveWorkspaceID)
+
+	// Restore push-related settings that were preserved across the DELETE.
+	for _, kv := range preservedSettings {
+		tx.Exec("INSERT INTO settings (key, value) VALUES (?, ?)", kv[0], kv[1])
+	}
 
 	for _, w := range as.Workspaces {
 		if w.Layouts == nil {
@@ -220,8 +248,8 @@ func (s *Store) Set(as AppState) {
 			enableWT = 1
 		}
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT,
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON,
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(

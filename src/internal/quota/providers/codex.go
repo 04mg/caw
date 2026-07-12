@@ -41,8 +41,9 @@ type CodexRateLimit struct {
 }
 
 type CodexWindow struct {
-	UsedPercent float64 `json:"used_percent"`
-	ResetAt     float64 `json:"reset_at"`
+	UsedPercent       float64 `json:"used_percent"`
+	ResetAt           float64 `json:"reset_at"`
+	ResetAfterSeconds float64 `json:"reset_after_seconds"`
 }
 
 func (p *CodexProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
@@ -59,10 +60,20 @@ func (p *CodexProvider) GetQuotas(config map[string]string) (*quota.QuotaRespons
 	var fiveHour, weekly quota.Quota
 	if usage.RateLimit != nil {
 		if usage.RateLimit.PrimaryWindow != nil {
-			fiveHour = quota.Quota{Used: clampPercent(usage.RateLimit.PrimaryWindow.UsedPercent), Limit: 100, Unit: "percentage"}
+			fiveHour = quota.Quota{
+				Used:      clampPercent(usage.RateLimit.PrimaryWindow.UsedPercent),
+				Limit:     100,
+				Unit:      "percentage",
+				ResetTime: codexResetTime(usage.RateLimit.PrimaryWindow),
+			}
 		}
 		if usage.RateLimit.SecondaryWindow != nil {
-			weekly = quota.Quota{Used: clampPercent(usage.RateLimit.SecondaryWindow.UsedPercent), Limit: 100, Unit: "percentage"}
+			weekly = quota.Quota{
+				Used:      clampPercent(usage.RateLimit.SecondaryWindow.UsedPercent),
+				Limit:     100,
+				Unit:      "percentage",
+				ResetTime: codexResetTime(usage.RateLimit.SecondaryWindow),
+			}
 		}
 	}
 
@@ -154,4 +165,14 @@ func fetchCodexUsage(accessToken string) (*CodexUsageResponse, error) {
 		return nil, fmt.Errorf("failed to decode codex usage: %w", err)
 	}
 	return &parsed, nil
+}
+
+func codexResetTime(w *CodexWindow) string {
+	if w.ResetAt > 0 {
+		return time.Unix(int64(w.ResetAt), 0).UTC().Format(time.RFC3339)
+	}
+	if w.ResetAfterSeconds > 0 {
+		return time.Now().Add(time.Duration(w.ResetAfterSeconds) * time.Second).UTC().Format(time.RFC3339)
+	}
+	return ""
 }

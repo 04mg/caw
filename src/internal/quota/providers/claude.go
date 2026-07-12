@@ -64,23 +64,26 @@ func (p *ClaudeProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 	var fiveHour, weekly quota.Quota
 	if usage.FiveHour != nil {
 		fiveHour = quota.Quota{
-			Used:  clampPercent(usage.FiveHour.UsedPercent),
-			Limit: 100,
-			Unit:  "percentage",
+			Used:      clampPercent(usage.FiveHour.UsedPercent),
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: usage.FiveHour.ResetAt,
 		}
 	} else if usage.SevenDay != nil {
 		// seven_day fallback when five_hour missing.
 		fiveHour = quota.Quota{
-			Used:  clampPercent(usage.SevenDay.UsedPercent),
-			Limit: 100,
-			Unit:  "percentage",
+			Used:      clampPercent(usage.SevenDay.UsedPercent),
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: usage.SevenDay.ResetAt,
 		}
 	}
 	if usage.SevenDay != nil {
 		weekly = quota.Quota{
-			Used:  clampPercent(usage.SevenDay.UsedPercent),
-			Limit: 100,
-			Unit:  "percentage",
+			Used:      clampPercent(usage.SevenDay.UsedPercent),
+			Limit:     100,
+			Unit:      "percentage",
+			ResetTime: usage.SevenDay.ResetAt,
 		}
 	}
 

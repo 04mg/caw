@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -72,7 +73,12 @@ var permissionStepTypes = map[string]bool{
 	"ASK_QUESTION":   true,
 }
 
-func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string)) {
+var (
+	taskStartRx  = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskFinishRx = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+)
+
+func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -83,8 +89,10 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	const agentID = "agy"
 	// On resume (--continue), the agent reattaches to a pre-existing
 	// conversation whose transcript may predate this watcher. Widen the
-	// search window to 1 hour so the resumed session is found.
-	lookback := 1 * time.Second
+	// search window to 1 hour so the resumed session is found. For a fresh
+	// start, only look for files modified after the watcher started (no
+	// negative offset).
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -92,6 +100,9 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	// Re-bind bookkeeping for /new and /resume detection.
+	var lastActivity time.Time
+	var silentTicks int
 
 	defer func() {
 		if watchedFilePath != "" {
@@ -104,16 +115,24 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			heartbeat()
 			if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
-				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-				if err == nil && len(candidates) > 0 {
-					watchedFilePath = candidates[0]
-					lastFileSize = 0
-					// After locking on a file, only look for newer transcripts
-					// from this point on (prevents switching to a new session
-					// that hasn't started yet).
-					lastCheck = time.Now()
+				// Gate on PTY activity: only claim if this watcher's PTY has
+				// recently produced output, preventing a silent watcher from
+				// stealing a session created by an active sibling agent.
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second {
+					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+					if err == nil && len(candidates) > 0 {
+						watchedFilePath = candidates[0]
+						lastFileSize = 0
+						lastCheck = time.Now()
+						if info, err := os.Stat(watchedFilePath); err == nil {
+							lastActivity = info.ModTime()
+						}
+						silentTicks = 0
+					}
 				}
 			}
 			if watchedFilePath != "" {
@@ -128,11 +147,38 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						}
 						w.parseAntigravityLog(watchedFilePath, lastFileSize, wrappedCallback)
 						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
 					}
 				} else {
 					// File disappeared — release claim and search again next tick.
 					UnclaimSession(agentID, cwd, watchedFilePath)
 					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re bind for /new and /resume.
+				if silentTicks >= rebindSilenceTicks {
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						cands, _ := listAntigravityCandidates(dir, cwd, lastActivity)
+						var others []RebindCandidate
+						for _, c := range cands {
+							others = append(others, RebindCandidate{Key: c.path, ModTime: c.modTime})
+						}
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						if newKey != "" && newKey != watchedFilePath {
+							if ClaimSession(agentID, cwd, newKey) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newKey
+								lastFileSize = 0
+								lastCheck = time.Now()
+								silentTicks = 0
+							}
+						}
+					}
 				}
 			}
 		}
@@ -143,20 +189,40 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 // recently modified transcript.jsonl files whose modification time is after
 // the given threshold, optionally filtered by cwd via conversation_summaries.db,
 // and skips any transcript already claimed by another watcher of the same
-// agent type+cwd. Returns candidates sorted by modification time, most recent
-// first. The caller claims the first one via ClaimSession.
+// agent type+cwd. Returns candidates sorted oldest-first (workspace-matched
+// still first within that ordering) so the earliest-started watcher claims
+// the earliest qualifying session. The caller claims the first one via
+// ClaimSession — but note this helper claims *all* returned candidates, so
+// it must only be used for the initial-bind path.
 func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, agentID string) ([]string, error) {
-	type cand struct {
-		path       string
-		convID     string
-		modTime    time.Time
-		workspaceOK bool
+	cands, err := listAntigravityCandidates(brainDir, cwd, after)
+	if err != nil {
+		return nil, err
 	}
+	var result []string
+	for _, c := range cands {
+		if ClaimSession(agentID, cwd, c.path) {
+			result = append(result, c.path)
+		}
+	}
+	return result, nil
+}
 
-	// 1. Build the full set of candidate transcript files modified after the
-	// threshold. We collect (path, conversationId, modTime) and, when a cwd
-	// match is requested, also flag whether the conversation's workspace_uris
-	// contain the target cwd.
+// antigravityCandidate is a transcript path with its modification time, used
+// both by findAntigravityTranscripts (claiming path) and the re-bind path
+// (which needs modtimes without claiming).
+type antigravityCandidate struct {
+	path        string
+	convID      string
+	modTime     time.Time
+	workspaceOK bool
+}
+
+// listAntigravityCandidates enumerates transcript.jsonl files under brainDir
+// modified after `after`, optionally filtered by cwd, sorted oldest-first
+// (workspace-matched entries first within that ordering). It does NOT claim
+// any candidate; callers are responsible for calling ClaimSession.
+func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]antigravityCandidate, error) {
 	workspaceMatch := map[string]bool{}
 	workspaceQueried := false
 	if cwd != "" {
@@ -170,14 +236,6 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 					`SELECT conversation_id, workspace_uris FROM conversation_summaries ORDER BY last_modified_time DESC`,
 				)
 				if qerr == nil {
-					// Normalize the target cwd to an absolute, slash-separated
-					// path once. The DB stores workspace_uris as a JSON array
-					// of file:// URIs like
-					//   "file:///C:/Users/manur/OneDrive/Desktop/agents%20workspace/wterm"
-					// (three slashes, URL-encoded). We parse each URI back to a
-					// filesystem path and compare against the absolute cwd so
-					// differences in slash count, drive-letter case, or %20
-					// encoding don't break the match.
 					absCwd, _ := filepath.Abs(cwd)
 					absCwd = filepath.Clean(absCwd)
 					for rows.Next() {
@@ -207,8 +265,7 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 		}
 	}
 
-	// 2. Walk the brain directory collecting candidates.
-	var cands []cand
+	var cands []antigravityCandidate
 	err := filepath.Walk(brainDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -222,7 +279,6 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 		if !info.ModTime().After(after) {
 			return nil
 		}
-		// Derive conversationId from path: .../brain/<convId>/.system_generated/logs/transcript.jsonl
 		convID := ""
 		if rel, rerr := filepath.Rel(brainDir, path); rerr == nil {
 			parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -230,18 +286,12 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 				convID = parts[0]
 			}
 		}
-		// When cwd filtering is active and we successfully queried the db,
-		// skip transcripts that belong to a *different* workspace. A
-		// conversation that hasn't been recorded in the db yet (brand-new
-		// session) is kept, since its transcript is already newer than the
-		// watcher's start and most likely belongs to the agent we just
-		// launched.
 		if cwd != "" && workspaceQueried && convID != "" {
 			if known, ok := workspaceMatch[convID]; ok && !known {
 				return nil
 			}
 		}
-		cands = append(cands, cand{
+		cands = append(cands, antigravityCandidate{
 			path:        path,
 			convID:      convID,
 			modTime:     info.ModTime(),
@@ -253,29 +303,20 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 		return nil, err
 	}
 
-	// Sort: workspace-matched first, then by modTime descending. This keeps the
-	// most relevant transcripts at the top when cwd filtering is active.
+	// Sort: workspace-matched first, then by modTime ASCENDING (oldest first)
+	// so the earliest-started watcher claims the earliest qualifying session.
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].workspaceOK != cands[j].workspaceOK {
 			return cands[i].workspaceOK
 		}
-		return cands[i].modTime.After(cands[j].modTime)
+		return cands[i].modTime.Before(cands[j].modTime)
 	})
-
-	// 3. Pick the first candidate whose path (or conversationId) is not
-	// already claimed by another watcher of the same agent type+cwd.
-	var result []string
-	for _, c := range cands {
-		key := c.path
-		if ClaimSession(agentID, cwd, key) {
-			result = append(result, key)
-		}
-	}
-	return result, nil
+	return cands, nil
 }
 
 func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
-	lines, err := ReadNewLines(filePath, offset)
+	// Always read from the beginning to correctly track background tasks
+	lines, err := ReadNewLines(filePath, 0)
 	if err != nil || len(lines) == 0 {
 		return
 	}
@@ -284,6 +325,8 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	var sessionTitle string
 	var lastType string
 	var lastToolNames []string
+
+	runningTasks := make(map[string]bool)
 
 	for _, line := range lines {
 		var step antigravityStep
@@ -321,6 +364,17 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				lastType = step.Type
 			}
 		}
+
+		// Check for background tasks started in this step
+		if step.Status == "RUNNING" {
+			if m := taskStartRx.FindStringSubmatch(step.Content); len(m) > 1 {
+				runningTasks[m[1]] = true
+			}
+		}
+		// Also scan step content (e.g. SYSTEM_MESSAGE, PLANNER_RESPONSE, etc.) for finished tasks
+		if m := taskFinishRx.FindStringSubmatch(step.Content); len(m) > 1 {
+			delete(runningTasks, m[1])
+		}
 	}
 
 	// Determine current status from the last step type written to the transcript.
@@ -333,6 +387,15 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 
 	case "PLANNER_RESPONSE":
 		if len(lastToolNames) == 0 {
+			if len(runningTasks) > 0 {
+				var activeTask string
+				for t := range runningTasks {
+					activeTask = t
+					break
+				}
+				callback("executing", "background_task", activeTask, sessionTitle)
+				return
+			}
 			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
 			callback("idle", "", "", sessionTitle)
 			return
@@ -358,6 +421,15 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		if toolStepTypes[lastType] {
 			// A tool result was just written; the planner is about to respond.
 			callback("thinking", "", "", sessionTitle)
+			return
+		}
+		if len(runningTasks) > 0 {
+			var activeTask string
+			for t := range runningTasks {
+				activeTask = t
+				break
+			}
+			callback("executing", "background_task", activeTask, sessionTitle)
 			return
 		}
 		// Unknown step type — stay thinking.
