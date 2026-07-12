@@ -112,8 +112,8 @@ export function TerminalGrid({
             <Separator
               className={
                 node.orientation === 'horizontal'
-                  ? 'w-[2px] bg-border hover:bg-ring transition-colors cursor-col-resize'
-                  : 'h-[2px] bg-border hover:bg-ring transition-colors cursor-row-resize'
+                  ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize'
+                  : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize'
               }
             />
           )}
