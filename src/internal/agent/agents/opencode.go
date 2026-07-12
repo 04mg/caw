@@ -95,7 +95,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			if openCodeSessionID == "" {
 				if changed {
-					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
+					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 					if openCodeSessionID != "" {
 						lastActivity = time.Now()
 						silentTicks = 0
@@ -129,7 +129,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			// Mid-session re-bind for /new and /resume.
 			if openCodeSessionID != "" && silentTicks >= rebindSilenceTicks {
-				newKey := findRebindOpenCodeSession(dbPath, cwd, lastActivity, agentID, openCodeSessionID, sessionID)
+				newKey := findRebindOpenCodeSession(dbPath, cwd, lastActivity, agentID, openCodeSessionID)
 				if newKey != "" && newKey != openCodeSessionID {
 					if ClaimSession(agentID, cwd, newKey) {
 						UnclaimSession(agentID, cwd, openCodeSessionID)
@@ -156,7 +156,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 // the agent process in this PTY is the one that created the session. This
 // prevents watcher 1 from claiming a session that was created by watcher 2's
 // agent just because watcher 1 polled first.
-func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, ptyID string) string {
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
@@ -198,14 +198,6 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 		}
 	}
 
-	// Check if this watcher's PTY has had recent activity. If yes, it means
-	// the agent in this PTY is actively producing output (e.g. responding to
-	// a user message), and a new session appearing in the DB likely belongs
-	// to this PTY. If no, skip claiming — another watcher's PTY is the one
-	// that created the new session.
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
-
 	for _, r := range candidates {
 		// On resume, skip the recency filter — the session may predate the
 		// watcher (the agent reattaches to an old session). On fresh start,
@@ -215,13 +207,6 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 			if !sessionCreated.After(watcherStart) {
 				continue
 			}
-		}
-		// PTY activity gate: when there are competing watchers (more PTYs
-		// than claimed sessions), only claim if this PTY recently produced
-		// output. This prevents a silent watcher from stealing a session
-		// created by an active sibling agent.
-		if !ptyRecentlyActive {
-			continue
 		}
 		if ClaimSession(agentID, cwd, r.id) {
 			return r.id
@@ -236,17 +221,12 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 // returned session; the caller is responsible for calling ClaimSession.
 // Gates on PTY activity to ensure only the watcher whose PTY is producing
 // output switches to the new session.
-func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time, agentID string, currentID string, ptyID string) string {
+func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time, agentID string, currentID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
 	}
 	defer db.Close()
-
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	if time.Since(lastPtyOut) > 3*time.Second {
-		return ""
-	}
 
 	var bestID string
 	var bestTime int64
