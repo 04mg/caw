@@ -41,10 +41,10 @@ jobs:
 
       - run: |
           cd src
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o caw-linux-amd64    ./cmd/caw/
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -o caw-darwin-amd64   ./cmd/caw/
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o caw-darwin-arm64   ./cmd/caw/
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o caw-windows-amd64.exe ./cmd/caw/
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-linux-amd64    ./cmd/caw/
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-darwin-amd64   ./cmd/caw/
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-darwin-arm64   ./cmd/caw/
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-windows-amd64.exe ./cmd/caw/
 
       - uses: softprops/action-gh-release@v2
         with:
