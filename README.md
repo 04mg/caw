@@ -1,6 +1,6 @@
 <!-- Header -->
   <p align="center">
-    <img src="assets/logo.svg" alt="Caw" width="100" />
+    <img src="assets/caw/logo.svg" alt="Caw" width="100" />
   </p>
 
   <h1 align="center">Caw</h1>
@@ -15,7 +15,10 @@
   <p align="center">
     A single self-hostable binary that runs AI coding agents inside browser-based terminal panes, with live status tracking, git isolation and push notifications.
   </p>
-<!-- /Header -->
+
+  <p align="center">
+    <img src="assets/caw/banner.png" alt="Caw banner" width="100%" />
+  </p>
 
 ## Features
 
@@ -87,12 +90,12 @@ Keep an eye on your spend. Caw shows live usage limits and reset times for Claud
 Caw launches any CLI coding agent that runs in a terminal. These are detected on your machine and supported out of the box:
 
 <p align="center">
-  <img src="assets/claude.svg" width="18" alt="Claude Code" /> <b>Claude Code</b> &nbsp;&nbsp;
-  <img src="assets/codex.svg" width="18" alt="Codex CLI" /> <b>Codex CLI</b> &nbsp;&nbsp;
-  <img src="assets/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
-  <img src="assets/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
-  <img src="assets/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
-  <img src="assets/pi.svg" width="18" alt="Pi" /> <b>Pi</b>
+  <img src="assets/icons/claude.svg" width="18" alt="Claude Code" /> <b>Claude Code</b> &nbsp;&nbsp;
+  <img src="assets/icons/codex.svg" width="18" alt="Codex CLI" /> <b>Codex CLI</b> &nbsp;&nbsp;
+  <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
+  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
+  <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
+  <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b>
 </p>
 
 ### Usage quota providers
@@ -100,13 +103,13 @@ Caw launches any CLI coding agent that runs in a terminal. These are detected on
 Caw can show live usage limits and reset times for the following providers:
 
 <p align="center">
-  <img src="assets/claude.svg" width="18" alt="Claude" /> <b>Claude</b> &nbsp;&nbsp;
-  <img src="assets/codex.svg" width="18" alt="Codex" /> <b>Codex</b> &nbsp;&nbsp;
-  <img src="assets/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
-  <img src="assets/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
-  <img src="assets/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
-  <img src="assets/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
-  <img src="assets/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
+  <img src="assets/icons/claude.svg" width="18" alt="Claude" /> <b>Claude</b> &nbsp;&nbsp;
+  <img src="assets/icons/codex.svg" width="18" alt="Codex" /> <b>Codex</b> &nbsp;&nbsp;
+  <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
+  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
+  <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
+  <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
+  <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
 </p>
 
 ## Contributing
