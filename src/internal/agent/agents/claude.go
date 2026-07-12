@@ -19,6 +19,7 @@ func init() {
 
 type ClaudeLogLine struct {
 	Type    string         `json:"type"`
+	Subtype string         `json:"subtype,omitempty"`
 	Message *ClaudeMessage `json:"message,omitempty"`
 }
 
@@ -228,7 +229,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 			continue
 		}
 
-		if logLine.Type == "result" {
+		if logLine.Type == "result" || (logLine.Type == "system" && logLine.Subtype == "turn_duration") {
 			callback("idle", "", "", sessionTitle)
 			return
 		}
