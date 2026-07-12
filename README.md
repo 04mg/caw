@@ -6,7 +6,7 @@
   <h1 align="center">Caw</h1>
 
   <p align="center">
-    <i>Cloud agentic workspace</i>
+    A single self-hostable binary that runs AI coding agents inside browser-based terminal panes, with live status tracking, git isolation and push notifications.
   </p>
 <!-- /Header -->
 
@@ -29,14 +29,14 @@ Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, or Pi side
 <tr>
 <td width="50%" valign="middle">
 
-### Live Agent Status Board
+### Agent Control Center
 
 Stop babysitting terminals. Caw watches each agent's transcript and shows its real-time state — Working, Needs Input, or Idle — on a live Kanban board.
 
 </td>
 <td width="50%">
   <!-- TODO: generate feature GIF → docs/assets/feature-wall/status-board.gif (jpg is the fallback) -->
-  <picture><source srcset="docs/assets/feature-wall/status-board.gif" type="image/gif"><img src="docs/assets/feature-wall/status-board.jpg" alt="Caw Kanban board showing agent statuses: Idle, Working, Needs Input" width="100%" /></picture>
+  <picture><source srcset="docs/assets/feature-wall/status-board.gif" type="image/gif"><img src="docs/assets/feature-wall/status-board.jpg" alt="Caw Agent Control Center showing agent statuses: Idle, Working, Needs Input" width="100%" /></picture>
 </td>
 </tr>
 <tr>
@@ -65,32 +65,20 @@ Walk away and stay in the loop. Get a push notification when an agent needs your
   <picture><source srcset="docs/assets/feature-wall/push-notifications.gif" type="image/gif"><img src="docs/assets/feature-wall/push-notifications.jpg" alt="Caw push notification on a phone and browser when an agent needs input or finishes" width="100%" /></picture>
 </td>
 </tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Usage Quota Monitoring
+
+Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Ollama, and OpenRouter.
+
+</td>
+<td width="50%">
+  <!-- TODO: generate feature GIF → docs/assets/feature-wall/quota-monitoring.gif (jpg is the fallback) -->
+  <picture><source srcset="docs/assets/feature-wall/quota-monitoring.gif" type="image/gif"><img src="docs/assets/feature-wall/quota-monitoring.jpg" alt="Caw usage quota monitoring for multiple providers" width="100%" /></picture>
+</td>
+</tr>
 </table>
-
-**Also in the box:**
-
-- **Cloud multi-client sync** — your workspace layout and live terminals stay in sync across every browser you open Caw in.
-- **Usage quota monitoring** — live limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Ollama, and OpenRouter.
-- **File explorer with undo/redo** — browse, edit, and manage files with a full trash-based history (`Ctrl+Z` / `Ctrl+Y`).
-- **Terminal grid & command palette** — split terminal panes to any layout, a fuzzy command palette, and a mobile-friendly control center.
-
-## Build
-
-### Prerequisites
-- [Go](https://go.dev/dl/) 1.21+
-- [Node.js](https://nodejs.org/) 20+
-- npm
-- [Make](https://www.gnu.org/software/make/)
-
-### Build
-```sh
-make build
-```
-
-### Lint
-```sh
-make lint
-```
 
 ## Contributing
 
