@@ -7,6 +7,43 @@ export function createEmpty(): LayoutNode {
   return { type: 'empty' }
 }
 
+export function normalizeLayout(node: unknown): LayoutNode {
+  if (!node || typeof node !== 'object') return createEmpty()
+  const n = node as Record<string, unknown>
+  if (n.type === 'empty') return { type: 'empty' }
+  if (n.type === 'leaf') {
+    return {
+      type: 'leaf',
+      id: typeof n.id === 'string' ? n.id : crypto.randomUUID(),
+      cwd: typeof n.cwd === 'string' ? n.cwd : '',
+      cmd: Array.isArray(n.cmd) ? (n.cmd as string[]) : undefined,
+      agentId: typeof n.agentId === 'string' ? n.agentId : undefined,
+      filePath: typeof n.filePath === 'string' ? n.filePath : undefined,
+      isDiff: typeof n.isDiff === 'boolean' ? n.isDiff : undefined,
+      agentBranch: typeof n.agentBranch === 'string' ? n.agentBranch : undefined,
+      baseBranch: typeof n.baseBranch === 'string' ? n.baseBranch : undefined,
+    }
+  }
+  if (n.type === 'split') {
+    const rawChildren = Array.isArray(n.children) ? n.children : []
+    const children = rawChildren.map(normalizeLayout)
+    if (children.length === 0) return createEmpty()
+    if (children.length === 1) return children[0]
+    const count = children.length
+    const sizes = Array.isArray(n.sizes) && (n.sizes as number[]).length === count
+      ? (n.sizes as number[])
+      : children.map(() => 100 / count)
+    return {
+      type: 'split',
+      id: typeof n.id === 'string' ? n.id : crypto.randomUUID(),
+      orientation: n.orientation === 'horizontal' || n.orientation === 'vertical' ? n.orientation : 'horizontal',
+      children,
+      sizes,
+    }
+  }
+  return createEmpty()
+}
+
 export function createLeaf(cwd: string, cmd?: string[], agentId?: string): LayoutNode {
   return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, agentId }
 }
@@ -128,6 +165,7 @@ export function getSplitIds(root: LayoutNode): string[] {
 export function countLeaves(root: LayoutNode): number {
   if (root.type === 'empty') return 0
   if (root.type === 'leaf') return 1
+  if (!Array.isArray(root.children)) return 0
   return root.children.reduce((sum, c) => sum + countLeaves(c), 0)
 }
 
