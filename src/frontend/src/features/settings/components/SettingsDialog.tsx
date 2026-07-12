@@ -26,9 +26,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
-  const [scrollSensitivity, setScrollSensitivity] = useState(0.025)
-  const [scrollFriction, setScrollFriction] = useState(0.88)
-  const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.015)
+  const [scrollSensitivity, setScrollSensitivity] = useState(0.005)
+  const [scrollFriction, setScrollFriction] = useState(0.80)
+  const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.025)
   const [scrollGrace, setScrollGrace] = useState(1200)
   const [antigravityKey, setAntigravityKey] = useState('')
   const [opencodeCookie, setOpencodeCookie] = useState('')
@@ -165,9 +165,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
 
-      setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.025'))
-      setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.88'))
-      setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.015'))
+      setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.005'))
+      setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.80'))
+      setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.025'))
       setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
 
       setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
@@ -645,9 +645,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Scroll Sensitivity</label>
                       <div className="flex items-center gap-3">
                         <Slider
-                          min={0.005}
+                          min={0.001}
                           max={0.1}
-                          step={0.005}
+                          step={0.001}
                           value={[scrollSensitivity]}
                           onValueChange={(val) => {
                             const nextVal = val[0]
@@ -687,7 +687,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <Slider
                           min={0.005}
                           max={0.1}
-                          step={0.005}
+                          step={0.001}
                           value={[scrollVelocityThreshold]}
                           onValueChange={(val) => {
                             const nextVal = val[0]
@@ -723,9 +723,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
                     <button
                       onClick={() => {
-                        setScrollSensitivity(0.025)
-                        setScrollFriction(0.88)
-                        setScrollVelocityThreshold(0.015)
+                        setScrollSensitivity(0.005)
+                        setScrollFriction(0.80)
+                        setScrollVelocityThreshold(0.025)
                         setScrollGrace(1200)
                         localStorage.removeItem('caw:terminalScrollSensitivity')
                         localStorage.removeItem('caw:terminalScrollFriction')
