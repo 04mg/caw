@@ -67,6 +67,9 @@ func (s *Service) ListDir(path string) ([]FileNode, error) {
 		if name == "." || name == ".." {
 			continue
 		}
+		if name == ".git" {
+			continue
+		}
 		if !e.IsDir() {
 			continue
 		}
@@ -152,6 +155,9 @@ func (s *Service) ListAll(path string) ([]FileNode, error) {
 	for _, e := range entries {
 		name := e.Name()
 		if name == "." || name == ".." {
+			continue
+		}
+		if name == ".git" {
 			continue
 		}
 		isDir := e.IsDir()

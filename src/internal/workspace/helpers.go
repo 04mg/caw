@@ -28,6 +28,9 @@ func buildTree(dir string, depth int) (FileNode, error) {
 		if name == "." || name == ".." {
 			continue
 		}
+		if name == ".git" {
+			continue
+		}
 		child, err := buildTree(filepath.Join(dir, name), depth-1)
 		if err != nil {
 			continue
@@ -51,6 +54,9 @@ func searchAll(dir, q string, results *[]FileNode, depth, maxDepth, maxResults i
 		}
 		name := e.Name()
 		if name == "" || name == "." || name == ".." {
+			continue
+		}
+		if name == ".git" {
 			continue
 		}
 		path := filepath.Join(dir, name)
