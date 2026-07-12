@@ -67,7 +67,7 @@ func (s *Service) ListDir(path string) ([]FileNode, error) {
 		if name == "." || name == ".." {
 			continue
 		}
-		if name == ".git" {
+		if name == ".git" || name == ".caw_trash" {
 			continue
 		}
 		if !e.IsDir() {
