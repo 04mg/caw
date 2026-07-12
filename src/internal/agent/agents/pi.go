@@ -39,7 +39,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	// whose transcript may predate this watcher. Widen the search window to
 	// 1 hour so the resumed session is found. For a fresh start, only look
 	// for files modified after the watcher started (no negative offset).
-	lookback := 0 * time.Second
+	lookback := 30 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -67,16 +67,8 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 				searchDir := dir
 				if cwd != "" {
 					cleanCwd := filepath.Clean(cwd)
-					projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+					projDir := "-" + encodePathForDir(cleanCwd) + "-"
 					targetDir := filepath.Join(dir, projDir)
-					// Handle alternative trailing slash format `--root-caw--`
-					if _, err := os.Stat(targetDir); err != nil {
-						projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
-						targetDirAlt := filepath.Join(dir, projDirAlt)
-						if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
-							targetDir = targetDirAlt
-						}
-					}
 					if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
 						searchDir = targetDir
 					}
@@ -131,15 +123,8 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 						rebindDir := dir
 						if cwd != "" {
 							cleanCwd := filepath.Clean(cwd)
-							projDir := "-" + strings.ReplaceAll(cleanCwd, "/", "-") + "-"
+							projDir := "-" + encodePathForDir(cleanCwd) + "-"
 							targetDir := filepath.Join(dir, projDir)
-							if _, err := os.Stat(targetDir); err != nil {
-								projDirAlt := "-" + strings.ReplaceAll(cleanCwd+"/", "/", "-") + "-"
-								targetDirAlt := filepath.Join(dir, projDirAlt)
-								if info, err := os.Stat(targetDirAlt); err == nil && info.IsDir() {
-									targetDir = targetDirAlt
-								}
-							}
 							if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
 								rebindDir = targetDir
 							}
@@ -266,6 +251,7 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 	if roleLower == "assistant" || roleLower == "agent" {
 		var lastToolName string
 		var hasText bool
+		var hasThinking bool
 		var textContent string
 		for _, b := range msg.Content {
 			if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
@@ -273,11 +259,22 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 			} else if b.Type == "text" {
 				hasText = true
 				textContent = b.Text
+			} else if b.Type == "thinking" {
+				hasThinking = true
 			}
 		}
 
 		if lastToolName != "" {
 			return "executing", lastToolName
+		}
+		// An assistant message with a thinking (reasoning) block but no
+		// tool call or text yet means the model is still working — report
+		// "thinking" so the status doesn't prematurely flip to idle while
+		// the LLM is still generating. Once a text block appears alongside
+		// the thinking block, the turn is complete and we can report idle
+		// (or waiting_input if the text contains a confirmation prompt).
+		if hasThinking && !hasText {
+			return "thinking", ""
 		}
 		if hasText {
 			status := "idle"

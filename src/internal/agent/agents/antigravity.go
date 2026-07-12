@@ -92,7 +92,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// search window to 1 hour so the resumed session is found. For a fresh
 	// start, only look for files modified after the watcher started (no
 	// negative offset).
-	lookback := 0 * time.Second
+	lookback := 30 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -118,20 +118,19 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			heartbeat()
 			if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
-				// Gate on PTY activity: only claim if this watcher's PTY has
-				// recently produced output, preventing a silent watcher from
-				// stealing a session created by an active sibling agent.
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				if time.Since(lastPtyOut) < 3*time.Second {
-					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-					if err == nil && len(candidates) > 0 {
-						watchedFilePath = candidates[0]
-						lastFileSize = 0
-						lastCheck = time.Now()
-						if info, err := os.Stat(watchedFilePath); err == nil {
-							lastActivity = info.ModTime()
+				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+				if err == nil && len(candidates) > 0 {
+					for _, c := range candidates {
+						if ClaimSession(agentID, cwd, c) {
+							watchedFilePath = c
+							lastFileSize = 0
+							lastCheck = time.Now()
+							if info, err := os.Stat(watchedFilePath); err == nil {
+								lastActivity = info.ModTime()
+							}
+							silentTicks = 0
+							break
 						}
-						silentTicks = 0
 					}
 				}
 			}
@@ -201,9 +200,7 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 	}
 	var result []string
 	for _, c := range cands {
-		if ClaimSession(agentID, cwd, c.path) {
-			result = append(result, c.path)
-		}
+		result = append(result, c.path)
 	}
 	return result, nil
 }

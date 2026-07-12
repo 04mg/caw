@@ -280,6 +280,18 @@ func stripXMLTag(s, openTagPrefix, closeTag string) string {
 	return s
 }
 
+// encodePathForDir encodes an OS path into the format used by agent CLIs
+// (Claude, Pi) for their per-project session subdirectories. These CLIs
+// replace every path separator AND the Windows drive-letter colon with "-".
+// On Unix that is just "/"; on Windows we must also handle "\" and ":" so
+// e.g. "C:\Users\foo" -> "C--Users-foo" (matching what Claude/Pi create).
+func encodePathForDir(p string) string {
+	s := strings.ReplaceAll(p, "\\", "-")
+	s = strings.ReplaceAll(s, "/", "-")
+	s = strings.ReplaceAll(s, ":", "-")
+	return s
+}
+
 // CleanPrompt sanitizes the prompt by removing system/XML tags, collapsing
 // newlines and multiple spaces to keep it clean for UI rendering,
 // and truncating to a reasonable preview length.

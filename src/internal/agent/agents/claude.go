@@ -23,14 +23,35 @@ type ClaudeLogLine struct {
 }
 
 type ClaudeMessage struct {
-	Role    string        `json:"role"`
-	Content []ClaudeBlock `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 type ClaudeBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name for tool_use blocks
+}
+
+// parseClaudeContent decodes the Content field of a ClaudeMessage, which may
+// be either a JSON array of block objects (the common case) or a plain JSON
+// string (used by Claude Code for simple text user messages like "hi").
+// Returns the parsed blocks and the raw text if content was a plain string.
+func parseClaudeContent(raw json.RawMessage) ([]ClaudeBlock, string) {
+	if len(raw) == 0 {
+		return nil, ""
+	}
+	// Try array of blocks first.
+	var blocks []ClaudeBlock
+	if json.Unmarshal(raw, &blocks) == nil {
+		return blocks, ""
+	}
+	// Fall back to plain string.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return nil, s
+	}
+	return nil, ""
 }
 
 func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -52,7 +73,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// found; for a fresh start, only look for files modified after the
 	// watcher started (no negative offset) to avoid grabbing a sibling
 	// agent's session that was created moments before this watcher launched.
-	lookback := 0 * time.Second
+	lookback := 30 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -79,17 +100,16 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
-				if err != nil {
-					continue
-				}
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
-				for _, c := range candidates {
-					if !ptyRecentlyActive {
-						break
-					}
-					if ClaimSession(agentID, cwd, c.Path) {
+				// Recompute searchDir each tick — the cwd-specific
+				// subdirectory may not exist when Watch() first starts
+				// (Claude creates it lazily on first message).
+				searchDir = claudeProjectDir(baseDir, cwd)
+			candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
+			if err != nil {
+				continue
+			}
+			for _, c := range candidates {
+				if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
@@ -130,22 +150,19 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				// ensure only the watcher whose PTY is producing output
 				// switches.
 				if silentTicks >= rebindSilenceTicks {
-					lastPtyOut := agent.LastPtyActivity(sessionID)
-					if time.Since(lastPtyOut) < 3*time.Second {
-						cands, _ := FindLatestFiles(searchDir, ".jsonl", lastActivity)
-						var others []RebindCandidate
-						for _, c := range cands {
-							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
-						}
-						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSession(agentID, cwd, newKey) {
-								UnclaimSession(agentID, cwd, watchedFilePath)
-								watchedFilePath = newKey
-								lastFileSize = 0
-								lastCheck = time.Now()
-								silentTicks = 0
-							}
+					cands, _ := FindLatestFiles(searchDir, ".jsonl", lastActivity)
+					var others []RebindCandidate
+					for _, c := range cands {
+						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+					}
+					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+					if newKey != "" && newKey != watchedFilePath {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newKey
+							lastFileSize = 0
+							lastCheck = time.Now()
+							silentTicks = 0
 						}
 					}
 				}
@@ -155,19 +172,24 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 }
 
 // claudeProjectDir returns the subdirectory within ~/.claude/projects/ that
-// corresponds to cwd. Claude encodes the absolute path by replacing '/' with
-// '-'. When cwd is empty or the encoded directory doesn't exist we fall back
-// to the base projects directory.
+// corresponds to cwd. Claude encodes the absolute path by replacing path
+// separators (and the Windows drive-letter colon) with '-'. When cwd is
+// empty or the encoded directory doesn't exist we fall back to the base
+// projects directory.
 func claudeProjectDir(baseDir, cwd string) string {
 	if cwd == "" {
 		return baseDir
 	}
-	// Claude's encoding: strip leading slash, replace remaining '/' with '-',
-	// and prefix the whole thing with '-'.
-	encoded := strings.ReplaceAll(cwd, "/", "-")
+	encoded := encodePathForDir(cwd)
 	candidate := filepath.Join(baseDir, encoded)
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate
+	}
+	// Fallback: the legacy "/"-only encoding (used on Unix).
+	legacy := strings.ReplaceAll(cwd, "/", "-")
+	legacyCandidate := filepath.Join(baseDir, legacy)
+	if _, err := os.Stat(legacyCandidate); err == nil {
+		return legacyCandidate
 	}
 	return baseDir
 }
@@ -186,7 +208,11 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 			continue
 		}
 		if logLine.Message != nil && logLine.Message.Role == "user" {
-			for _, b := range logLine.Message.Content {
+			blocks, plainText := parseClaudeContent(logLine.Message.Content)
+			if plainText != "" && sessionTitle == "" {
+				sessionTitle = plainText
+			}
+			for _, b := range blocks {
 				if b.Type == "text" && b.Text != "" && sessionTitle == "" {
 					sessionTitle = b.Text
 				}
@@ -219,7 +245,8 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 				var hasText bool
 				var textContent string
 
-				for _, b := range msg.Content {
+				blocks, _ := parseClaudeContent(msg.Content)
+				for _, b := range blocks {
 					switch b.Type {
 					case "tool_use":
 						lastToolName = b.Name
