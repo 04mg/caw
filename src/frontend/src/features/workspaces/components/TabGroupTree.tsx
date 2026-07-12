@@ -63,6 +63,7 @@ interface TabGroupTreeProps {
   workspace: Workspace
   node: TabGroupsNode
   activeGroupId: string
+  firstGroupId: string
   draggedTabId: string | null
   activePaneId: string
   gitStatuses: Record<string, string>
@@ -97,6 +98,7 @@ export function TabGroupTree({
   workspace,
   node,
   activeGroupId,
+  firstGroupId,
   draggedTabId,
   activePaneId,
   gitStatuses,
@@ -126,6 +128,7 @@ export function TabGroupTree({
         workspace={workspace}
         group={node}
         isActive={node.id === activeGroupId}
+        isFirstGroup={node.id === firstGroupId}
         draggedTabId={draggedTabId}
         activePaneId={activePaneId}
         gitStatuses={gitStatuses}
@@ -173,8 +176,8 @@ export function TabGroupTree({
               <Separator
                 className={
                   orientation === 'horizontal'
-                    ? 'w-[3px] bg-border hover:bg-ring transition-colors cursor-col-resize shrink-0'
-                    : 'h-[3px] bg-border hover:bg-ring transition-colors cursor-row-resize shrink-0'
+                    ? 'w-[2px] bg-border hover:bg-ring transition-colors cursor-col-resize shrink-0'
+                    : 'h-[2px] bg-border hover:bg-ring transition-colors cursor-row-resize shrink-0'
                 }
               />
             )}
@@ -183,6 +186,7 @@ export function TabGroupTree({
                 workspace={workspace}
                 node={child}
                 activeGroupId={activeGroupId}
+                firstGroupId={firstGroupId}
                 draggedTabId={draggedTabId}
                 activePaneId={activePaneId}
                 gitStatuses={gitStatuses}

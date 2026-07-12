@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { DraggableTabBar } from './DraggableTabBar'
@@ -10,6 +10,7 @@ interface TabGroupViewProps {
   workspace: Workspace
   group: Extract<TabGroupsNode, { type: 'group' }>
   isActive: boolean
+  isFirstGroup: boolean
   draggedTabId: string | null
   activePaneId: string
   gitStatuses: Record<string, string>
@@ -43,6 +44,7 @@ export function TabGroupView({
   workspace,
   group,
   isActive,
+  isFirstGroup,
   draggedTabId,
   activePaneId,
   gitStatuses,
@@ -65,6 +67,8 @@ export function TabGroupView({
   onOpenSettings,
   onToggleFolderSidebar,
 }: TabGroupViewProps): ReactNode {
+  const [activeZone, setActiveZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
+
   const activeTabId = group.tabs[group.activeTabIndex]
   const activeTab = workspace.layouts.find((l) => l.id === activeTabId) ?? null
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
@@ -80,10 +84,45 @@ export function TabGroupView({
     }
   })
 
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    
+    if (x < 0.25) {
+      setActiveZone('left')
+    } else if (x > 0.75) {
+      setActiveZone('right')
+    } else if (y < 0.25) {
+      setActiveZone('top')
+    } else if (y > 0.75) {
+      setActiveZone('bottom')
+    } else {
+      setActiveZone('center')
+    }
+  }
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    if (!draggedTabId || !activeZone) return
+    if (activeZone === 'center') {
+      onMoveTabToGroup(draggedTabId, group.id)
+    } else if (activeZone === 'left') {
+      onSplitGroup(group.id, draggedTabId, 'horizontal', 'left')
+    } else if (activeZone === 'right') {
+      onSplitGroup(group.id, draggedTabId, 'horizontal', 'right')
+    } else if (activeZone === 'top') {
+      onSplitGroup(group.id, draggedTabId, 'vertical', 'top')
+    } else if (activeZone === 'bottom') {
+      onSplitGroup(group.id, draggedTabId, 'vertical', 'bottom')
+    }
+    setActiveZone(null)
+  }
+
   return (
     <div
       className={`flex flex-col h-full overflow-hidden transition-all bg-background border border-border/40 ${
-        isActive ? 'ring-1 ring-inset ring-primary/60 border-primary/50' : ''
+        isActive ? 'ring-1 ring-inset ring-primary/10 border-primary/20' : ''
       }`}
       onPointerDown={() => {
         if (!isActive) {
@@ -106,7 +145,7 @@ export function TabGroupView({
             onDragStart={onDragStart}
           />
         </div>
-        {isActive && (
+        {isFirstGroup && (
           <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
             {/* Settings Button */}
             <div className="flex items-center justify-center border-r border-border h-full select-none" style={{ width: 36 }}>
@@ -163,63 +202,29 @@ export function TabGroupView({
           </div>
         ) : null}
 
-        {/* 5-zone drop overlay overlay */}
+        {/* VS Code style drop overlay (no text, dynamic highlights) */}
         {draggedTabId && (
-          <div className="absolute inset-0 z-30 grid grid-cols-3 grid-rows-3 p-4 gap-2 bg-black/45 backdrop-blur-[1px]">
-            {/* Top Drop Zone */}
-            <div
-              onPointerUp={(e) => {
-                e.stopPropagation()
-                onSplitGroup(group.id, draggedTabId, 'vertical', 'top')
-              }}
-              className="col-start-2 row-start-1 rounded border border-dashed border-primary bg-primary/10 hover:bg-primary/30 hover:border-primary transition-all flex items-center justify-center text-xs font-semibold text-primary cursor-pointer select-none text-center"
-            >
-              Split Top
-            </div>
-
-            {/* Left Drop Zone */}
-            <div
-              onPointerUp={(e) => {
-                e.stopPropagation()
-                onSplitGroup(group.id, draggedTabId, 'horizontal', 'left')
-              }}
-              className="col-start-1 row-start-2 rounded border border-dashed border-primary bg-primary/10 hover:bg-primary/30 hover:border-primary transition-all flex items-center justify-center text-xs font-semibold text-primary cursor-pointer select-none text-center"
-            >
-              Split Left
-            </div>
-
-            {/* Center / Move Here Drop Zone */}
-            <div
-              onPointerUp={(e) => {
-                e.stopPropagation()
-                onMoveTabToGroup(draggedTabId, group.id)
-              }}
-              className="col-start-2 row-start-2 rounded border border-dashed border-primary bg-primary/10 hover:bg-primary/35 hover:border-primary transition-all flex items-center justify-center text-xs font-semibold text-primary cursor-pointer select-none text-center"
-            >
-              Move Here
-            </div>
-
-            {/* Right Drop Zone */}
-            <div
-              onPointerUp={(e) => {
-                e.stopPropagation()
-                onSplitGroup(group.id, draggedTabId, 'horizontal', 'right')
-              }}
-              className="col-start-3 row-start-2 rounded border border-dashed border-primary bg-primary/10 hover:bg-primary/30 hover:border-primary transition-all flex items-center justify-center text-xs font-semibold text-primary cursor-pointer select-none text-center"
-            >
-              Split Right
-            </div>
-
-            {/* Bottom Drop Zone */}
-            <div
-              onPointerUp={(e) => {
-                e.stopPropagation()
-                onSplitGroup(group.id, draggedTabId, 'vertical', 'bottom')
-              }}
-              className="col-start-2 row-start-3 rounded border border-dashed border-primary bg-primary/10 hover:bg-primary/30 hover:border-primary transition-all flex items-center justify-center text-xs font-semibold text-primary cursor-pointer select-none text-center"
-            >
-              Split Bottom
-            </div>
+          <div
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={() => setActiveZone(null)}
+            className="absolute inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-grabbing"
+          >
+            {activeZone === 'left' && (
+              <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-primary/15 border-r-2 border-primary transition-all duration-75 pointer-events-none" />
+            )}
+            {activeZone === 'right' && (
+              <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-primary/15 border-l-2 border-primary transition-all duration-75 pointer-events-none" />
+            )}
+            {activeZone === 'top' && (
+              <div className="absolute left-0 right-0 top-0 h-1/2 bg-primary/15 border-b-2 border-primary transition-all duration-75 pointer-events-none" />
+            )}
+            {activeZone === 'bottom' && (
+              <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-primary/15 border-t-2 border-primary transition-all duration-75 pointer-events-none" />
+            )}
+            {activeZone === 'center' && (
+              <div className="absolute inset-0 bg-primary/10 border-2 border-primary transition-all duration-75 pointer-events-none" />
+            )}
           </div>
         )}
       </div>
