@@ -13,7 +13,6 @@ import {
   collectLeafIds,
   countLeaves,
   setSplitSizes,
-  findAgentId,
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
@@ -23,11 +22,12 @@ import {
   persistWorkspaces,
   subscribeRemoteState,
 } from '@/features/workspaces/stores/workspaceStore'
-import { type Workspace } from '@/features/workspaces/types'
-import { DraggableTabBar } from '@/features/workspaces/components/DraggableTabBar'
+import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
+import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
+import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Menu, Plus, SquareTerminal } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -89,6 +89,16 @@ export function AppLayout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!draggedTabId) return
+    const handleGlobalPointerUp = () => {
+      setTimeout(() => setDraggedTabId(null), 50)
+    }
+    window.addEventListener('pointerup', handleGlobalPointerUp)
+    return () => window.removeEventListener('pointerup', handleGlobalPointerUp)
+  }, [draggedTabId])
 
   // Mobile layout state variables
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -153,7 +163,11 @@ export function AppLayout() {
       if (done) return
       skipPersistRef.current = true
       loadedRef.current = true
-      setWorkspaces(s.workspaces)
+      const parsedWorkspaces = s.workspaces.map((w) => {
+        const { tree, activeGroupId } = ensureTabGroups(w)
+        return { ...w, tabGroups: tree, activeGroupId }
+      })
+      setWorkspaces(parsedWorkspaces)
       setActiveWorkspaceId(s.activeWorkspaceId)
       setLoaded(true)
     })
@@ -184,11 +198,12 @@ export function AppLayout() {
         for (const id of prevLeafIds) if (!nextLeafIds.has(id)) releaseTerminal(id)
 
         return remote.workspaces.map((rw) => {
+          const { tree, activeGroupId } = ensureTabGroups(rw)
           const focus = localFocusRef.current[rw.id]
           if (focus) {
-            return { ...rw, activeTabIndex: focus.tabIndex, activePaneId: focus.paneId }
+            return { ...rw, tabGroups: tree, activeGroupId, activeTabIndex: focus.tabIndex, activePaneId: focus.paneId }
           }
-          return rw
+          return { ...rw, tabGroups: tree, activeGroupId }
         })
       })
       setActiveWorkspaceId(remote.activeWorkspaceId)
@@ -331,7 +346,16 @@ export function AppLayout() {
 
   const patchWorkspace = useCallback(
     (id: string, fn: (ws: Workspace) => Workspace) => {
-      setWorkspaces((prev) => prev.map((w) => (w.id === id ? fn(w) : w)))
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== id) return w
+          const next = fn(w)
+          if (next.tabGroups) {
+            next.tabGroupsJson = JSON.stringify(next.tabGroups)
+          }
+          return next
+        }),
+      )
     },
     [],
   )
@@ -574,14 +598,26 @@ export function AppLayout() {
   )
 
   const reorderTabs = useCallback(
-    (from: number, to: number) => {
-      if (!activeWorkspace || from === to || from < 0 || to < 0) return
+    (tabId: string, targetGroupId: string, targetIndex: number) => {
+      if (!activeWorkspace) return
       patchWorkspace(activeWorkspace.id, (ws) => {
-        const layouts = ws.layouts.slice()
-        if (from < 0 || from >= layouts.length || to < 0 || to >= layouts.length) return ws
-        const [moved] = layouts.splice(from, 1)
-        layouts.splice(to, 0, moved)
-        return { ...ws, layouts, activeTabIndex: to }
+        const { tree } = ensureTabGroups(ws)
+        const nextTree = moveTabToGroup(tree, tabId, targetGroupId, targetIndex)
+        const tabIdsInTree = collectTabIds(nextTree)
+        const layouts = ws.layouts.slice().sort((a, b) => tabIdsInTree.indexOf(a.id) - tabIdsInTree.indexOf(b.id))
+
+        const activeGroup = findGroupById(nextTree, targetGroupId)
+        const activeTabId = activeGroup ? activeGroup.tabs[activeGroup.activeTabIndex] : undefined
+        const activeTab = layouts.find((l) => l.id === activeTabId)
+        const activeTabIndex = activeTab ? layouts.indexOf(activeTab) : ws.activeTabIndex
+
+        return {
+          ...ws,
+          tabGroups: nextTree,
+          layouts,
+          activeGroupId: targetGroupId,
+          activeTabIndex,
+        }
       })
     },
     [activeWorkspace, patchWorkspace],
@@ -596,95 +632,145 @@ export function AppLayout() {
   )
 
   const switchTab = useCallback(
-    (index: number) => {
+    (tabId: string, groupId?: string) => {
       if (!activeWorkspace) return
+      const tabIndex = activeWorkspace.layouts.findIndex((l) => l.id === tabId)
+      if (tabIndex < 0) return
+      const tab = activeWorkspace.layouts[tabIndex]
+      const leafIds = collectLeafIds(tab.layout)
+      const activePaneId = leafIds.includes(activeWorkspace.activePaneId)
+        ? activeWorkspace.activePaneId
+        : leafIds[0] || ''
+
       patchWorkspace(activeWorkspace.id, (ws) => {
-        const tab = ws.layouts[index]
+        const { tree, activeGroupId } = ensureTabGroups(ws)
+        const targetGroupId = groupId || activeGroupId
+
+        function updateGroupActive(n: TabGroupsNode): TabGroupsNode {
+          if (n.type === 'group' && n.id === targetGroupId) {
+            const idx = n.tabs.indexOf(tabId)
+            return { ...n, activeTabIndex: idx >= 0 ? idx : n.activeTabIndex }
+          }
+          if (n.type === 'split') {
+            return { ...n, children: n.children.map(updateGroupActive) }
+          }
+          return n
+        }
+
+        const nextTree = updateGroupActive(tree)
         return {
           ...ws,
-          activeTabIndex: index,
-          activePaneId: tab ? collectLeafIds(tab.layout)[0] : '',
+          tabGroups: nextTree,
+          activeGroupId: targetGroupId,
+          activeTabIndex: tabIndex,
+          activePaneId,
         }
       })
     },
     [activeWorkspace, patchWorkspace],
   )
 
-  const addTab = useCallback(async (cmd?: string[], agentId?: string, label?: string) => {
-    if (!activeWorkspace) return
-    let cwd = activeWorkspace.path || ''
-    let agentBranch: string | undefined = undefined
-    let baseBranch: string | undefined = undefined
-
-    if (agentId) {
-      try {
-        const res = await fetch('/api/agents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectPath: cwd,
-            agentId,
-            enableWorktrees: activeWorkspace.enableWorktrees !== false,
-          }),
-        })
-        if (res.ok) {
-          const data = (await res.json())?.data
-          if (data.isGit) {
-            cwd = data.worktreePath
-            agentBranch = data.branchName
-            baseBranch = data.baseBranch
-          }
-        }
-      } catch (err) {
-        console.error('Failed to setup agent workspace:', err)
-      }
-    }
-
-    const leafId = crypto.randomUUID()
-    const newTab = {
-      id: crypto.randomUUID(),
-      name: label || 'Terminal',
-      layout: {
-        type: 'leaf' as const,
-        id: leafId,
-        cwd,
-        cmd,
-        agentId,
-        agentBranch,
-        baseBranch,
-      },
-    }
-    patchWorkspace(activeWorkspace.id, (ws) => ({
-      ...ws,
-      layouts: [...ws.layouts, newTab],
-      activeTabIndex: ws.layouts.length,
-      activePaneId: leafId,
-    }))
-  }, [activeWorkspace, patchWorkspace])
-
-  const forceCloseTab = useCallback(
-    (index: number, deleteBranch?: boolean) => {
+  const addTab = useCallback(
+    async (cmd?: string[], agentId?: string, label?: string, groupId?: string) => {
       if (!activeWorkspace) return
-      const tab = activeWorkspace.layouts[index]
-      if (tab) {
-        for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId, deleteBranch)
+      let cwd = activeWorkspace.path || ''
+      let agentBranch: string | undefined = undefined
+      let baseBranch: string | undefined = undefined
+
+      if (agentId) {
+        try {
+          const res = await fetch('/api/agents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectPath: cwd,
+              agentId,
+              enableWorktrees: activeWorkspace.enableWorktrees !== false,
+            }),
+          })
+          if (res.ok) {
+            const data = (await res.json())?.data
+            if (data.isGit) {
+              cwd = data.worktreePath
+              agentBranch = data.branchName
+              baseBranch = data.baseBranch
+            }
+          }
+        } catch (err) {
+          console.error('Failed to setup agent workspace:', err)
+        }
+      }
+
+      const leafId = crypto.randomUUID()
+      const newTab = {
+        id: crypto.randomUUID(),
+        name: label || 'Terminal',
+        layout: {
+          type: 'leaf' as const,
+          id: leafId,
+          cwd,
+          cmd,
+          agentId,
+          agentBranch,
+          baseBranch,
+        },
       }
       patchWorkspace(activeWorkspace.id, (ws) => {
-        const next = ws.layouts.filter((_, i) => i !== index)
-        if (next.length === 0) {
+        const layouts = [...ws.layouts, newTab]
+        const { tree, activeGroupId } = ensureTabGroups({ ...ws, layouts })
+        const targetGroupId = groupId || activeGroupId
+        const nextTree = moveTabToGroup(tree, newTab.id, targetGroupId)
+        return {
+          ...ws,
+          layouts,
+          tabGroups: nextTree,
+          activeGroupId: targetGroupId,
+          activeTabIndex: layouts.length - 1,
+          activePaneId: leafId,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
+  const forceCloseTab = useCallback(
+    (tabId: string, deleteBranch?: boolean) => {
+      if (!activeWorkspace) return
+      const tabIndex = activeWorkspace.layouts.findIndex((l) => l.id === tabId)
+      if (tabIndex < 0) return
+      const tab = activeWorkspace.layouts[tabIndex]
+      for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId, deleteBranch)
+
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const layouts = ws.layouts.filter((l) => l.id !== tabId)
+        if (layouts.length === 0) {
           return {
             ...ws,
             layouts: [],
+            tabGroups: undefined,
             activeTabIndex: 0,
             activePaneId: '',
           }
         }
-        const newIdx = Math.min(ws.activeTabIndex, next.length - 1)
+
+        const { tree, activeGroupId } = ensureTabGroups(ws)
+        const nextTree = removeTabFromTree(tree, tabId, layouts.map((l) => l.id))
+
+        const activeGroup = findGroupById(nextTree, activeGroupId) || collectGroups(nextTree)[0]
+        const nextActiveGroupId = activeGroup ? activeGroup.id : activeGroupId
+        const nextActiveTabId = activeGroup && activeGroup.tabs[activeGroup.activeTabIndex]
+        const nextActiveTab = layouts.find((l) => l.id === nextActiveTabId)
+
+        const nextActiveIndex = nextActiveTab ? layouts.indexOf(nextActiveTab) : 0
+        const nextActivePaneId = nextActiveTab ? collectLeafIds(nextActiveTab.layout)[0] || '' : ''
+
         return {
           ...ws,
-          layouts: next,
-          activeTabIndex: newIdx,
-          activePaneId: collectLeafIds(next[newIdx].layout)[0] || '',
+          layouts,
+          tabGroups: nextTree,
+          activeGroupId: nextActiveGroupId,
+          activeTabIndex: nextActiveIndex,
+          activePaneId: nextActivePaneId,
         }
       })
     },
@@ -692,9 +778,9 @@ export function AppLayout() {
   )
 
   const closeTab = useCallback(
-    async (index: number) => {
+    async (tabId: string) => {
       if (!activeWorkspace) return
-      const tab = activeWorkspace.layouts[index]
+      const tab = activeWorkspace.layouts.find((l) => l.id === tabId)
       if (!tab) return
 
       const agentLeaves = findAgentLeaves(tab.layout)
@@ -718,7 +804,6 @@ export function AppLayout() {
         setCloseConfirm({
           type: 'tab',
           targetId: tab.id,
-          index,
           agentBranch: firstLeaf.agentBranch || '',
           hasUncommitted: uncommitted,
           hasUnmergedCommits: unmerged,
@@ -726,73 +811,193 @@ export function AppLayout() {
         return
       }
 
-      forceCloseTab(index)
+      forceCloseTab(tabId)
     },
     [activeWorkspace, forceCloseTab],
   )
 
-  const openFile = useCallback((filePath: string) => {
-    if (!activeWorkspace) return
-    const name = filePath.split(/[\\/]/).pop() || filePath
-    
-    const existingIndex = activeWorkspace.layouts.findIndex(
-      (t) => t.layout.type === 'leaf' && t.layout.filePath === filePath
-    )
-    if (existingIndex >= 0) {
-      switchTab(existingIndex)
-      return
-    }
+  const openFile = useCallback(
+    (filePath: string) => {
+      if (!activeWorkspace) return
+      const name = filePath.split(/[\\/]/).pop() || filePath
 
-    const newTab = {
-      id: crypto.randomUUID(),
-      name,
-      layout: {
-        type: 'leaf' as const,
+      const existing = activeWorkspace.layouts.find(
+        (t) => t.layout.type === 'leaf' && t.layout.filePath === filePath,
+      )
+      if (existing) {
+        switchTab(existing.id)
+        return
+      }
+
+      const newTab = {
         id: crypto.randomUUID(),
-        cwd: activeWorkspace.path || '',
-        filePath,
-      },
-    }
+        name,
+        layout: {
+          type: 'leaf' as const,
+          id: crypto.randomUUID(),
+          cwd: activeWorkspace.path || '',
+          filePath,
+        },
+      }
 
-    patchWorkspace(activeWorkspace.id, (ws) => ({
-      ...ws,
-      layouts: [...ws.layouts, newTab],
-      activeTabIndex: ws.layouts.length,
-      activePaneId: newTab.layout.id,
-    }))
-  }, [activeWorkspace, patchWorkspace, switchTab])
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const layouts = [...ws.layouts, newTab]
+        const { tree, activeGroupId } = ensureTabGroups({ ...ws, layouts })
+        const nextTree = moveTabToGroup(tree, newTab.id, activeGroupId)
+        return {
+          ...ws,
+          layouts,
+          tabGroups: nextTree,
+          activeGroupId,
+          activeTabIndex: layouts.length - 1,
+          activePaneId: newTab.layout.id,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace, switchTab],
+  )
 
-  const openDiff = useCallback((filePath?: string) => {
-    if (!activeWorkspace) return
-    const name = filePath ? `Diff: ${filePath.split(/[\\/]/).pop()}` : 'Git Diff'
+  const openDiff = useCallback(
+    (filePath?: string) => {
+      if (!activeWorkspace) return
+      const name = filePath ? `Diff: ${filePath.split(/[\\/]/).pop()}` : 'Git Diff'
 
-    const existingIndex = activeWorkspace.layouts.findIndex(
-      (t) => t.layout.type === 'leaf' && t.layout.isDiff === true && t.layout.filePath === filePath
-    )
-    if (existingIndex >= 0) {
-      switchTab(existingIndex)
-      return
-    }
+      const existing = activeWorkspace.layouts.find(
+        (t) => t.layout.type === 'leaf' && t.layout.isDiff === true && t.layout.filePath === filePath,
+      )
+      if (existing) {
+        switchTab(existing.id)
+        return
+      }
 
-    const newTab = {
-      id: crypto.randomUUID(),
-      name,
-      layout: {
-        type: 'leaf' as const,
+      const newTab = {
         id: crypto.randomUUID(),
-        cwd: activeWorkspace.path || '',
-        filePath,
-        isDiff: true,
-      },
-    }
+        name,
+        layout: {
+          type: 'leaf' as const,
+          id: crypto.randomUUID(),
+          cwd: activeWorkspace.path || '',
+          filePath,
+          isDiff: true,
+        },
+      }
 
-    patchWorkspace(activeWorkspace.id, (ws) => ({
-      ...ws,
-      layouts: [...ws.layouts, newTab],
-      activeTabIndex: ws.layouts.length,
-      activePaneId: newTab.layout.id,
-    }))
-  }, [activeWorkspace, patchWorkspace, switchTab])
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const layouts = [...ws.layouts, newTab]
+        const { tree, activeGroupId } = ensureTabGroups({ ...ws, layouts })
+        const nextTree = moveTabToGroup(tree, newTab.id, activeGroupId)
+        return {
+          ...ws,
+          layouts,
+          tabGroups: nextTree,
+          activeGroupId,
+          activeTabIndex: layouts.length - 1,
+          activePaneId: newTab.layout.id,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace, switchTab],
+  )
+
+  const handleSetActiveGroup = useCallback(
+    (groupId: string) => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const { tree } = ensureTabGroups(ws)
+        const group = findGroupById(tree, groupId)
+        const tabId = group ? group.tabs[group.activeTabIndex] : undefined
+        const tab = ws.layouts.find((l) => l.id === tabId)
+        const activeTabIndex = tab ? ws.layouts.indexOf(tab) : ws.activeTabIndex
+        const activePaneId = tab ? collectLeafIds(tab.layout)[0] || '' : ws.activePaneId
+        return {
+          ...ws,
+          activeGroupId: groupId,
+          activeTabIndex,
+          activePaneId,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
+  const handleGroupSizesChange = useCallback(
+    (splitId: string, sizes: number[]) => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const { tree } = ensureTabGroups(ws)
+        function updateSizes(n: TabGroupsNode): TabGroupsNode {
+          if (n.type === 'split') {
+            if (n.id === splitId) {
+              return { ...n, sizes }
+            }
+            return { ...n, children: n.children.map(updateSizes) }
+          }
+          return n
+        }
+        return {
+          ...ws,
+          tabGroups: updateSizes(tree),
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
+  const handleSplitGroup = useCallback(
+    (targetGroupId: string, draggedTabId: string, orientation: 'horizontal' | 'vertical', position: 'left' | 'right' | 'top' | 'bottom') => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const { tree } = ensureTabGroups(ws)
+        const nextTree = splitGroup(tree, targetGroupId, draggedTabId, orientation, position, ws.layouts.map(l => l.id))
+        const tabIdsInTree = collectTabIds(nextTree)
+        const layouts = ws.layouts.slice().sort((a, b) => tabIdsInTree.indexOf(a.id) - tabIdsInTree.indexOf(b.id))
+
+        const groups = collectGroups(nextTree)
+        const newGroup = groups.find(g => g.tabs.includes(draggedTabId))
+        const activeGroupId = newGroup ? newGroup.id : targetGroupId
+
+        const activeTab = layouts.find(l => l.id === draggedTabId)
+        const activeTabIndex = activeTab ? layouts.indexOf(activeTab) : ws.activeTabIndex
+        const activePaneId = activeTab ? collectLeafIds(activeTab.layout)[0] || '' : ws.activePaneId
+
+        return {
+          ...ws,
+          tabGroups: nextTree,
+          layouts,
+          activeGroupId,
+          activeTabIndex,
+          activePaneId,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
+  const handleMoveTabToGroup = useCallback(
+    (tabId: string, groupId: string) => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const { tree } = ensureTabGroups(ws)
+        const nextTree = moveTabToGroup(tree, tabId, groupId)
+        const tabIdsInTree = collectTabIds(nextTree)
+        const layouts = ws.layouts.slice().sort((a, b) => tabIdsInTree.indexOf(a.id) - tabIdsInTree.indexOf(b.id))
+
+        const activeTab = layouts.find(l => l.id === tabId)
+        const activeTabIndex = activeTab ? layouts.indexOf(activeTab) : ws.activeTabIndex
+        const activePaneId = activeTab ? collectLeafIds(activeTab.layout)[0] || '' : ws.activePaneId
+
+        return {
+          ...ws,
+          tabGroups: nextTree,
+          layouts,
+          activeGroupId: groupId,
+          activeTabIndex,
+          activePaneId,
+        }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
 
   const handleSplitVert = useCallback(
     (id: string) => {
@@ -842,7 +1047,7 @@ export function AppLayout() {
       const remaining = collectLeafIds(newLayout)
       if (remaining.length === 0) {
         const tabIndex = activeWorkspace.layouts.findIndex((t) => t.id === activeTab.id)
-        if (tabIndex >= 0) forceCloseTab(tabIndex, deleteBranch)
+        if (tabIndex >= 0) forceCloseTab(activeTab.id, deleteBranch)
         return
       }
       updateActiveLayout(() => newLayout)
@@ -1006,24 +1211,7 @@ export function AppLayout() {
     return <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">Loading…</div>
   }
 
-  const tabs = activeWorkspace ? (
-    <DraggableTabBar
-      tabs={layouts.map((t) => ({
-        id: t.id,
-        name: t.name,
-        agentId: findAgentId(t.layout),
-        filePath: t.layout.type === 'leaf' ? t.layout.filePath : undefined,
-        isDiff: t.layout.type === 'leaf' ? t.layout.isDiff : undefined,
-      }))}
-      activeIndex={activeWorkspace.activeTabIndex}
-      onSwitch={switchTab}
-      onClose={closeTab}
-      onReorder={reorderTabs}
-      onAdd={addTab}
-      enableWorktrees={activeWorkspace.enableWorktrees}
-      onToggleWorktrees={toggleWorktrees}
-    />
-  ) : null
+
 
   const terminalBody = activeTab && activeWorkspace && leafCount > 0 ? (
     <div className="relative flex-1 min-h-0">
@@ -1258,7 +1446,7 @@ export function AppLayout() {
                       return (
                         <button
                           key={t.id}
-                          onClick={() => switchTab(idx)}
+                          onClick={() => switchTab(t.id)}
                           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-t-md border-t border-x transition-colors shrink-0 ${
                             isActive 
                               ? 'bg-background border-border text-foreground font-semibold' 
@@ -1269,7 +1457,7 @@ export function AppLayout() {
                           <span 
                             onClick={(e) => {
                               e.stopPropagation()
-                              closeTab(idx)
+                              closeTab(t.id)
                             }}
                             className="p-0.5 rounded-full hover:bg-muted text-muted-foreground/60 hover:text-foreground cursor-pointer text-[10px] ml-1 select-none"
                           >
@@ -1413,44 +1601,46 @@ export function AppLayout() {
 
                 {/* Main Terminals / Editors Content */}
                 <Panel>
-                  <div className="flex flex-col h-full">
-                    <div className="flex items-center border-b border-border bg-secondary/20 h-[33px] shrink-0">
-                      <div className="flex flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}>
-                        {tabs}
-                      </div>
-                      <div className="flex items-center shrink-0 h-full">
-                        {/* Settings Button */}
-                        <div className="flex items-center justify-center border-l border-border h-full bg-background select-none" style={{ width: 44 }}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
-                            onClick={() => setSettingsOpen(true)}
-                            title="Settings"
-                          >
-                            <Settings className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-
-                        {/* Folder Button (Only Visible when Sidebar is Collapsed and workspace is active) */}
-                        {activeWorkspace && folderSidebarCollapsed && (
-                          <div className="group flex items-center justify-center border-l bg-background border-border h-full select-none" style={{ width: 44 }}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
-                              onClick={toggleFolderSidebar}
-                              title="Workspace Files"
-                            >
-                              <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                              <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
+                  {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
+                    <div className="flex-1 h-full min-h-0 relative">
+                      {(() => {
+                        const { tree, activeGroupId } = ensureTabGroups(activeWorkspace)
+                        return (
+                          <TabGroupTree
+                            workspace={activeWorkspace}
+                            node={tree}
+                            activeGroupId={activeGroupId}
+                            draggedTabId={draggedTabId}
+                            activePaneId={activePaneId}
+                            gitStatuses={gitStatuses}
+                            folderSidebarCollapsed={folderSidebarCollapsed}
+                            onSetActiveGroup={handleSetActiveGroup}
+                            onSwitchTab={switchTab}
+                            onCloseTab={closeTab}
+                            onReorderTabs={reorderTabs}
+                            onAddTab={addTab}
+                            onSplitGroup={handleSplitGroup}
+                            onMoveTabToGroup={handleMoveTabToGroup}
+                            onDragStart={setDraggedTabId}
+                            onToggleWorktrees={toggleWorktrees}
+                            onFocusPane={setActivePane}
+                            onSplitVert={handleSplitVert}
+                            onSplitHoriz={handleSplitHoriz}
+                            onClosePane={handleClosePane}
+                            onSizesChange={handleSizesChange}
+                            onGroupSizesChange={handleGroupSizesChange}
+                            onOpenDiff={openDiff}
+                            onOpenSettings={() => setSettingsOpen(true)}
+                            onToggleFolderSidebar={toggleFolderSidebar}
+                          />
+                        )
+                      })()}
                     </div>
-                    {terminalBody}
-                  </div>
+                  ) : (
+                    <div className="flex flex-col h-full">
+                      {terminalBody}
+                    </div>
+                  )}
                 </Panel>
 
                 {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
@@ -1575,7 +1765,7 @@ export function AppLayout() {
               onClick={() => {
                 if (closeConfirm) {
                   if (closeConfirm.type === 'tab') {
-                    if (closeConfirm.index !== undefined) forceCloseTab(closeConfirm.index, deleteBranchChecked)
+                    forceCloseTab(closeConfirm.targetId, deleteBranchChecked)
                   } else {
                     forceClosePane(closeConfirm.targetId, deleteBranchChecked)
                   }

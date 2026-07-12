@@ -7,6 +7,8 @@ export interface TerminalInstance {
   term: Terminal
   fit: FitAddon
   ws: WebSocket | null
+  /** Backend session ID used to re-connect the WebSocket after a drop. */
+  backendId: string
   /** Buffer of output received before the term was ready, replayed on open. */
   buffer: string[]
   exited: boolean
@@ -200,6 +202,19 @@ export function sendTerminalInput(leafId: string, data: string) {
   }
 }
 
+// reconnectTerminalWs forces an immediate WebSocket reconnection for the
+// given terminal. Used by the visibility/focus handler in TerminalPanel so
+// that returning from a PWA minimize / tab switch restores input without
+// waiting for the 1s auto-reconnect timer.
+export function reconnectTerminalWs(leafId: string) {
+  const inst = registry.get(leafId)
+  if (!inst || inst.exited || !inst.backendId) return
+  if (inst.ws?.readyState === WebSocket.OPEN) return
+  try { inst.ws?.close() } catch { /* ignore */ }
+  inst.ws = null
+  connectWs(inst, inst.backendId)
+}
+
 export function setTerminalUserScrolling(leafId: string, scrolling: boolean) {
   const inst = registry.get(leafId)
   if (inst) {
@@ -337,11 +352,24 @@ function connectWs(inst: TerminalInstance, backendId: string) {
   }
   ws.onclose = () => {
     if (inst.ws === ws) {
-      // The WebSocket closed (page reload, navigation, network drop).
+      // The WebSocket closed (page reload, navigation, network drop,
+      // or the mobile OS suspended the PWA while backgrounded).
       // Do NOT kill the backend PTY — it must keep running with no
       // clients, so reconnecting later resumes the same session.
       // Actual process exit is reported separately via the "exit" message.
       inst.ws = null
+      // Auto-reconnect after a short delay, mirroring the pattern used
+      // by the other WS clients in the app (workspaceStore, agentStatusStore,
+      // fileTreeWs). Without this, every keystroke is silently dropped
+      // once the OS kills the background socket, and the user is forced
+      // to reload the page to regain input.
+      if (!inst.exited && inst.backendId) {
+        setTimeout(() => {
+          if (!inst.exited && inst.ws === null) {
+            connectWs(inst, inst.backendId)
+          }
+        }, 1000)
+      }
     }
   }
 }
@@ -404,12 +432,13 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
   try {
     const backendId = await ensureBackend(leafId, cwd, cmd)
+    inst.backendId = backendId
     connectWs(inst, backendId)
   } catch (err) {
     console.error('terminal backend init failed:', err)

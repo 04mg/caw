@@ -87,6 +87,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN enable_worktrees INTEGER DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN agent_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN tab_groups_json TEXT DEFAULT ''")
 }
 
 func (s *Store) Get() AppState {
@@ -103,7 +104,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, '') FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -112,7 +113,7 @@ func (s *Store) Get() AppState {
 	for wRows.Next() {
 		var w Workspace
 		var enableWorktrees int
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees); err != nil {
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON); err != nil {
 			continue
 		}
 		w.EnableWorktrees = enableWorktrees != 0
@@ -246,8 +247,8 @@ func (s *Store) Set(as AppState) {
 			enableWT = 1
 		}
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT,
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON,
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(

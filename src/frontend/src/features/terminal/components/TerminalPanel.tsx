@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, getTerminal, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -91,9 +91,20 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         flushResize()
+        const t = getTerminal(terminalId)
+        if (t) {
+          if (t.ws === null && !t.exited) {
+            reconnectTerminalWs(terminalId)
+          }
+          if (isActiveRef.current) {
+            t.term.focus()
+          }
+        }
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
+    document.addEventListener('pageshow', onVisibility)
+    window.addEventListener('focus', onVisibility)
 
     ;(async () => {
       inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd)
@@ -124,6 +135,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisibility)
+      document.removeEventListener('pageshow', onVisibility)
+      window.removeEventListener('focus', onVisibility)
       el.removeEventListener('mousedown', handleRightClickMousedown, true)
       el.removeEventListener('mouseup', handleRightClickMousedown, true)
       if (fitTimerRef.current) {
