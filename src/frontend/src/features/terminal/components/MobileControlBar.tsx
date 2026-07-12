@@ -6,6 +6,7 @@ import {
   toggleStickyShift,
   subscribeStickyModifiers,
   stickyModifiers,
+  resetStickyModifiers,
   sendTerminalInput
 } from '@/features/terminal/services/terminalRegistry'
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft } from 'lucide-react'
@@ -105,7 +106,20 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
         </Button>
       </div>
 
-      <Button variant="outline" className="h-7 w-8 flex items-center justify-center border-border/30 bg-background/50 shrink-0" onClick={() => triggerKey('\r')}>
+      <Button
+        variant="outline"
+        className={`h-7 w-8 flex items-center justify-center border-border/30 bg-background/50 shrink-0 ${
+          sticky.ctrl ? 'bg-amber-500/20 border-amber-400/50' : ''
+        }`}
+        onClick={() => {
+          if (stickyModifiers.ctrl) {
+            triggerKey('\n')
+            resetStickyModifiers()
+          } else {
+            triggerKey('\r')
+          }
+        }}
+      >
         <CornerDownLeft className="h-3.5 w-3.5" />
       </Button>
     </div>
