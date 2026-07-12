@@ -27,7 +27,7 @@ import { type Workspace } from '@/features/workspaces/types'
 import { DraggableTabBar } from '@/features/workspaces/components/DraggableTabBar'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Settings, Folder, PanelRight, Menu, Plus } from 'lucide-react'
+import { Settings, Folder, PanelRight, Menu, Plus, SquareTerminal } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -1298,11 +1298,16 @@ export function AppLayout() {
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
                     )
                   ) : activeWorkspace ? (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-4 px-6 text-center">
+                    <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
                       <div className="p-4 rounded-full bg-muted/30 border border-border/30">
-                        <Plus className="w-7 h-7 text-muted-foreground" />
+                        <SquareTerminal className="w-8 h-8 text-muted-foreground" />
                       </div>
-                      <span>No terminals or agents open.</span>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-semibold text-foreground/80">No terminals open</span>
+                        <span className="text-xs text-muted-foreground/60">
+                          Create a new terminal to start running commands or agents.
+                        </span>
+                      </div>
                       <NewTabMenu
                         onAdd={addTab}
                         enableWorktrees={activeWorkspace?.enableWorktrees}
