@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 
 	"github.com/04mg/caw/internal/agent"
 	_ "github.com/04mg/caw/internal/agent/agents"
@@ -28,7 +27,7 @@ type Server struct {
 	store      *state.Store
 	frontendFS fs.FS
 	hub        *ws.Hub
-	upgrader   websocket.Upgrader
+	mux        *ws.Multiplexer
 }
 
 func New() *Server {
@@ -39,14 +38,20 @@ func New() *Server {
 		log.Fatalf("embed sub: %v", err)
 	}
 
+	mux := ws.NewMultiplexer()
+
 	s := &Server{
 		frontendFS: frontendFS,
 		store:      state.NewStore(state.DefaultDBPath()),
 		hub:        ws.NewHub(),
-		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		mux:        mux,
 	}
+	state.RegisterMuxChannel(mux, s.store)
+	agent.RegisterMuxChannel(mux)
+	workspace.RegisterMuxChannel(mux)
 	push.EnsureVAPIDKeys(s.store)
 	agent.SetPushStore(s.store)
+	agent.SetStatusMux(mux)
 	return s
 }
 
@@ -56,8 +61,8 @@ func (s *Server) Engine() *gin.Engine {
 
 	api := r.Group("/api")
 	{
-		terminal.Register(api, s.store, &s.upgrader)
-		state.RegisterHTTP(api, s.store, s.hub)
+		terminal.Register(api, s.store, &ws.TerminalUpgrader)
+		state.RegisterHTTP(api, s.store, s.mux)
 		workspace.Register(api)
 		git.Register(api)
 		agent.Register(api)
@@ -65,6 +70,9 @@ func (s *Server) Engine() *gin.Engine {
 		push.Register(api, s.store)
 	}
 
+	r.GET("/ws", func(c *gin.Context) {
+		s.mux.HandleMuxWS(c.Writer, c.Request)
+	})
 	r.GET("/ws/state", func(c *gin.Context) {
 		state.HandleStateWS(c.Writer, c.Request, s.store, s.hub)
 	})
@@ -73,7 +81,7 @@ func (s *Server) Engine() *gin.Engine {
 		agent.HandleStatusWS(c.Writer, c.Request, agent.StatusHub())
 	})
 	r.GET("/ws/terminals/:id", func(c *gin.Context) {
-		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &s.upgrader)
+		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &ws.TerminalUpgrader)
 	})
 
 	r.NoRoute(func(c *gin.Context) {
