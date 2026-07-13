@@ -92,7 +92,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// search window to 1 hour so the resumed session is found. For a fresh
 	// start, only look for files modified after the watcher started (no
 	// negative offset).
-	lookback := 30 * time.Second
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}

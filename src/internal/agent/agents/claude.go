@@ -74,7 +74,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// found; for a fresh start, only look for files modified after the
 	// watcher started (no negative offset) to avoid grabbing a sibling
 	// agent's session that was created moments before this watcher launched.
-	lookback := 30 * time.Second
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -226,6 +226,7 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	var lastAssistantTool string
 	var lastAssistantText string
 	var seenUser bool
+	var turnCompleted bool
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine ClaudeLogLine
@@ -234,8 +235,8 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		}
 
 		if logLine.Type == "result" || (logLine.Type == "system" && logLine.Subtype == "turn_duration") {
-			callback("idle", "", "", sessionTitle)
-			return
+			turnCompleted = true
+			continue
 		}
 
 		if logLine.Message != nil {
@@ -262,7 +263,10 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	}
 
 	if lastAssistantText != "" {
-		status := "idle"
+		status := "thinking"
+		if turnCompleted {
+			status = "idle"
+		}
 		textContentLower := strings.ToLower(lastAssistantText)
 		if strings.Contains(textContentLower, "[y/n]") ||
 			strings.Contains(textContentLower, "[y/N]") ||
@@ -277,7 +281,11 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	}
 
 	if seenUser || len(lines) > 0 {
-		callback("thinking", "", "", sessionTitle)
+		status := "thinking"
+		if turnCompleted {
+			status = "idle"
+		}
+		callback(status, "", "", sessionTitle)
 		return
 	}
 
