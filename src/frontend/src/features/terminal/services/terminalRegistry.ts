@@ -422,38 +422,45 @@ export async function attachTerminal(
     term.open(el)
     // Fit first so the terminal dimensions are correct before writing.
     fit.fit()
-    // Replay buffered output so the terminal isn't blank after re-attach.
-    // Queue incoming WS messages during replay to avoid interleaved writes.
-    existing._replaying = true
-    existing._pendingQueue = []
-    if (existing.buffer.length > 0) {
-      term.write(existing.buffer.join(''), () => {
-        term.scrollToBottom()
-        existing._replaying = false
-        // Re-apply the tracked DEC private modes (mouse tracking, SGR
-        // mouse, bracketed paste, etc.) so the fresh xterm.js instance
-        // enters the same input-routing mode the running TUI expects.
-        // Without this, clicks and wheel scroll break after switching
-        // tabs / remounting, because the new xterm.js starts with all
-        // private modes OFF even though the TUI still has them on.
-        const sync = syncModes(existing)
-        if (sync) term.write(sync)
-        flushPending(existing)
-      })
-    } else {
-      existing._replaying = false
-      const sync = syncModes(existing)
-      if (sync) term.write(sync)
-      flushPending(existing)
-    }
 
     // Re-wire input handlers since the old term was disposed.
     wireInput(existing)
 
-    // Send a resize for the new dimensions.
-    if (existing.ws?.readyState === WebSocket.OPEN) {
+    if (existing.ws && existing.ws.readyState === WebSocket.OPEN) {
+      // Replay buffered output so the terminal isn't blank after re-attach.
+      // Queue incoming WS messages during replay to avoid interleaved writes.
+      existing._replaying = true
+      existing._pendingQueue = []
+      if (existing.buffer.length > 0) {
+        term.write(existing.buffer.join(''), () => {
+          term.scrollToBottom()
+          existing._replaying = false
+          // Re-apply the tracked DEC private modes (mouse tracking, SGR
+          // mouse, bracketed paste, etc.) so the fresh xterm.js instance
+          // enters the same input-routing mode the running TUI expects.
+          const sync = syncModes(existing)
+          if (sync) term.write(sync)
+          flushPending(existing)
+        })
+      } else {
+        existing._replaying = false
+        const sync = syncModes(existing)
+        if (sync) term.write(sync)
+        flushPending(existing)
+      }
+
+      // Send a resize for the new dimensions.
       const dims = fit.proposeDimensions()
       if (dims) existing.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+    } else {
+      // WebSocket is closed, closing, or null. Clear the local buffer to prevent
+      // duplication of replayed scrollback from the new WS connection.
+      existing.buffer = []
+      existing._replaying = false
+      existing._pendingQueue = []
+      if (!existing.exited && existing.backendId) {
+        connectWs(existing, existing.backendId)
+      }
     }
 
     return existing
@@ -508,6 +515,8 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
 export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  try { inst.ws?.close() } catch { /* ignore */ }
+  inst.ws = null
   try { inst.term.dispose() } catch { /* ignore */ }
 }
 
