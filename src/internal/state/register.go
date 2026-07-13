@@ -44,7 +44,9 @@ func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws
 		return
 	}
 	wc := hub.Register(c)
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer func() {
+		stopPing()
 		hub.Unregister(wc)
 		c.Close()
 	}()
