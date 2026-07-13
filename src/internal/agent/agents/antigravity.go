@@ -74,8 +74,10 @@ var permissionStepTypes = map[string]bool{
 }
 
 var (
-	taskStartRx  = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
-	taskFinishRx = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+	taskStartRx   = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskFinishRx  = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+	taskStatusRx  = regexp.MustCompile(`(?i)task:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskSenderRx  = regexp.MustCompile(`(?i)sender=([a-zA-Z0-9_\-\./]+)`)
 )
 
 func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -368,9 +370,29 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				runningTasks[m[1]] = true
 			}
 		}
-		// Also scan step content (e.g. SYSTEM_MESSAGE, PLANNER_RESPONSE, etc.) for finished tasks
+		// Scan for finished/cancelled tasks in SYSTEM_MESSAGE content.
 		if m := taskFinishRx.FindStringSubmatch(step.Content); len(m) > 1 {
 			delete(runningTasks, m[1])
+		}
+		// SYSTEM_MESSAGE cancellation: "sender=<task-id> ... was cancelled"
+		// The task id is in the sender= field, not as "task id ... finished".
+		if step.Type == "SYSTEM_MESSAGE" {
+			if ms := taskSenderRx.FindStringSubmatch(step.Content); len(ms) > 1 {
+				if strings.Contains(strings.ToLower(step.Content), "cancelled") ||
+					strings.Contains(strings.ToLower(step.Content), "canceled") {
+					delete(runningTasks, ms[1])
+				}
+			}
+		}
+		// GENERIC steps report "Task: <id>\nStatus: DONE|RUNNING" — when the
+		// status is DONE, the task has completed and should be removed from
+		// the running set.
+		if step.Type == "GENERIC" && step.Status == "DONE" {
+			if mt := taskStatusRx.FindStringSubmatch(step.Content); len(mt) > 1 {
+				if strings.Contains(step.Content, "Status: DONE") {
+					delete(runningTasks, mt[1])
+				}
+			}
 		}
 	}
 
