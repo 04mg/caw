@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { RingBuffer } from './ringBuffer'
 
 export interface TerminalInstance {
   leafId: string
@@ -10,7 +11,7 @@ export interface TerminalInstance {
   /** Backend session ID used to re-connect the WebSocket after a drop. */
   backendId: string
   /** Buffer of output received before the term was ready, replayed on open. */
-  buffer: string[]
+  buffer: RingBuffer<string>
   exited: boolean
   /** @internal set during buffer replay to queue incoming ws messages */
   _replaying: boolean
@@ -339,7 +340,6 @@ function flushPending(inst: TerminalInstance) {
       safeScrollToBottom(inst)
     })
     inst.buffer.push(data)
-    if (inst.buffer.length > 10000) inst.buffer.shift()
   }
 }
 
@@ -368,7 +368,6 @@ function connectWs(inst: TerminalInstance, backendId: string) {
           safeScrollToBottom(inst)
         })
         inst.buffer.push(msg.data)
-        if (inst.buffer.length > 10000) inst.buffer.shift()
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
@@ -471,7 +470,7 @@ export async function attachTerminal(
     } else {
       // WebSocket is closed, closing, or null. Clear the local buffer to prevent
       // duplication of replayed scrollback from the new WS connection.
-      existing.buffer = []
+      existing.buffer.clear()
       existing._replaying = false
       existing._pendingQueue = []
       if (!existing.exited && existing.backendId) {
@@ -486,7 +485,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
