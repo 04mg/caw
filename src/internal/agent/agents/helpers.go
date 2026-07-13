@@ -306,6 +306,12 @@ func CleanPrompt(raw string) string {
 		s = s[:idx]
 	}
 
+	// 1.5. Strip command name and message tags with content, and command args tags only
+	s = stripXMLTag(s, "<command-name", "</command-name>")
+	s = stripXMLTag(s, "<command-message", "</command-message>")
+	s = strings.ReplaceAll(s, "<command-args>", "")
+	s = strings.ReplaceAll(s, "</command-args>", "")
+
 	// 2. Strip system XML blocks
 	s = stripXMLTag(s, "<skill", "</skill>")
 	s = stripXMLTag(s, "<user_rules", "</user_rules>")
@@ -332,6 +338,9 @@ func CleanPrompt(raw string) string {
 	// 3. Truncate at other metadata/system block boundaries.
 	tags := []string{
 		"<ADDITIONAL_METADATA>",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
 		"<local-command-caveat>",
 		"<environment_context>",
 		"<filesystem>",
