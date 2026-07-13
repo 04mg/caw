@@ -4,17 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/04mg/caw/internal/ws"
 )
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
-	c, err := wsUpgrader.Upgrade(w, r, nil)
+	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}

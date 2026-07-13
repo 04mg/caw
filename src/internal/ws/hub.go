@@ -101,7 +101,21 @@ func (h *Hub) BroadcastJSONExcept(v any, exclude *Client) {
 func (h *Hub) BroadcastText(v any)       { h.BroadcastJSON(v) }
 func (h *Hub) BroadcastTextExcept(v any, exclude *Client) { h.BroadcastJSONExcept(v, exclude) }
 
+// DefaultUpgrader is the shared upgrader for all WebSocket handlers.
+// Compression is enabled because the multiplexed channels (state, agents,
+// files) carry repetitive JSON payloads that compress well. Terminal PTY
+// handlers use TerminalUpgrader (no compression) since binary PTY streams
+// don't benefit and the CPU cost is noticeable under high output.
 var DefaultUpgrader = websocket.Upgrader{
+	CheckOrigin:      func(r *http.Request) bool { return true },
+	EnableCompression: true,
+}
+
+// TerminalUpgrader is the upgrader for terminal PTY streams. Compression
+// is disabled because PTY output is mostly binary/escape-sequence data
+// that doesn't compress and the per-write CPU cost is significant under
+// high output bursts.
+var TerminalUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
