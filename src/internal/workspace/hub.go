@@ -69,6 +69,7 @@ type FileEventHub struct {
 	connRoots  map[Subscriber]map[string]struct{}
 	extEvents  chan pendingEvent
 	done       chan struct{}
+	droppedEvents int64
 }
 
 var defaultHub *FileEventHub
@@ -210,9 +211,29 @@ func (h *FileEventHub) EmitEvent(filePath string, eventType string, isDir bool) 
 	h.mu.Unlock()
 
 	if targetRoot != "" {
-		h.extEvents <- pendingEvent{
+		h.trySend(pendingEvent{
 			rootPath: targetRoot,
 			event:    FileEvent{Type: eventType, Path: filePath, IsDir: isDir},
+		})
+	}
+}
+
+// trySend sends pe to the extEvents channel without blocking. If the
+// channel buffer is full (e.g. during an npm install or git checkout
+// generating thousands of FS events in quick succession), the event is
+// dropped and droppedEvents is incremented. This prevents the fsnotify
+// watcher goroutine or the HTTP handler from blocking on a full channel,
+// which would stall all file-tree notifications for that root until the
+// consumer drains the buffer. The debounce timer in the run loop already
+// coalesces bursts, so dropping intermediate events is safe — the final
+// flush carries the last-seen event for each root.
+func (h *FileEventHub) trySend(pe pendingEvent) {
+	select {
+	case h.extEvents <- pe:
+	default:
+		h.droppedEvents++
+		if h.droppedEvents%1000 == 1 {
+			log.Printf("file-event-hub: dropped %d events (buffer full)", h.droppedEvents)
 		}
 	}
 }
@@ -323,7 +344,7 @@ func (h *FileEventHub) handleFSEvent(rootPath string, event fsnotify.Event, w *f
 		ev.IsDir = fi.IsDir()
 	}
 
-	h.extEvents <- pendingEvent{rootPath: rootPath, event: ev, fromFS: true}
+	h.trySend(pendingEvent{rootPath: rootPath, event: ev, fromFS: true})
 }
 
 func (h *FileEventHub) broadcast(rootPath string, event FileEvent) {
