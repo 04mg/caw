@@ -9,7 +9,7 @@ export interface FileTreeEvent {
 type FileTreeListener = (event: FileTreeEvent) => void
 
 const listeners = new Set<FileTreeListener>()
-let subscribedPath: string | null = null
+const subscribedPaths = new Map<string, number>()
 let unsubMux: (() => void) | null = null
 
 function ensureMux() {
@@ -32,26 +32,35 @@ function sendUnsub(path: string) {
   wsMux.send('files', { type: 'unsubscribe', path })
 }
 
-export function subscribeToFileTree(path: string, cb: FileTreeListener): () => void {
-  listeners.add(cb)
-
-  if (subscribedPath !== path) {
-    if (subscribedPath) sendUnsub(subscribedPath)
-    subscribedPath = path
+function addPath(path: string) {
+  const count = subscribedPaths.get(path) ?? 0
+  if (count === 0) {
     sendSub(path)
   }
+  subscribedPaths.set(path, count + 1)
+}
 
+function removePath(path: string) {
+  const count = subscribedPaths.get(path) ?? 0
+  if (count <= 1) {
+    subscribedPaths.delete(path)
+    sendUnsub(path)
+  } else {
+    subscribedPaths.set(path, count - 1)
+  }
+}
+
+export function subscribeToFileTree(path: string, cb: FileTreeListener): () => void {
+  listeners.add(cb)
+  addPath(path)
   ensureMux()
 
   return () => {
     listeners.delete(cb)
-    if (listeners.size === 0) {
-      if (subscribedPath) sendUnsub(subscribedPath)
-      subscribedPath = null
-      if (unsubMux) {
-        unsubMux()
-        unsubMux = null
-      }
+    removePath(path)
+    if (listeners.size === 0 && unsubMux) {
+      unsubMux()
+      unsubMux = null
     }
   }
 }
