@@ -28,6 +28,7 @@ type Server struct {
 	store      *state.Store
 	frontendFS fs.FS
 	hub        *ws.Hub
+	mux        *ws.Multiplexer
 	upgrader   websocket.Upgrader
 }
 
@@ -39,14 +40,21 @@ func New() *Server {
 		log.Fatalf("embed sub: %v", err)
 	}
 
+	mux := ws.NewMultiplexer()
+
 	s := &Server{
 		frontendFS: frontendFS,
 		store:      state.NewStore(state.DefaultDBPath()),
 		hub:        ws.NewHub(),
+		mux:        mux,
 		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
+	state.RegisterMuxChannel(mux, s.store)
+	agent.RegisterMuxChannel(mux)
+	workspace.RegisterMuxChannel(mux)
 	push.EnsureVAPIDKeys(s.store)
 	agent.SetPushStore(s.store)
+	agent.SetStatusMux(mux)
 	return s
 }
 
@@ -57,7 +65,7 @@ func (s *Server) Engine() *gin.Engine {
 	api := r.Group("/api")
 	{
 		terminal.Register(api, s.store, &s.upgrader)
-		state.RegisterHTTP(api, s.store, s.hub)
+		state.RegisterHTTP(api, s.store, s.mux)
 		workspace.Register(api)
 		git.Register(api)
 		agent.Register(api)
@@ -65,6 +73,9 @@ func (s *Server) Engine() *gin.Engine {
 		push.Register(api, s.store)
 	}
 
+	r.GET("/ws", func(c *gin.Context) {
+		s.mux.HandleMuxWS(c.Writer, c.Request)
+	})
 	r.GET("/ws/state", func(c *gin.Context) {
 		state.HandleStateWS(c.Writer, c.Request, s.store, s.hub)
 	})

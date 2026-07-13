@@ -30,14 +30,21 @@ type debounceFlush struct {
 	event    FileEvent
 }
 
+// Subscriber is the minimal interface FileEventHub needs from a
+// connected client. Both the legacy connClient wrapper and the
+// ws.MuxClient satisfy it, so the hub can broadcast to either.
+type Subscriber interface {
+	WriteMessage(msgType int, data []byte) error
+}
+
 // connClient wraps a gorilla websocket.Conn with a per-connection write
 // mutex. gorilla/websocket does not allow concurrent writes to the same
 // connection, and the FileEventHub has multiple goroutines that can write
 // to the same conn (the run loop for debounced broadcasts, EmitEvent for
-// external events, and UnsubscribeAll cleanup). Serializing every
-// WriteMessage call through this mutex prevents the "concurrent write to
-// websocket connection" panic. This mirrors the ws.Client pattern used by
-// the state and agent status hubs.
+// external events, and cleanup). Serializing every WriteMessage call
+// through this mutex prevents the "concurrent write to websocket
+// connection" panic. This mirrors the ws.Client pattern used by the state
+// and agent status hubs.
 type connClient struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -51,12 +58,15 @@ func (c *connClient) WriteMessage(msgType int, data []byte) error {
 
 func (c *connClient) Close() error { return c.conn.Close() }
 
+type subKey struct {
+	id Subscriber
+}
+
 type FileEventHub struct {
 	mu         sync.Mutex
 	watchers   map[string]*fsnotify.Watcher
-	subs       map[string]map[*connClient]struct{}
-	connRoots  map[*connClient]map[string]struct{}
-	connClients map[*websocket.Conn]*connClient
+	subs       map[string]map[Subscriber]struct{}
+	connRoots  map[Subscriber]map[string]struct{}
 	extEvents  chan pendingEvent
 	done       chan struct{}
 }
@@ -67,12 +77,11 @@ var hubOnce sync.Once
 func getHub() *FileEventHub {
 	hubOnce.Do(func() {
 		defaultHub = &FileEventHub{
-			watchers:    make(map[string]*fsnotify.Watcher),
-			subs:        make(map[string]map[*connClient]struct{}),
-			connRoots:   make(map[*connClient]map[string]struct{}),
-			connClients: make(map[*websocket.Conn]*connClient),
-			extEvents:   make(chan pendingEvent, 256),
-			done:        make(chan struct{}),
+			watchers:  make(map[string]*fsnotify.Watcher),
+			subs:      make(map[string]map[Subscriber]struct{}),
+			connRoots: make(map[Subscriber]map[string]struct{}),
+			extEvents: make(chan pendingEvent, 256),
+			done:      make(chan struct{}),
 		}
 		go defaultHub.run()
 	})
@@ -112,21 +121,19 @@ func (h *FileEventHub) run() {
 	}
 }
 
-func (h *FileEventHub) Subscribe(conn *websocket.Conn, rootPath string) {
+func (h *FileEventHub) Subscribe(sub Subscriber, rootPath string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	client := h.clientFor(conn)
-
 	if h.subs[rootPath] == nil {
-		h.subs[rootPath] = make(map[*connClient]struct{})
+		h.subs[rootPath] = make(map[Subscriber]struct{})
 	}
-	h.subs[rootPath][client] = struct{}{}
+	h.subs[rootPath][sub] = struct{}{}
 
-	if h.connRoots[client] == nil {
-		h.connRoots[client] = make(map[string]struct{})
+	if h.connRoots[sub] == nil {
+		h.connRoots[sub] = make(map[string]struct{})
 	}
-	h.connRoots[client][rootPath] = struct{}{}
+	h.connRoots[sub][rootPath] = struct{}{}
 
 	if _, ok := h.watchers[rootPath]; !ok {
 		w, err := fsnotify.NewWatcher()
@@ -149,14 +156,12 @@ func (h *FileEventHub) Subscribe(conn *websocket.Conn, rootPath string) {
 	}
 }
 
-func (h *FileEventHub) Unsubscribe(conn *websocket.Conn, rootPath string) {
+func (h *FileEventHub) Unsubscribe(sub Subscriber, rootPath string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	client := h.clientFor(conn)
-
 	if m := h.subs[rootPath]; m != nil {
-		delete(m, client)
+		delete(m, sub)
 		if len(m) == 0 {
 			delete(h.subs, rootPath)
 			if w, ok := h.watchers[rootPath]; ok {
@@ -166,26 +171,21 @@ func (h *FileEventHub) Unsubscribe(conn *websocket.Conn, rootPath string) {
 		}
 	}
 
-	if m := h.connRoots[client]; m != nil {
+	if m := h.connRoots[sub]; m != nil {
 		delete(m, rootPath)
 		if len(m) == 0 {
-			delete(h.connRoots, client)
+			delete(h.connRoots, sub)
 		}
 	}
 }
 
-func (h *FileEventHub) UnsubscribeAll(conn *websocket.Conn) {
+func (h *FileEventHub) UnsubscribeAll(sub Subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	client, ok := h.connClients[conn]
-	if !ok {
-		return
-	}
-
-	for rootPath := range h.connRoots[client] {
+	for rootPath := range h.connRoots[sub] {
 		if m := h.subs[rootPath]; m != nil {
-			delete(m, client)
+			delete(m, sub)
 			if len(m) == 0 {
 				delete(h.subs, rootPath)
 				if w, ok := h.watchers[rootPath]; ok {
@@ -195,8 +195,7 @@ func (h *FileEventHub) UnsubscribeAll(conn *websocket.Conn) {
 			}
 		}
 	}
-	delete(h.connRoots, client)
-	delete(h.connClients, conn)
+	delete(h.connRoots, sub)
 }
 
 func (h *FileEventHub) EmitEvent(filePath string, eventType string, isDir bool) {
@@ -334,24 +333,13 @@ func (h *FileEventHub) broadcast(rootPath string, event FileEvent) {
 	}
 
 	h.mu.Lock()
-	conns := make([]*connClient, 0, len(h.subs[rootPath]))
-	for client := range h.subs[rootPath] {
-		conns = append(conns, client)
+	subs := make([]Subscriber, 0, len(h.subs[rootPath]))
+	for sub := range h.subs[rootPath] {
+		subs = append(subs, sub)
 	}
 	h.mu.Unlock()
 
-	for _, client := range conns {
-		client.WriteMessage(websocket.TextMessage, msg)
+	for _, sub := range subs {
+		sub.WriteMessage(websocket.TextMessage, msg)
 	}
-}
-
-// clientFor returns the connClient wrapper for the given raw connection,
-// creating it on first use. Must be called with h.mu held.
-func (h *FileEventHub) clientFor(conn *websocket.Conn) *connClient {
-	client, ok := h.connClients[conn]
-	if !ok {
-		client = &connClient{conn: conn}
-		h.connClients[conn] = client
-	}
-	return client
 }

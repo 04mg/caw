@@ -1,3 +1,5 @@
+import { wsMux } from '@/features/shared/services/wsMultiplexer'
+
 export interface FileTreeEvent {
   type: 'file-created' | 'file-modified' | 'file-deleted' | 'dir-changed'
   path: string
@@ -6,73 +8,50 @@ export interface FileTreeEvent {
 
 type FileTreeListener = (event: FileTreeEvent) => void
 
-let ws: WebSocket | null = null
 const listeners = new Set<FileTreeListener>()
 let subscribedPath: string | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let unsubMux: (() => void) | null = null
 
-function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  ws = new WebSocket(`${protocol}//${location.host}/ws/workspaces/files`)
-
-  ws.onopen = () => {
-    if (subscribedPath) {
-      ws!.send(JSON.stringify({ type: 'subscribe', path: subscribedPath }))
-    }
-  }
-
-  ws.onmessage = (e) => {
+function ensureMux() {
+  if (unsubMux) return
+  unsubMux = wsMux.subscribe('files', (data) => {
     try {
-      const event = JSON.parse(e.data) as FileTreeEvent
+      const event = data as FileTreeEvent
       if (event && event.type) {
         for (const l of listeners) l(event)
       }
     } catch { /* ignore */ }
-  }
-
-  ws.onclose = () => {
-    ws = null
-    if (reconnectTimer) clearTimeout(reconnectTimer)
-    reconnectTimer = setTimeout(() => connect(), 2000)
-  }
+  })
 }
 
-function disconnect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (ws) {
-    ws.onclose = null
-    ws.close()
-    ws = null
-  }
+function sendSub(path: string) {
+  wsMux.send('files', { type: 'subscribe', path })
+}
+
+function sendUnsub(path: string) {
+  wsMux.send('files', { type: 'unsubscribe', path })
 }
 
 export function subscribeToFileTree(path: string, cb: FileTreeListener): () => void {
   listeners.add(cb)
 
   if (subscribedPath !== path) {
-    if (ws && ws.readyState === WebSocket.OPEN && subscribedPath) {
-      ws.send(JSON.stringify({ type: 'unsubscribe', path: subscribedPath }))
-    }
+    if (subscribedPath) sendUnsub(subscribedPath)
     subscribedPath = path
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'subscribe', path }))
-    }
+    sendSub(path)
   }
 
-  connect()
+  ensureMux()
 
   return () => {
     listeners.delete(cb)
     if (listeners.size === 0) {
-      if (ws && ws.readyState === WebSocket.OPEN && subscribedPath) {
-        ws.send(JSON.stringify({ type: 'unsubscribe', path: subscribedPath }))
-      }
+      if (subscribedPath) sendUnsub(subscribedPath)
       subscribedPath = null
-      disconnect()
+      if (unsubMux) {
+        unsubMux()
+        unsubMux = null
+      }
     }
   }
 }

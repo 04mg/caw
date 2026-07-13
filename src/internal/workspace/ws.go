@@ -24,7 +24,7 @@ func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
 	defer stopPing()
 
 	hub := getHub()
-	defer hub.UnsubscribeAll(c)
+	defer hub.UnsubscribeAll(client)
 
 	for {
 		_, data, err := c.ReadMessage()
@@ -38,11 +38,11 @@ func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
 		switch msg["type"] {
 		case "subscribe":
 			if path, ok := msg["path"].(string); ok {
-				hub.Subscribe(c, path)
+				hub.Subscribe(client, path)
 			}
 		case "unsubscribe":
 			if path, ok := msg["path"].(string); ok {
-				hub.Unsubscribe(c, path)
+				hub.Unsubscribe(client, path)
 			}
 		}
 	}
