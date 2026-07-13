@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react'
 import { Save, AlertCircle, RefreshCw, Check, GitBranch } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -91,7 +91,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     }
   }
 
-  const loadFile = async () => {
+  const loadFile = useCallback(async () => {
     if (!filePath) {
       if (isDiff) {
         // Load global git diff
@@ -153,13 +153,13 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setLoading(false)
     }
-  }
+  }, [filePath, isDiff, cwd])
 
   useEffect(() => {
     loadFile()
-  }, [filePath, isDiff, cwd])
+  }, [loadFile])
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!filePath || isDiff || saving) return
     setSaving(true)
     setSaveStatus('idle')
@@ -187,7 +187,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setSaving(false)
     }
-  }
+  }, [filePath, isDiff, saving, editedContent, onSaveSuccess])
 
   // Handle Ctrl+S keybinding
   useEffect(() => {
@@ -199,7 +199,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [editedContent, filePath, isDiff])
+  }, [handleSave])
 
   const isDirty = !isDiff && filePath && editedContent !== originalContentRef.current
 

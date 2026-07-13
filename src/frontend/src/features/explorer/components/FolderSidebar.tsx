@@ -277,23 +277,16 @@ export function FolderSidebar({
               gitIgnored={gitIgnored}
               editingPath={editingPath}
               createTarget={createTarget}
-              clipboard={clipboard}
               dragOverPath={dragOverPath}
               refreshCounter={refreshCounter}
               onShowContextMenu={showContextMenu}
               onRenameSubmit={handleRenameSubmit}
               onCancelRename={() => setEditingPath(null)}
-              onStartRename={(p) => setEditingPath(p)}
               onCreateSubmit={handleCreateSubmit}
               onCreateCancel={() => setCreateTarget(null)}
-              onStartCreate={(parentPath, type) => setCreateTarget({ parentPath, type })}
-              onCopy={handleCopy}
-              onPaste={handlePaste}
-              onDelete={(path, name, isDir) => { setContextMenu(null); setDeleteTarget({ path, name, isDir }) }}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDropFiles={handleDrop}
-              onUpload={handleUpload}
             />
           ) : (
             <p className="text-xs text-muted-foreground italic text-center mt-4">

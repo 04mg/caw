@@ -13,23 +13,16 @@ export interface LazyFileNodeProps {
   gitIgnored?: Record<string, boolean>
   editingPath: string | null
   createTarget: { parentPath: string; type: 'file' | 'dir' } | null
-  clipboard: { path: string } | null
   dragOverPath: string | null
   refreshCounter: number
   onShowContextMenu: (path: string, name: string, isDir: boolean, x: number, y: number) => void
   onRenameSubmit: (oldPath: string, newName: string) => void
   onCancelRename: () => void
-  onStartRename: (path: string) => void
   onCreateSubmit: (parentPath: string, name: string, type: 'file' | 'dir') => void
   onCreateCancel: () => void
-  onStartCreate: (parentPath: string, type: 'file' | 'dir') => void
-  onCopy: (path: string) => void
-  onPaste: (targetDir: string) => void
-  onDelete: (path: string, name: string, isDir: boolean) => void
   onDragOver: (e: React.DragEvent, path: string) => void
   onDragLeave: () => void
   onDropFiles: (e: React.DragEvent, targetDir: string) => void
-  onUpload: (targetDir: string, files: FileList) => void
 }
 
 export function LazyFileNode({
@@ -43,23 +36,16 @@ export function LazyFileNode({
   gitIgnored,
   editingPath,
   createTarget,
-  clipboard,
   dragOverPath,
   refreshCounter,
   onShowContextMenu,
   onRenameSubmit,
   onCancelRename,
-  onStartRename,
   onCreateSubmit,
   onCreateCancel,
-  onStartCreate,
-  onCopy,
-  onPaste,
-  onDelete,
   onDragOver,
   onDragLeave,
   onDropFiles,
-  onUpload,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -329,23 +315,16 @@ export function LazyFileNode({
               gitIgnored={gitIgnored}
               editingPath={editingPath}
               createTarget={createTarget}
-              clipboard={clipboard}
               dragOverPath={dragOverPath}
               refreshCounter={refreshCounter}
               onShowContextMenu={onShowContextMenu}
               onRenameSubmit={onRenameSubmit}
               onCancelRename={onCancelRename}
-              onStartRename={onStartRename}
               onCreateSubmit={onCreateSubmit}
               onCreateCancel={onCreateCancel}
-              onStartCreate={onStartCreate}
-              onCopy={onCopy}
-              onPaste={onPaste}
-              onDelete={onDelete}
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
               onDropFiles={onDropFiles}
-              onUpload={onUpload}
             />
           ))}
 

@@ -22,9 +22,15 @@ type CodexLogLine struct {
 	Payload *CodexPayload `json:"payload,omitempty"`
 }
 
+type CodexContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
 type CodexPayload struct {
-	Type    string `json:"type"`
-	Message string `json:"message,omitempty"`
+	Type    string         `json:"type"`
+	Message string         `json:"message,omitempty"`
+	Content []CodexContent `json:"content,omitempty"`
 	// Phase is set on event_msg "agent_message" and response_item "message"
 	// entries: "commentary" (interim thought) or "final_answer" (turn done).
 	Phase string `json:"phase,omitempty"`
@@ -46,7 +52,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	// search window to 1 hour so the resumed session is found. For a fresh
 	// start, only look for files modified after the watcher started (no
 	// negative offset) to avoid grabbing a sibling agent's session.
-	lookback := 30 * time.Second
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -171,6 +177,11 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	// with phase "commentary" mid-turn, which made the status flicker between
 	// executing and idle. We now treat "commentary" as still working and only
 	// "final_answer" (or an explicit task_complete) as idle.
+	var turnCompleted bool
+	var lastAssistantText string
+	var lastAssistantTool string
+	var foundTool bool
+
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine CodexLogLine
 		if err := json.Unmarshal([]byte(lines[i]), &logLine); err != nil {
@@ -183,67 +194,103 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		p := logLine.Payload
 		switch p.Type {
 		case "task_complete":
-			callback("idle", "", "", sessionTitle)
-			return
+			turnCompleted = true
+			continue
 		case "function_call":
-			tool := p.Name
-			if tool == "" {
-				tool = "exec"
-			}
-			callback("executing", tool, "", sessionTitle)
-			return
-		case "function_call_output":
-			callback("thinking", "", "", sessionTitle)
-			return
-		case "user_message":
-			callback("thinking", "", "", sessionTitle)
-			return
-		case "message":
-			if p.Role == "assistant" && p.Phase == "final_answer" {
-				status := "idle"
-				msgLower := strings.ToLower(p.Message)
-				if strings.Contains(msgLower, "[y/n]") ||
-					strings.Contains(msgLower, "[y/N]") ||
-					strings.Contains(msgLower, "[Y/n]") ||
-					strings.Contains(msgLower, "(y/n)") ||
-					strings.Contains(msgLower, "confirm") ||
-					strings.Contains(msgLower, "approve") {
-					status = "waiting_input"
+			if !foundTool {
+				tool := p.Name
+				if tool == "" {
+					tool = "exec"
 				}
-				callback(status, "", "", sessionTitle)
-				return
+				lastAssistantTool = tool
+				foundTool = true
 			}
-			if p.Role == "assistant" && p.Phase == "commentary" {
-				callback("thinking", "", "", sessionTitle)
-				return
+			continue
+		case "function_call_output":
+			continue
+		case "user_message":
+			continue
+		case "message":
+			if p.Role == "assistant" {
+				var msgText string
+				if p.Message != "" {
+					msgText = p.Message
+				} else if len(p.Content) > 0 {
+					var textParts []string
+					for _, c := range p.Content {
+						if c.Text != "" {
+							textParts = append(textParts, c.Text)
+						}
+					}
+					msgText = strings.Join(textParts, " ")
+				}
+				if msgText != "" && lastAssistantText == "" {
+					lastAssistantText = msgText
+					if p.Phase == "final_answer" {
+						turnCompleted = true
+					}
+				}
 			}
-			if p.Role == "user" {
-				callback("thinking", "", "", sessionTitle)
-				return
-			}
-			// developer/other roles — keep scanning backwards.
 			continue
 		case "agent_message":
-			if p.Phase == "final_answer" {
-				status := "idle"
-				msgLower := strings.ToLower(p.Message)
-				if strings.Contains(msgLower, "[y/n]") ||
-					strings.Contains(msgLower, "[y/N]") ||
-					strings.Contains(msgLower, "[Y/n]") ||
-					strings.Contains(msgLower, "(y/n)") ||
-					strings.Contains(msgLower, "confirm") ||
-					strings.Contains(msgLower, "approve") {
-					status = "waiting_input"
+			var msgText string
+			if p.Message != "" {
+				msgText = p.Message
+			} else if len(p.Content) > 0 {
+				var textParts []string
+				for _, c := range p.Content {
+					if c.Text != "" {
+						textParts = append(textParts, c.Text)
+					}
 				}
-				callback(status, "", "", sessionTitle)
-				return
+				msgText = strings.Join(textParts, " ")
 			}
-			// commentary agent_message — still working.
-			callback("thinking", "", "", sessionTitle)
-			return
+			if msgText != "" && lastAssistantText == "" {
+				lastAssistantText = msgText
+				if p.Phase == "final_answer" {
+					turnCompleted = true
+				}
+			}
+			continue
 		case "task_started":
-			callback("thinking", "", "", sessionTitle)
-			return
+			continue
 		}
 	}
+
+	if lastAssistantTool != "" {
+		// Tools that request user input should be reported as waiting_input,
+		// not as executing. The agent is blocked until the user answers.
+		toolLower := strings.ToLower(lastAssistantTool)
+		if isUserInputTool(toolLower) {
+			callback("waiting_input", lastAssistantTool, "", sessionTitle)
+			return
+		}
+		callback("executing", lastAssistantTool, "", sessionTitle)
+		return
+	}
+
+	if lastAssistantText != "" {
+		status := "thinking"
+		if turnCompleted {
+			status = "idle"
+		}
+		msgLower := strings.ToLower(lastAssistantText)
+		if strings.Contains(msgLower, "[y/n]") ||
+			strings.Contains(msgLower, "[y/n]") ||
+			strings.Contains(msgLower, "[y/N]") ||
+			strings.Contains(msgLower, "[Y/n]") ||
+			strings.Contains(msgLower, "(y/n)") ||
+			strings.Contains(msgLower, "confirm") ||
+			strings.Contains(msgLower, "approve") {
+			status = "waiting_input"
+		}
+		callback(status, "", "", sessionTitle)
+		return
+	}
+
+	status := "thinking"
+	if turnCompleted {
+		status = "idle"
+	}
+	callback(status, "", "", sessionTitle)
 }

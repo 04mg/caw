@@ -127,6 +127,9 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		switch msg["type"] {
 		case "input":
 			if s, ok := msg["data"].(string); ok {
+				if OnPtyInput != nil {
+					OnPtyInput(id, s)
+				}
 				sess.Pty.ptmx.Write([]byte(s))
 			}
 		case "resize":

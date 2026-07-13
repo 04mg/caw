@@ -20,6 +20,15 @@ interface KanbanBoardProps {
   onNavigateToWorkspace: (workspaceId: string, tabIndex: number, paneId: string) => void
 }
 
+interface WorkspaceDetails {
+  workspaceId: string
+  workspaceName: string
+  workspaceEmoji: string
+  tabIndex: number
+  paneId: string
+  agentBranch?: string
+}
+
 type ColumnId = 'idle' | 'needs_input' | 'working'
 
 interface Column {
@@ -111,20 +120,50 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     cardsRef.current = newPositions
   }, [statuses])
 
-  // Helper to find the workspace details for a session
-  const findWorkspaceDetails = (sessionId: string) => {
+  // Resolve a card to the workspace pane it should open.
+  // Prefer the exact session id, then fall back to matching the agent cwd
+  // against the leaf cwd so cards still navigate when the leaf mapping has
+  // drifted.
+  const findWorkspaceDetails = (agent: AgentStatus): WorkspaceDetails | null => {
+    const resolveBySessionId = (): WorkspaceDetails | null => {
+      for (const ws of workspaces) {
+        for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
+          const tab = ws.layouts[tabIdx]
+          const leafIds = collectLeafIds(tab.layout)
+          if (leafIds.includes(agent.sessionId)) {
+            const leaf = getLeaf(tab.layout, agent.sessionId)
+            return {
+              workspaceId: ws.id,
+              workspaceName: ws.name || ws.path || 'Workspace',
+              workspaceEmoji: ws.emoji || '💼',
+              tabIndex: tabIdx,
+              paneId: agent.sessionId,
+              agentBranch: leaf?.agentBranch,
+            }
+          }
+        }
+      }
+      return null
+    }
+
+    const bySession = resolveBySessionId()
+    if (bySession) return bySession
+
+    if (!agent.cwd) return null
+
     for (const ws of workspaces) {
       for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
         const tab = ws.layouts[tabIdx]
         const leafIds = collectLeafIds(tab.layout)
-        if (leafIds.includes(sessionId)) {
-          const leaf = getLeaf(tab.layout, sessionId)
+        for (const leafId of leafIds) {
+          const leaf = getLeaf(tab.layout, leafId)
+          if (!leaf || leaf.cwd !== agent.cwd) continue
           return {
             workspaceId: ws.id,
             workspaceName: ws.name || ws.path || 'Workspace',
             workspaceEmoji: ws.emoji || '💼',
             tabIndex: tabIdx,
-            paneId: sessionId,
+            paneId: leafId,
             agentBranch: leaf?.agentBranch,
           }
         }
@@ -191,7 +230,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
-    const wsDetails = findWorkspaceDetails(agent.sessionId)
+    const wsDetails = findWorkspaceDetails(agent)
     const agentDef = agentTypes[agent.agentId]
     const AgentIcon = agentDef?.icon || Terminal
     const label = agentDef?.label || agent.agentId
