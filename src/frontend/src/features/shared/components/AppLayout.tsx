@@ -25,7 +25,7 @@ import {
 } from '@/features/workspaces/stores/workspaceStore'
 import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
-import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup } from '@/features/workspaces/utils/tabGroups'
+import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal } from 'lucide-react'
@@ -1609,14 +1609,13 @@ export function AppLayout() {
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
                         const { tree, activeGroupId } = ensureTabGroups(activeWorkspace)
-                        const groups = collectGroups(tree)
-                        const lastGroupId = groups[groups.length - 1]?.id || ''
+                        const topRightGroupId = getTopRightGroupId(tree)
                         return (
                           <TabGroupTree
                             workspace={activeWorkspace}
                             node={tree}
                             activeGroupId={activeGroupId}
-                            lastGroupId={lastGroupId}
+                            topRightGroupId={topRightGroupId}
                             draggedTabId={draggedTabId}
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
