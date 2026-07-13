@@ -466,6 +466,36 @@ function connectWs(inst: TerminalInstance, backendId: string) {
   }
 }
 
+// waitForLayout resolves when the container element has non-zero width
+// and height (i.e. the layout engine has applied final dimensions).
+// react-resizable-panels applies sizes asynchronously, so calling term.open
+// + fit.fit immediately after mount produces wrong cols/rows and garbled
+// rendering. We wait for the layout to settle, with a 500ms fallback so
+// we never block forever on a hidden/offscreen panel.
+function waitForLayout(el: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    const rect = el.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) {
+      resolve()
+      return
+    }
+    let resolved = false
+    const finish = () => {
+      if (resolved) return
+      resolved = true
+      ro.disconnect()
+      clearTimeout(timer)
+      resolve()
+    }
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) finish()
+    })
+    ro.observe(el)
+    const timer = setTimeout(finish, 500)
+  })
+}
+
 export async function attachTerminal(
   leafId: string,
   el: HTMLElement,
@@ -480,8 +510,11 @@ export async function attachTerminal(
     const { term, fit } = makeTerminal()
     existing.term = term
     existing.fit = fit
+    // Wait for the container to have real dimensions before opening
+    // xterm.js, so fit.fit() computes correct cols/rows and the terminal
+    // doesn't render garbled output that requires a manual resize.
+    await waitForLayout(el)
     term.open(el)
-    // Fit first so the terminal dimensions are correct before writing.
     fit.fit()
 
     // Re-wire input handlers since the old term was disposed.
@@ -528,6 +561,10 @@ export async function attachTerminal(
   }
 
   const { term, fit } = makeTerminal()
+  // Wait for the container to have real dimensions before opening
+  // xterm.js, so fit.fit() computes correct cols/rows and the terminal
+  // doesn't render garbled output that requires a manual resize.
+  await waitForLayout(el)
   term.open(el)
   fit.fit()
 
