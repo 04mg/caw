@@ -180,6 +180,7 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	var turnCompleted bool
 	var lastAssistantText string
 	var lastAssistantTool string
+	var foundTool bool
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine CodexLogLine
@@ -196,11 +197,14 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 			turnCompleted = true
 			continue
 		case "function_call":
-			tool := p.Name
-			if tool == "" {
-				tool = "exec"
+			if !foundTool {
+				tool := p.Name
+				if tool == "" {
+					tool = "exec"
+				}
+				lastAssistantTool = tool
+				foundTool = true
 			}
-			lastAssistantTool = tool
 			continue
 		case "function_call_output":
 			continue
@@ -220,7 +224,7 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 					}
 					msgText = strings.Join(textParts, " ")
 				}
-				if msgText != "" {
+				if msgText != "" && lastAssistantText == "" {
 					lastAssistantText = msgText
 					if p.Phase == "final_answer" {
 						turnCompleted = true
@@ -241,7 +245,7 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 				}
 				msgText = strings.Join(textParts, " ")
 			}
-			if msgText != "" {
+			if msgText != "" && lastAssistantText == "" {
 				lastAssistantText = msgText
 				if p.Phase == "final_answer" {
 					turnCompleted = true
@@ -254,6 +258,13 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	}
 
 	if lastAssistantTool != "" {
+		// Tools that request user input should be reported as waiting_input,
+		// not as executing. The agent is blocked until the user answers.
+		toolLower := strings.ToLower(lastAssistantTool)
+		if isUserInputTool(toolLower) {
+			callback("waiting_input", lastAssistantTool, "", sessionTitle)
+			return
+		}
 		callback("executing", lastAssistantTool, "", sessionTitle)
 		return
 	}
