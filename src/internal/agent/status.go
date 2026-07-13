@@ -224,7 +224,10 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		case "thinking", "executing":
 			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") {
+			// Suppress the "finished" notification when the agent was running
+			// a background task — the agent is still working, it just completed
+			// a sub-task. A "finished" notification here would mislead the user.
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") && prev.Tool != "background_task" {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}
