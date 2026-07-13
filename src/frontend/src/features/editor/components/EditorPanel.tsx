@@ -2,6 +2,9 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react'
 import { Save, AlertCircle, RefreshCw, Check, GitBranch } from 'lucide-react'
 import { Button } from '@/components/button'
+import { getFileCategory, isBinaryContent } from '../utils/fileType'
+import { BinaryFileView } from './BinaryFileView'
+import { ImagePreviewView } from './ImagePreviewView'
 
 
 function defineCawDarkTheme(monaco: Monaco) {
@@ -51,6 +54,14 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [forceOpenBinary, setForceOpenBinary] = useState(false)
+  const [isBinaryRuntime, setIsBinaryRuntime] = useState(false)
+
+  // Reset binary override when file changes
+  useEffect(() => {
+    setForceOpenBinary(false)
+    setIsBinaryRuntime(false)
+  }, [filePath])
 
   const originalContentRef = useRef('')
   const editorRef = useRef<any>(null)
@@ -115,6 +126,19 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       return
     }
 
+    const category = getFileCategory(filePath)
+    if (!isDiff && category === 'image') {
+      setLoading(false)
+      setError(null)
+      return
+    }
+
+    if (!isDiff && category === 'binary-likely' && !forceOpenBinary) {
+      setLoading(false)
+      setError(null)
+      return
+    }
+
     setLoading(true)
     setError(null)
     setSaveStatus('idle')
@@ -143,6 +167,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           setContent(text)
           setEditedContent(text)
           originalContentRef.current = text
+          setIsBinaryRuntime(isBinaryContent(text))
         } else {
           const json = await res.json().catch(() => null)
           setError(json?.error?.message ?? `Failed to read file: ${res.statusText}`)
@@ -153,7 +178,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setLoading(false)
     }
-  }, [filePath, isDiff, cwd])
+  }, [filePath, isDiff, cwd, forceOpenBinary])
 
   useEffect(() => {
     loadFile()
@@ -207,6 +232,16 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     if (value !== undefined) {
       setEditedContent(value)
     }
+  }
+
+  const fileCategory = filePath ? getFileCategory(filePath) : 'text'
+
+  if (!isDiff && filePath && fileCategory === 'image') {
+    return <ImagePreviewView filePath={filePath} />
+  }
+
+  if (!isDiff && filePath && !forceOpenBinary && (fileCategory === 'binary-likely' || isBinaryRuntime)) {
+    return <BinaryFileView filePath={filePath} onOpenAnyway={() => setForceOpenBinary(true)} />
   }
 
   if (loading) {
