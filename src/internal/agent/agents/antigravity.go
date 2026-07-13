@@ -246,16 +246,18 @@ func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]
 						if json.Unmarshal([]byte(uris), &uriList) != nil {
 							continue
 						}
+						matched := false
 						for _, u := range uriList {
 							p := uriToPath(u)
 							if p == "" {
 								continue
 							}
 							if filepath.Clean(p) == absCwd {
-								workspaceMatch[convID] = true
+								matched = true
 								break
 							}
 						}
+						workspaceMatch[convID] = matched
 					}
 					rows.Close()
 				}
