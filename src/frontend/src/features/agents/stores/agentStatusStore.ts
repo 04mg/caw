@@ -23,6 +23,7 @@ function ensureWs() {
         activeStatuses[data.sessionId] = {
           sessionId: data.sessionId,
           agentId: data.agentId,
+          cwd: data.cwd,
           status: 'idle',
           timestamp: data.timestamp || new Date().toISOString(),
           sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
@@ -32,6 +33,7 @@ function ensureWs() {
         activeStatuses[data.sessionId] = {
           sessionId: data.sessionId,
           agentId: data.agentId,
+          cwd: data.cwd,
           status: data.status || 'idle',
           tool: data.tool,
           details: data.details,
