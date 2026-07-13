@@ -57,6 +57,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [savedSelection, setSavedSelection] = useState('')
+  const [tuiClipboard, setTuiClipboard] = useState('')
 
   useEffect(() => {
     const el = elRef.current
@@ -312,10 +313,13 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     let sel = ''
+    let tuiClip = ''
     if (inst) {
       sel = inst.term.getSelection()
+      tuiClip = (inst.term as any)._tuiClipboard || ''
     }
     setSavedSelection(sel)
+    setTuiClipboard(tuiClip)
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
 
@@ -323,6 +327,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     e.stopPropagation()
     if (savedSelection) {
       copyToClipboard(savedSelection)
+    }
+    setContextMenu(null)
+  }
+
+  const handleCopyTui = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (tuiClipboard) {
+      copyToClipboard(tuiClipboard)
     }
     setContextMenu(null)
   }
@@ -364,6 +376,16 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
           >
             <Copy size={14} />
             <span>Copy</span>
+          </button>
+          <button
+            onClick={handleCopyTui}
+            disabled={!tuiClipboard}
+            className={`flex items-center w-full px-3 py-1.5 text-xs text-left cursor-pointer gap-2 ${
+              tuiClipboard ? 'text-foreground/80 hover:bg-accent hover:text-foreground' : 'text-foreground/30 cursor-not-allowed'
+            }`}
+          >
+            <Copy size={14} />
+            <span>Copy TUI Clipboard</span>
           </button>
           <button
             onClick={handlePaste}
