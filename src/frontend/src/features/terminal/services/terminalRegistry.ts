@@ -17,6 +17,10 @@ export interface TerminalInstance {
   _replaying: boolean
   /** @internal messages queued during replay */
   _pendingQueue: string[]
+  /** @internal output chunks accumulated for batched rendering per frame */
+  _pendingOutput: string[]
+  /** @internal rAF id for the scheduled output flush, 0 when idle */
+  _rafId: number
   /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
@@ -242,6 +246,7 @@ export function reconnectTerminalWs(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst || inst.exited || !inst.backendId) return
   if (inst.ws?.readyState === WebSocket.OPEN) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   inst.ws = null
   connectWs(inst, inst.backendId)
@@ -332,6 +337,45 @@ function safeScrollToBottom(inst: TerminalInstance) {
   } catch { /* ignore if not attached to DOM */ }
 }
 
+// scheduleFlush accumulates output chunks and flushes them to xterm.js in
+// a single term.write per animation frame. This replaces the previous
+// pattern of calling term.write(data, cb) + scrollToBottom for every WS
+// message, which caused N independent renders per burst. Batching into
+// one write per frame (~16ms) keeps the terminal responsive under high
+// output (compiles, log tailing, find /) and eliminates visible jank.
+function scheduleFlush(inst: TerminalInstance) {
+  if (inst._rafId !== 0) return
+  inst._rafId = requestAnimationFrame(() => {
+    inst._rafId = 0
+    const chunks = inst._pendingOutput
+    inst._pendingOutput = []
+    if (chunks.length === 0) return
+    const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+    inst.term.write(combined, () => {
+      safeScrollToBottom(inst)
+    })
+    for (const ch of chunks) {
+      inst.buffer.push(ch)
+    }
+  })
+}
+
+function cancelFlush(inst: TerminalInstance) {
+  if (inst._rafId !== 0) {
+    cancelAnimationFrame(inst._rafId)
+    inst._rafId = 0
+  }
+  if (inst._pendingOutput.length > 0) {
+    const chunks = inst._pendingOutput
+    inst._pendingOutput = []
+    if (chunks.length > 0) {
+      const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+      try { inst.term.write(combined) } catch { /* ignore */ }
+      for (const ch of chunks) inst.buffer.push(ch)
+    }
+  }
+}
+
 function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
@@ -341,6 +385,8 @@ function flushPending(inst: TerminalInstance) {
     })
     inst.buffer.push(data)
   }
+  // After replay, any subsequently batched output should resume normal
+  // rAF scheduling.
 }
 
 function connectWs(inst: TerminalInstance, backendId: string) {
@@ -364,10 +410,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
           inst._pendingQueue.push(msg.data)
           return
         }
-        inst.term.write(msg.data, () => {
-          safeScrollToBottom(inst)
-        })
-        inst.buffer.push(msg.data)
+        // Batch: accumulate the chunk and flush once per animation frame
+        // instead of writing + scrollToBottom per WS message.
+        inst._pendingOutput.push(msg.data)
+        scheduleFlush(inst)
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
@@ -485,7 +531,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -518,6 +564,7 @@ export function setAllTerminalThemes(theme: 'dark' | 'light') {
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
@@ -530,6 +577,7 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
 export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   inst.ws = null
   try { inst.term.dispose() } catch { /* ignore */ }
@@ -546,6 +594,7 @@ export function detachTerminal(leafId: string) {
 export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
