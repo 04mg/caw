@@ -28,7 +28,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -1474,7 +1474,7 @@ export function AppLayout() {
             ) : (
               <div className="flex flex-col h-full">
                 {/* Scrollable horizontal tab bar below the header */}
-                {activeWorkspace && layouts.length > 0 && (
+                {activeWorkspace && (
                   <div className="flex items-center border-b border-border bg-secondary/10 h-[36px] shrink-0 overflow-x-auto pl-2 select-none scrollbar-none">
                     {layouts.map((t, idx) => {
                       const isActive = idx === activeWorkspace.activeTabIndex
@@ -1674,6 +1674,46 @@ export function AppLayout() {
                           />
                         )
                       })()}
+                    </div>
+                  ) : activeWorkspace ? (
+                    <div className="flex flex-col h-full bg-background">
+                      {/* Empty workspace header top bar */}
+                      <div className="flex items-center justify-between border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none px-2">
+                        <div className="flex items-center gap-1.5">
+                          <NewTabMenu
+                            onAdd={addTab}
+                            enableWorktrees={activeWorkspace.enableWorktrees}
+                            onToggleWorktrees={toggleWorktrees}
+                            triggerClassName="h-[33px] px-2 border-r-0"
+                            align="start"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 text-muted-foreground hover:text-foreground animate-none"
+                            onClick={() => setSettingsOpen(true)}
+                            title="Settings"
+                          >
+                            <Settings className="h-3.5 w-3.5" />
+                          </Button>
+                          {folderSidebarCollapsed && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 text-muted-foreground hover:text-foreground animate-none"
+                              onClick={toggleFolderSidebar}
+                              title="Workspace Files"
+                            >
+                              <Folder className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex-1 min-h-0 relative">
+                        {terminalBody}
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col h-full">
