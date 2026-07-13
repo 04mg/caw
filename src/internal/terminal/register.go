@@ -42,6 +42,16 @@ func (h *Handler) Delete(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (h *Handler) Get(c *gin.Context) {
+	id := c.Param("id")
+	_, ok := h.mgr.Get(id)
+	if !ok {
+		httpx.NotFound(c, "not found")
+		return
+	}
+	httpx.OK(c, map[string]bool{"exists": true})
+}
+
 var defaultManagerMgr *SessionManager
 
 func Register(rg *gin.RouterGroup, store *state.Store, upgrader *websocket.Upgrader) {
@@ -49,6 +59,7 @@ func Register(rg *gin.RouterGroup, store *state.Store, upgrader *websocket.Upgra
 	h := NewHandler(defaultManagerMgr)
 	rg.POST("/terminals", h.Create)
 	rg.DELETE("/terminals/:id", h.Delete)
+	rg.GET("/terminals/:id", h.Get)
 }
 
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrader *websocket.Upgrader) {

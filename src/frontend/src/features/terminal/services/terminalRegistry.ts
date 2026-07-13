@@ -395,11 +395,27 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       // once the OS kills the background socket, and the user is forced
       // to reload the page to regain input.
       if (!inst.exited && inst.backendId) {
-        setTimeout(() => {
-          if (!inst.exited && inst.ws === null) {
-            connectWs(inst, inst.backendId)
-          }
-        }, 1000)
+        fetch(`/api/terminals/${encodeURIComponent(inst.backendId)}`)
+          .then((res) => {
+            if (res.status === 404) {
+              inst.exited = true
+              onTerminalExit?.(inst.leafId)
+            } else {
+              setTimeout(() => {
+                if (!inst.exited && inst.ws === null) {
+                  connectWs(inst, inst.backendId)
+                }
+              }, 1000)
+            }
+          })
+          .catch(() => {
+            // Network/offline error, continue retrying
+            setTimeout(() => {
+              if (!inst.exited && inst.ws === null) {
+                connectWs(inst, inst.backendId)
+              }
+            }, 1000)
+          })
       }
     }
   }
