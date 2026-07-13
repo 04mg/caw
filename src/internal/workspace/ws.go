@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/04mg/caw/internal/ws"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -17,8 +19,11 @@ func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hub := getHub()
+	client := &connClient{conn: c}
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(client.WriteMessage))
+	defer stopPing()
 
+	hub := getHub()
 	defer hub.UnsubscribeAll(c)
 
 	for {

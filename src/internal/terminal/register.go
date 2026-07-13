@@ -9,6 +9,7 @@ import (
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/state"
+	"github.com/04mg/caw/internal/ws"
 )
 
 type Handler struct {
@@ -75,6 +76,8 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 	}
 
 	wc := &connWriter{conn: c}
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
+	defer stopPing()
 
 	sess.mu.Lock()
 	scrollback := make([]byte, len(sess.scrollback))
