@@ -74,7 +74,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// found; for a fresh start, only look for files modified after the
 	// watcher started (no negative offset) to avoid grabbing a sibling
 	// agent's session that was created moments before this watcher launched.
-	lookback := 30 * time.Second
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -226,6 +226,8 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	var lastAssistantTool string
 	var lastAssistantText string
 	var seenUser bool
+	var seenInterrupt bool
+	var turnCompleted bool
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine ClaudeLogLine
@@ -234,13 +236,29 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		}
 
 		if logLine.Type == "result" || (logLine.Type == "system" && logLine.Subtype == "turn_duration") {
-			callback("idle", "", "", sessionTitle)
-			return
+			turnCompleted = true
+			continue
 		}
 
 		if logLine.Message != nil {
 			msg := logLine.Message
 			if msg.Role == "user" {
+				blocks, plainText := parseClaudeContent(msg.Content)
+				userText := plainText
+				if userText == "" {
+					for _, b := range blocks {
+						if b.Type == "text" && b.Text != "" {
+							userText = b.Text
+							break
+						}
+					}
+				}
+				if strings.Contains(strings.ToLower(userText), "[request interrupted by user") {
+					seenInterrupt = true
+					// Don't break — continue scanning for the assistant tool_use
+					// that was interrupted, so we can report it correctly.
+					continue
+				}
 				seenUser = true
 				break
 			} else if msg.Role == "assistant" {
@@ -256,13 +274,31 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		}
 	}
 
+	// An interruption means the agent is no longer actively working — the
+	// user cancelled the in-flight tool call. Report idle so the UI doesn't
+	// show "working" indefinitely.
+	if seenInterrupt {
+		callback("idle", "", "", sessionTitle)
+		return
+	}
+
 	if lastAssistantTool != "" {
+		// Tools that request user input should be reported as waiting_input,
+		// not as executing. The agent is blocked until the user answers.
+		toolLower := strings.ToLower(lastAssistantTool)
+		if isUserInputTool(toolLower) {
+			callback("waiting_input", lastAssistantTool, "", sessionTitle)
+			return
+		}
 		callback("executing", lastAssistantTool, "", sessionTitle)
 		return
 	}
 
 	if lastAssistantText != "" {
-		status := "idle"
+		status := "thinking"
+		if turnCompleted {
+			status = "idle"
+		}
 		textContentLower := strings.ToLower(lastAssistantText)
 		if strings.Contains(textContentLower, "[y/n]") ||
 			strings.Contains(textContentLower, "[y/N]") ||
@@ -277,9 +313,28 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	}
 
 	if seenUser || len(lines) > 0 {
-		callback("thinking", "", "", sessionTitle)
+		status := "thinking"
+		if turnCompleted {
+			status = "idle"
+		}
+		callback(status, "", "", sessionTitle)
 		return
 	}
 
 	callback("idle", "", "", sessionTitle)
+}
+
+// isUserInputTool reports whether a tool name represents a tool that
+// requests user input (e.g. AskUserQuestion, ExitPlanMode). When the last
+// assistant action is one of these tools, the agent is blocked waiting for
+// the user to respond, so the status should be "waiting_input" rather than
+// "executing".
+func isUserInputTool(toolLower string) bool {
+	switch toolLower {
+	case "askuserquestion", "ask_user_question", "askuser",
+		"exitplanmode", "exit_plan_mode",
+		"question", "request_user_input":
+		return true
+	}
+	return false
 }

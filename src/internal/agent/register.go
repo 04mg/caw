@@ -101,6 +101,7 @@ func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
 			Type:      "agent_status",
 			SessionID: s.SessionID,
 			AgentID:   s.AgentID,
+			Cwd:       s.Cwd,
 			Status:    s.Status,
 			Tool:      s.Tool,
 			Details:   s.Details,

@@ -25,7 +25,7 @@ import {
 } from '@/features/workspaces/stores/workspaceStore'
 import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
-import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup } from '@/features/workspaces/utils/tabGroups'
+import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal } from 'lucide-react'
@@ -284,7 +284,7 @@ export function AppLayout() {
         paneId: activeWorkspace.activePaneId,
       }
     }
-  }, [activeWorkspace?.id, activeWorkspace?.activeTabIndex, activeWorkspace?.activePaneId])
+  }, [activeWorkspace])
 
   useEffect(() => {
     if (!loadedRef.current) return
@@ -375,6 +375,48 @@ export function AppLayout() {
     [],
   )
 
+  const navigateToAgent = useCallback(
+    (workspaceId: string, tabIndex: number, paneId: string) => {
+      setActiveWorkspaceId(workspaceId)
+      localFocusRef.current[workspaceId] = {
+        tabIndex,
+        paneId,
+      }
+      patchWorkspace(workspaceId, (ws) => {
+        const { tree } = ensureTabGroups(ws)
+        let nextTree = tree
+        let nextActiveGroupId = ws.activeGroupId
+        const tabId = ws.layouts[tabIndex]?.id
+        if (tabId) {
+          const targetGroup = findGroupWithTab(tree, tabId)
+          if (targetGroup) {
+            nextActiveGroupId = targetGroup.id
+            const idx = targetGroup.tabs.indexOf(tabId)
+            
+            const updateGroupActive = (n: TabGroupsNode): TabGroupsNode => {
+              if (n.type === 'group' && n.id === targetGroup.id) {
+                return { ...n, activeTabIndex: idx >= 0 ? idx : n.activeTabIndex }
+              }
+              if (n.type === 'split') {
+                return { ...n, children: n.children.map(updateGroupActive) }
+              }
+              return n
+            }
+            nextTree = updateGroupActive(tree)
+          }
+        }
+        return {
+          ...ws,
+          tabGroups: nextTree,
+          activeGroupId: nextActiveGroupId,
+          activeTabIndex: tabIndex,
+          activePaneId: paneId,
+        }
+      })
+    },
+    [patchWorkspace, setActiveWorkspaceId],
+  )
+
   // ─── Agent Status Notifications ──────────────────────────────────────────
   // Keep a ref to the latest workspaces so the notification callback can
   // look up workspace/worktree data without capturing stale closure state.
@@ -404,9 +446,11 @@ export function AppLayout() {
   const setActiveWorkspaceIdRef = useRef(setActiveWorkspaceId)
   const patchWorkspaceRef = useRef(patchWorkspace)
   const setAgentBoardOpenRef = useRef(setAgentBoardOpen)
+  const navigateToAgentRef = useRef(navigateToAgent)
   useEffect(() => { setActiveWorkspaceIdRef.current = setActiveWorkspaceId }, [setActiveWorkspaceId])
   useEffect(() => { patchWorkspaceRef.current = patchWorkspace }, [patchWorkspace])
   useEffect(() => { setAgentBoardOpenRef.current = setAgentBoardOpen }, [setAgentBoardOpen])
+  useEffect(() => { navigateToAgentRef.current = navigateToAgent }, [navigateToAgent])
 
   const triggerAgentNotification = useCallback(
     (agentStatus: AgentStatus, type: 'needs_input' | 'finished') => {
@@ -454,12 +498,7 @@ export function AppLayout() {
           <div
             onClick={() => {
               if (wsDetails) {
-                setActiveWorkspaceIdRef.current(wsDetails.workspaceId)
-                patchWorkspaceRef.current(wsDetails.workspaceId, (ws) => ({
-                  ...ws,
-                  activeTabIndex: wsDetails.tabIndex,
-                  activePaneId: wsDetails.paneId,
-                }))
+                navigateToAgentRef.current(wsDetails.workspaceId, wsDetails.tabIndex, wsDetails.paneId)
                 setAgentBoardOpenRef.current(false)
               }
               toast.dismiss(t)
@@ -563,7 +602,7 @@ export function AppLayout() {
       prevStatusesRef.current = nextStatuses
     })
     return () => {
-      unsub
+      unsub()
       for (const timer of Object.values(pendingFinishedRef.current)) {
         clearTimeout(timer)
       }
@@ -1238,7 +1277,6 @@ export function AppLayout() {
         onSplitVert={handleSplitVert}
         onSplitHoriz={handleSplitHoriz}
         onClose={handleClosePane}
-        leafCount={leafCount}
         cwd={activeWorkspace.path}
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
@@ -1428,12 +1466,7 @@ export function AppLayout() {
                 <KanbanBoard
                   workspaces={workspaces}
                   onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-                    setActiveWorkspaceId(workspaceId)
-                    patchWorkspace(workspaceId, (ws) => ({
-                      ...ws,
-                      activeTabIndex: tabIndex,
-                      activePaneId: paneId,
-                    }))
+                    navigateToAgent(workspaceId, tabIndex, paneId)
                     setMobileView('terminals')
                   }}
                 />
@@ -1609,14 +1642,13 @@ export function AppLayout() {
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
                         const { tree, activeGroupId } = ensureTabGroups(activeWorkspace)
-                        const groups = collectGroups(tree)
-                        const lastGroupId = groups[groups.length - 1]?.id || ''
+                        const topRightGroupId = getTopRightGroupId(tree)
                         return (
                           <TabGroupTree
                             workspace={activeWorkspace}
                             node={tree}
                             activeGroupId={activeGroupId}
-                            lastGroupId={lastGroupId}
+                            topRightGroupId={topRightGroupId}
                             draggedTabId={draggedTabId}
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
@@ -1679,12 +1711,7 @@ export function AppLayout() {
                 <KanbanBoard
                   workspaces={workspaces}
                   onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
-                    setActiveWorkspaceId(workspaceId)
-                    patchWorkspace(workspaceId, (ws) => ({
-                      ...ws,
-                      activeTabIndex: tabIndex,
-                      activePaneId: paneId,
-                    }))
+                    navigateToAgent(workspaceId, tabIndex, paneId)
                     setAgentBoardOpen(false)
                   }}
                 />

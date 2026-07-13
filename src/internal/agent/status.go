@@ -102,6 +102,48 @@ func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
 	terminal.OnPtyActivity = handlePtyActivity
+	terminal.OnPtyInput = handlePtyInput
+}
+
+// handlePtyInput detects when the user submits a command to a PTY.
+// If the agent is currently idle, we transition it to thinking.
+//
+// To avoid false transitions from TUI initialization sequences (resize,
+// cursor positioning, etc. that contain \r\n), we only fire if the PTY
+// has already produced output — i.e., the agent process is actually
+// running and has rendered its UI. Without this guard, opening a new
+// agent session immediately flips to "thinking" because the terminal
+// sends control sequences on connect.
+func handlePtyInput(id string, data string) {
+	if !strings.ContainsAny(data, "\r\n") {
+		return
+	}
+
+	activeSesMu.Lock()
+	wCtx, exists := activeSessions[id]
+	activeSesMu.Unlock()
+
+	if !exists {
+		return
+	}
+
+	// Only transition if the agent has produced PTY output, indicating it
+	// is actually running (not just starting up).
+	if LastPtyActivity(id).IsZero() {
+		return
+	}
+
+	statusesMu.Lock()
+	prev, hasPrev := statuses[id]
+	statusesMu.Unlock()
+
+	if !hasPrev {
+		return
+	}
+
+	if prev.Status == "idle" {
+		updateStatus(id, wCtx.agentId, wCtx.cwd, "thinking", prev.Tool, prev.Details, prev.Title)
+	}
 }
 
 // handlePtyActivity records that the PTY for the given leaf/session id just
@@ -195,7 +237,10 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		case "thinking", "executing":
 			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") {
+			// Suppress the "finished" notification when the agent was running
+			// a background task — the agent is still working, it just completed
+			// a sub-task. A "finished" notification here would mislead the user.
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") && prev.Tool != "background_task" {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}

@@ -39,7 +39,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	// whose transcript may predate this watcher. Widen the search window to
 	// 1 hour so the resumed session is found. For a fresh start, only look
 	// for files modified after the watcher started (no negative offset).
-	lookback := 30 * time.Second
+	lookback := 0 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -77,12 +77,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 				if err != nil {
 					continue
 				}
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
 				for _, c := range candidates {
-					if !ptyRecentlyActive {
-						break
-					}
 					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0

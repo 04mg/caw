@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
@@ -63,7 +64,6 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	// the recency filter entirely in findUnclaimedOpenCodeSession.
 	watcherStart := time.Now()
 	// Re-bind bookkeeping for /new and /resume detection.
-	var lastActivity time.Time
 	var silentTicks int
 
 	defer func() {
@@ -97,7 +97,6 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				if changed {
 					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 					if openCodeSessionID != "" {
-						lastActivity = time.Now()
 						silentTicks = 0
 					}
 				}
@@ -115,7 +114,6 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 					}
 					w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
 					if before != lastReportedStatus || changed {
-						lastActivity = time.Now()
 						silentTicks = 0
 					} else {
 						silentTicks++
@@ -129,14 +127,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			// Mid-session re-bind for /new and /resume.
 			if openCodeSessionID != "" && silentTicks >= rebindSilenceTicks {
-				newKey := findRebindOpenCodeSession(dbPath, cwd, lastActivity, agentID, openCodeSessionID)
+				newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
 				if newKey != "" && newKey != openCodeSessionID {
 					if ClaimSession(agentID, cwd, newKey) {
 						UnclaimSession(agentID, cwd, openCodeSessionID)
 						openCodeSessionID = newKey
 						lastReportedStatus = ""
 						silentTicks = 0
-						lastActivity = time.Now()
 					}
 				}
 			}
@@ -221,12 +218,15 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 // returned session; the caller is responsible for calling ClaimSession.
 // Gates on PTY activity to ensure only the watcher whose PTY is producing
 // output switches to the new session.
-func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time, agentID string, currentID string) string {
+func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, currentID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
 	}
 	defer db.Close()
+
+	var currentUpdated int64
+	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, currentID).Scan(&currentUpdated)
 
 	var bestID string
 	var bestTime int64
@@ -246,8 +246,7 @@ func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time
 				if id == currentID {
 					continue
 				}
-				t := time.UnixMilli(tu)
-				if t.After(lastActivity) && t.After(time.UnixMilli(bestTime)) {
+				if tu > currentUpdated && tu > bestTime {
 					bestID = id
 					bestTime = tu
 				}
@@ -415,6 +414,16 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 			if p.Type == "text" {
 				textContent = p.Text
 			}
+		}
+		textContentLower := strings.ToLower(textContent)
+		if strings.Contains(textContentLower, "[y/n]") ||
+			strings.Contains(textContentLower, "[y/n]") ||
+			strings.Contains(textContentLower, "[y/N]") ||
+			strings.Contains(textContentLower, "[Y/n]") ||
+			strings.Contains(textContentLower, "(y/n)") ||
+			strings.Contains(textContentLower, "confirm") ||
+			strings.Contains(textContentLower, "approve") {
+			status = "waiting_input"
 		}
 		callback(status, "", textContent, sessionTitle)
 

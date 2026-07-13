@@ -136,7 +136,6 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                   selected={selected}
                   onSelect={handleSelect}
                   focusPath={focusPath}
-                  scrollContainerRef={treeScrollRef}
                 />
               </div>
 
