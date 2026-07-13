@@ -223,9 +223,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       copilotIntervalRef.current = 5
       setCopilotDeviceError('')
     }
-  }, [open, loadQuotaSettings, loadQuotas])
+  }, [open, loadQuotaSettings, loadQuotas, initialSection, pushSupported, pushIOSPWA])
 
-  const saveSettings = async (
+  const saveSettings = useCallback(async (
     agKey: string,
     ocCookie: string,
     ocWorkspace: string,
@@ -253,7 +253,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     } catch (e) {
       console.error('Failed to save quota settings', e)
     }
-  }
+  }, [])
 
   const startCopilotDeviceLogin = async () => {
     try {
@@ -305,7 +305,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setCopilotDeviceError(e.message || 'Poll failed')
       setCopilotDeviceFlow('error')
     }
-  }, [copilotDeviceCode])
+  }, [
+    copilotDeviceCode,
+    antigravityKey,
+    opencodeCookie,
+    opencodeWorkspace,
+    ollamaCookie,
+    claudeAccessToken,
+    codexAccessToken,
+    copilotEnterpriseHost,
+    openrouterApiKey,
+    saveSettings,
+  ])
 
   useEffect(() => {
     if (copilotDeviceFlow !== 'polling' || !copilotDeviceCode) return
@@ -315,7 +326,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         clearTimeout(pollTimerRef.current)
       }
     }
-  }, [copilotDeviceFlow, pollCopilotDeviceToken])
+  }, [copilotDeviceFlow, copilotDeviceCode, pollCopilotDeviceToken])
 
   const applyTheme = (newTheme: 'light' | 'dark' | 'system') => {
     setTheme(newTheme)

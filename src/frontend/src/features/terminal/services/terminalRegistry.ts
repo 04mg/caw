@@ -301,7 +301,7 @@ function wireInput(inst: TerminalInstance) {
 const SYNC_MODES = new Set([1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004])
 // Matches a single DEC private mode set/reset, e.g. "\x1b[?1003h" or
 // "\x1b[?2004l". TUI apps emit one mode per sequence.
-const MODE_RE = /\x1b\[\?(\d+)([hl])/g
+const MODE_RE = new RegExp(String.fromCharCode(27) + '\\[\\?(\\d+)([hl])', 'g')
 
 function trackModes(inst: TerminalInstance, data: string) {
   let m: RegExpExecArray | null

@@ -5,10 +5,9 @@ interface LazyTreeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>
 }
 
-export function LazyTree({ rootPath, selected, onSelect, focusPath, scrollContainerRef }: LazyTreeProps) {
+export function LazyTree({ rootPath, selected, onSelect, focusPath }: LazyTreeProps) {
   return (
     <div className="py-1">
       <LazyNode
@@ -19,7 +18,6 @@ export function LazyTree({ rootPath, selected, onSelect, focusPath, scrollContai
         selected={selected}
         onSelect={onSelect}
         focusPath={focusPath}
-        scrollContainerRef={scrollContainerRef}
       />
     </div>
   )

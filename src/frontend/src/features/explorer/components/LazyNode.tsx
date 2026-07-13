@@ -28,10 +28,9 @@ export interface LazyNodeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>
 }
 
-export function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusPath, scrollContainerRef }: LazyNodeProps) {
+export function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusPath }: LazyNodeProps) {
   const [expanded, setExpanded] = useState(!!startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -118,7 +117,6 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
               selected={selected}
               onSelect={onSelect}
               focusPath={focusPath}
-              scrollContainerRef={scrollContainerRef}
             />
           ))}
           {children.length === 0 && (
