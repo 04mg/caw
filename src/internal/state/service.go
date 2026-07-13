@@ -1,6 +1,10 @@
 package state
 
-import "github.com/04mg/caw/internal/ws"
+import (
+	"encoding/json"
+
+	"github.com/04mg/caw/internal/ws"
+)
 
 type Service struct {
 	store *Store
@@ -25,6 +29,14 @@ func (s *Service) Set(as AppState) {
 
 func (s *Service) broadcast() {
 	cur := s.store.Get()
+	curJSON, _ := json.Marshal(cur)
+	lastStateMu.Lock()
+	if string(curJSON) == string(lastStateJSON) {
+		lastStateMu.Unlock()
+		return
+	}
+	lastStateJSON = curJSON
+	lastStateMu.Unlock()
 	s.mux.Broadcast("state", cur)
 }
 

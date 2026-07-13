@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -40,7 +41,15 @@ func RegisterHTTP(rg *gin.RouterGroup, store *Store, mux *ws.Multiplexer) {
 
 // RegisterMuxChannel wires the "state" channel into the multiplexer.
 // On subscribe, the current state is sent to the client. Inbound messages
-// are treated as state updates and broadcast to other subscribers.
+// are treated as state updates and broadcast to other subscribers. The
+// broadcast is skipped if the normalized state JSON is identical to the
+// last broadcast, preventing redundant full-state fan-out when multiple
+// clients persist the same state in quick succession.
+var (
+	lastStateJSON []byte
+	lastStateMu   sync.Mutex
+)
+
 func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
 	mux.HandleChannel("state",
 		func(c *ws.MuxClient) {
@@ -59,7 +68,15 @@ func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
 			store.Set(s)
 			next := store.Get()
 			nextJSON, _ := json.Marshal(next)
-			// Broadcast the normalized state to everyone except the sender.
+
+			lastStateMu.Lock()
+			if string(nextJSON) == string(lastStateJSON) {
+				lastStateMu.Unlock()
+				return
+			}
+			lastStateJSON = nextJSON
+			lastStateMu.Unlock()
+
 			mux.BroadcastExcept("state", json.RawMessage(nextJSON), c)
 		},
 	)
