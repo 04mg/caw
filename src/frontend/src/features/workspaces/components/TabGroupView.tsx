@@ -187,7 +187,6 @@ export function TabGroupView({
             onSplitVert={onSplitVert}
             onSplitHoriz={onSplitHoriz}
             onClose={onClosePane}
-            leafCount={leafCount}
             cwd={workspace.path}
             onSizesChange={onSizesChange}
             gitStatuses={gitStatuses}

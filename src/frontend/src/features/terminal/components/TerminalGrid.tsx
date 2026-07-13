@@ -13,11 +13,10 @@ import { SplitGroup } from './SplitGroup'
 interface TerminalGridProps {
   node: LayoutNode
   activePaneId: string
-  onFocus: (id: string) => void
-  onSplitVert: (id: string) => void
-  onSplitHoriz: (id: string) => void
-  onClose: (id: string) => void
-  leafCount: number
+  onFocus: (paneId: string) => void
+  onSplitVert: (paneId: string) => void
+  onSplitHoriz: (paneId: string) => void
+  onClose: (paneId: string) => void
   cwd: string
   onSizesChange: (splitId: string, sizes: number[]) => void
   gitStatuses?: Record<string, string>
@@ -35,7 +34,6 @@ export function TerminalGrid({
   onSplitVert,
   onSplitHoriz,
   onClose,
-  leafCount,
   cwd,
   onSizesChange,
   gitStatuses,
@@ -125,7 +123,6 @@ export function TerminalGrid({
               onSplitVert={onSplitVert}
               onSplitHoriz={onSplitHoriz}
               onClose={onClose}
-              leafCount={leafCount}
               cwd={cwd}
               onSizesChange={onSizesChange}
               gitStatuses={gitStatuses}

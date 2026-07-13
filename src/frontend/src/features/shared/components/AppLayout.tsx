@@ -284,7 +284,7 @@ export function AppLayout() {
         paneId: activeWorkspace.activePaneId,
       }
     }
-  }, [activeWorkspace?.id, activeWorkspace?.activeTabIndex, activeWorkspace?.activePaneId])
+  }, [activeWorkspace])
 
   useEffect(() => {
     if (!loadedRef.current) return
@@ -563,7 +563,7 @@ export function AppLayout() {
       prevStatusesRef.current = nextStatuses
     })
     return () => {
-      unsub
+      unsub()
       for (const timer of Object.values(pendingFinishedRef.current)) {
         clearTimeout(timer)
       }
@@ -1238,7 +1238,6 @@ export function AppLayout() {
         onSplitVert={handleSplitVert}
         onSplitHoriz={handleSplitHoriz}
         onClose={handleClosePane}
-        leafCount={leafCount}
         cwd={activeWorkspace.path}
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
