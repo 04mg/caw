@@ -230,7 +230,7 @@ func (s *Session) ReadLoop() {
 		s.Pty.Close()
 	}()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 16384)
 	for {
 		n, err := s.Pty.ptmx.Read(buf)
 		if n > 0 {
