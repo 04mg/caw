@@ -23,6 +23,7 @@ const empty: BackendState = { workspaces: [], activeWorkspaceId: null }
 type RemoteListener = (state: BackendState) => void
 const listeners = new Set<RemoteListener>()
 let unsubMux: (() => void) | null = null
+let lastRemoteState: BackendState | null = null
 let pendingSend: BackendState | null = null
 let sendTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -35,9 +36,30 @@ function ensureMux() {
       for (const ws of stateData.workspaces) {
         fixWorkspace(ws)
       }
+      // Skip if identical to the last state we processed, so listeners
+      // don't re-render on no-op broadcasts (e.g. our own echo filtered
+      // by the backend dedup, or a duplicate from a second tab).
+      if (lastRemoteState && remoteStatesEqual(lastRemoteState, stateData)) return
+      lastRemoteState = stateData
       for (const l of listeners) l(stateData)
     } catch { /* ignore */ }
   })
+}
+
+function remoteStatesEqual(a: BackendState, b: BackendState): boolean {
+  if (a.activeWorkspaceId !== b.activeWorkspaceId) return false
+  if (a.workspaces.length !== b.workspaces.length) return false
+  for (let i = 0; i < a.workspaces.length; i++) {
+    const aw = a.workspaces[i]
+    const bw = b.workspaces[i]
+    if (aw.id !== bw.id || aw.activeTabIndex !== bw.activeTabIndex ||
+        aw.activePaneId !== bw.activePaneId) return false
+    if (aw.layouts.length !== bw.layouts.length) return false
+    for (let j = 0; j < aw.layouts.length; j++) {
+      if (aw.layouts[j].id !== bw.layouts[j].id) return false
+    }
+  }
+  return true
 }
 
 export function subscribeRemoteState(cb: RemoteListener): () => void {
