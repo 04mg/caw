@@ -149,8 +149,39 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
         }
       }
     }
-    return dims
   }
+  
+  // Register OSC 52 handler to capture TUI clipboard writes
+  term.parser.registerOscHandler(52, (data) => {
+    try {
+      const parts = data.split(';')
+      let base64Data = ''
+      if (parts.length > 1) {
+        base64Data = parts[1]
+      } else {
+        base64Data = parts[0]
+      }
+      if (base64Data === '?') {
+        // Query - ignore
+        return true
+      }
+      if (!base64Data) {
+        ;(term as any)._tuiClipboard = ''
+        return true
+      }
+      const binaryString = atob(base64Data.trim())
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      const decoded = new TextDecoder().decode(bytes)
+      ;(term as any)._tuiClipboard = decoded
+    } catch (e) {
+      console.error('Failed to parse OSC 52 data:', e)
+    }
+    return true
+  })
+
   return { term, fit }
 }
 
