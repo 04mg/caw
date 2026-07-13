@@ -76,6 +76,7 @@ var (
 	statusesMu     sync.RWMutex
 	activeSessions = make(map[string]*watcherContext)
 	activeSesMu    sync.Mutex
+	statusMux      *ws.Multiplexer
 	statusHub      = ws.NewHub()
 	watchers       = make(map[string]StatusWatcher)
 	watchersMu     sync.Mutex
@@ -92,6 +93,12 @@ var (
 	ptyActivity   = make(map[string]time.Time)
 	ptyActivityMu sync.RWMutex
 )
+
+// SetStatusMux wires the multiplexer into the agent package so that status
+// transitions broadcast on the "agents" channel. Called once from
+// server.New(). Falls back to the legacy statusHub when nil (legacy
+// /ws/agents/statuses endpoint).
+func SetStatusMux(m *ws.Multiplexer) { statusMux = m }
 
 // SetPushStore wires the state store into the agent package so that status
 // transitions can dispatch web push notifications. Called once from
@@ -180,6 +187,10 @@ func StatusHub() *ws.Hub { return statusHub }
 func marshalEvent(ev Event) ([]byte, error) { return json.Marshal(ev) }
 
 func broadcastEvent(ev Event) {
+	if statusMux != nil {
+		statusMux.Broadcast("agents", ev)
+		return
+	}
 	msg, err := marshalEvent(ev)
 	if err != nil {
 		return

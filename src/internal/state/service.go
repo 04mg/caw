@@ -4,11 +4,11 @@ import "github.com/04mg/caw/internal/ws"
 
 type Service struct {
 	store *Store
-	hub   *ws.Hub
+	mux   *ws.Multiplexer
 }
 
-func NewService(store *Store, hub *ws.Hub) *Service {
-	return &Service{store: store, hub: hub}
+func NewService(store *Store, mux *ws.Multiplexer) *Service {
+	return &Service{store: store, mux: mux}
 }
 
 func (s *Service) Get() AppState {
@@ -25,10 +25,10 @@ func (s *Service) Set(as AppState) {
 
 func (s *Service) broadcast() {
 	cur := s.store.Get()
-	s.hub.BroadcastText(cur)
+	s.mux.Broadcast("state", cur)
 }
 
-func (s *Service) broadcastExcept(exclude *ws.Client) {
+func (s *Service) broadcastExcept(exclude *ws.MuxClient) {
 	cur := s.store.Get()
-	s.hub.BroadcastTextExcept(cur, exclude)
+	s.mux.BroadcastExcept("state", cur, exclude)
 }

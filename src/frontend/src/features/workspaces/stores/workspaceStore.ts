@@ -1,5 +1,6 @@
 import { type Workspace, type BackendState } from '../types'
 import { normalizeLayout } from '@/features/shared/utils/layout'
+import { wsMux } from '@/features/shared/services/wsMultiplexer'
 
 function fixWorkspace(ws: Workspace): Workspace {
   if (!Array.isArray(ws.layouts)) {
@@ -21,33 +22,27 @@ const empty: BackendState = { workspaces: [], activeWorkspaceId: null }
 
 type RemoteListener = (state: BackendState) => void
 const listeners = new Set<RemoteListener>()
-let stateWs: WebSocket | null = null
+let unsubMux: (() => void) | null = null
 let pendingSend: BackendState | null = null
 let sendTimer: ReturnType<typeof setTimeout> | null = null
 
-function ensureWs() {
-  if (stateWs) return
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  stateWs = new WebSocket(`${protocol}//${location.host}/ws/state`)
-  stateWs.onmessage = (e) => {
+function ensureMux() {
+  if (unsubMux) return
+  unsubMux = wsMux.subscribe('state', (data) => {
     try {
-      const data = JSON.parse(e.data) as BackendState
-      if (!data || !Array.isArray(data.workspaces)) return
-      for (const ws of data.workspaces) {
+      const stateData = data as BackendState
+      if (!stateData || !Array.isArray(stateData.workspaces)) return
+      for (const ws of stateData.workspaces) {
         fixWorkspace(ws)
       }
-      for (const l of listeners) l(data)
+      for (const l of listeners) l(stateData)
     } catch { /* ignore */ }
-  }
-  stateWs.onclose = () => {
-    stateWs = null
-    setTimeout(() => ensureWs(), 1000)
-  }
+  })
 }
 
 export function subscribeRemoteState(cb: RemoteListener): () => void {
   listeners.add(cb)
-  ensureWs()
+  ensureMux()
   return () => { listeners.delete(cb) }
 }
 
@@ -76,14 +71,6 @@ export function persistWorkspaces(workspaces: Workspace[], activeWorkspaceId: st
     if (!pendingSend) return
     const payload = pendingSend
     pendingSend = null
-    if (stateWs && stateWs.readyState === WebSocket.OPEN) {
-      stateWs.send(JSON.stringify(payload))
-    } else {
-      fetch('/api/workspaces', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => { /* ignore */ })
-    }
+    wsMux.send('state', payload)
   }, 150)
 }
