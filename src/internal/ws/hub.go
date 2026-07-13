@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -100,6 +101,78 @@ func (h *Hub) BroadcastJSONExcept(v any, exclude *Client) {
 func (h *Hub) BroadcastText(v any)       { h.BroadcastJSON(v) }
 func (h *Hub) BroadcastTextExcept(v any, exclude *Client) { h.BroadcastJSONExcept(v, exclude) }
 
+// DefaultUpgrader is the shared upgrader for all WebSocket handlers.
+// Compression is enabled because the multiplexed channels (state, agents,
+// files) carry repetitive JSON payloads that compress well. Terminal PTY
+// handlers use TerminalUpgrader (no compression) since binary PTY streams
+// don't benefit and the CPU cost is noticeable under high output.
 var DefaultUpgrader = websocket.Upgrader{
+	CheckOrigin:      func(r *http.Request) bool { return true },
+	EnableCompression: true,
+}
+
+// TerminalUpgrader is the upgrader for terminal PTY streams. Compression
+// is disabled because PTY output is mostly binary/escape-sequence data
+// that doesn't compress and the per-write CPU cost is significant under
+// high output bursts.
+var TerminalUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// Keepalive settings. A ping is sent every PingInterval; if no pong is
+// received within PongWait, the connection is force-closed. The read
+// deadline is reset on every pong (and on every incoming message).
+const (
+	PingInterval = 30 * time.Second
+	PongWait     = 60 * time.Second
+	WriteWait    = 10 * time.Second
+)
+
+// StartKeepalive configures pong handling and launches a ping ticker for
+// the given connection. It returns a stop function that must be called
+// when the connection is torn down (e.g. from a defer in the handler).
+//
+// ping must perform the actual ping write through whatever per-conn
+// serialization the caller uses (e.g. ws.Client.WriteMessage or a
+// connWriter mutex) so that control-frame writes never race with data
+// writes on the same gorilla connection. The caller is still responsible
+// for the read loop (ReadMessage); this helper only handles the write
+// side (pings) and the pong handler that resets the read deadline.
+// Calling StartKeepalive before entering the read loop ensures the
+// deadline is armed even for mostly-idle channels (state, agent
+// statuses, file tree) that otherwise never receive data.
+func StartKeepalive(conn *websocket.Conn, ping func() error) (stop func()) {
+	_ = conn.SetReadDeadline(time.Now().Add(PongWait))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(PongWait))
+		return nil
+	})
+
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(PingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := ping(); err != nil {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() { close(done) }
+}
+
+// PingWriter returns a ping callback that writes a ping frame through the
+// given write function, honoring the configured write deadline. Use this
+// as the ping argument to StartKeepalive when the connection is wrapped
+// by a mutex-serializing writer (ws.Client, connWriter, connClient).
+func PingWriter(writeMsg func(int, []byte) error) func() error {
+	return func() error {
+		return writeMsg(websocket.PingMessage, nil)
+	}
 }

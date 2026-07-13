@@ -76,13 +76,50 @@ func Register(rg *gin.RouterGroup) {
 	rg.GET("/agents/statuses", h.ListStatuses)
 }
 
+// RegisterMuxChannel wires the "agents" channel into the multiplexer.
+// On subscribe, all current statuses are sent to the client. No inbound
+// messages are expected on this channel.
+func RegisterMuxChannel(mux *ws.Multiplexer) {
+	mux.HandleChannel("agents",
+		func(c *ws.MuxClient) {
+			statusesMu.RLock()
+			states := make([]AgentStatus, 0, len(statuses))
+			for _, s := range statuses {
+				states = append(states, s)
+			}
+			statusesMu.RUnlock()
+			sort.Slice(states, func(i, j int) bool {
+				return states[i].Sequence < states[j].Sequence
+			})
+			for _, s := range states {
+				_ = c.Send("agents", Event{
+					Type:      "agent_status",
+					SessionID: s.SessionID,
+					AgentID:   s.AgentID,
+					Cwd:       s.Cwd,
+					Status:    s.Status,
+					Tool:      s.Tool,
+					Details:   s.Details,
+					Title:     s.Title,
+					Timestamp: s.Timestamp,
+					Sequence:  s.Sequence,
+				})
+			}
+		},
+		nil,
+		nil,
+	)
+}
+
 func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
 	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	wc := hub.Register(c)
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer func() {
+		stopPing()
 		hub.Unregister(wc)
 		c.Close()
 	}()

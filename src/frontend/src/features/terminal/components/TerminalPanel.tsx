@@ -126,16 +126,6 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       })
       ro.observe(el)
       resizeObsRef.current = ro
-
-      // After a tab switch the panel remounts and react-resizable-panels
-      // applies its final sizes a few frames later. attachTerminal already
-      // ran fit() but against a not-yet-laid-out container, so the xterm
-      // canvas renders the wrong cols/rows. Schedule deferred re-fits to
-      // correct the display once layout settles, even if the element's
-      // final size equals the initial one (which would keep the
-      // ResizeObserver from firing).
-      setTimeout(flushResize, 120)
-      setTimeout(flushResize, 300)
     })()
 
     return () => {

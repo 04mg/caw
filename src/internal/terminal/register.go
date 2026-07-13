@@ -3,12 +3,14 @@ package terminal
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/state"
+	"github.com/04mg/caw/internal/ws"
 )
 
 type Handler struct {
@@ -64,7 +66,7 @@ func Register(rg *gin.RouterGroup, store *state.Store, upgrader *websocket.Upgra
 
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrader *websocket.Upgrader) {
 	sess, ok := defaultManagerMgr.Get(id)
-	if !ok {
+	if (!ok) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -75,55 +77,80 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 	}
 
 	wc := &connWriter{conn: c}
-
-	sess.mu.Lock()
-	scrollback := make([]byte, len(sess.scrollback))
-	copy(scrollback, sess.scrollback)
-	syncSeq := sess.syncMessage()
-	if sess.cols > 0 && sess.rows > 0 {
-		msg, _ := json.Marshal(map[string]any{
-			"type": "resize",
-			"cols": sess.cols,
-			"rows": sess.rows,
-		})
-		wc.WriteMessage(websocket.TextMessage, msg)
-	}
-	sess.mu.Unlock()
-
-	// Replay scrollback and sync-mode sequence to this client before
-	// registering it in sess.conns. While the replay runs, wc is invisible
-	// to ReadLoop and broadcastResize, so no other goroutine can write to
-	// it — eliminating the concurrent-write race. Registering after the
-	// replay also guarantees the client receives scrollback before any live
-	// output, preventing interleaving corruption.
-	if len(scrollback) > 0 {
-		stripped := stripAlternateScreen(scrollback)
-		if len(stripped) > 0 {
-			msg, _ := json.Marshal(map[string]any{
-				"type": "output",
-				"data": string(stripped),
-			})
-			wc.WriteMessage(websocket.TextMessage, msg)
-		}
-	}
-
-	if syncSeq != "" {
-		msg, _ := json.Marshal(map[string]any{
-			"type": "output",
-			"data": syncSeq,
-		})
-		wc.WriteMessage(websocket.TextMessage, msg)
-	}
-
-	sess.mu.Lock()
-	sess.conns[wc] = true
-	sess.mu.Unlock()
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
+	defer stopPing()
 
 	defer func() {
 		sess.mu.Lock()
 		delete(sess.conns, wc)
 		sess.mu.Unlock()
 		wc.Close()
+	}()
+
+	// firstResize is signaled when the client sends its first resize
+	// message (sent in ws.onopen on the frontend). We wait for it (with
+	// a 2s timeout) before sending scrollback so the replay renders with
+	// the correct cols/rows, eliminating the garbled-characters-on-load
+	// bug that required a manual resize to fix.
+	firstResize := make(chan struct{}, 1)
+	scrolled := false
+
+	// sendScrollback sends the buffered scrollback and sync-mode sequences
+	// to this client and registers it in sess.conns so it starts receiving
+	// live output. Must be called at most once. The client is registered
+	// in sess.conns AFTER the scrollback is written, so ReadLoop's live
+	// output cannot interleave with the replay. The connWriter mutex still
+	// serializes any concurrent writes, but the ordering guarantee ensures
+	// the client sees scrollback before new output.
+	sendScrollback := func() {
+		if scrolled {
+			return
+		}
+		scrolled = true
+
+		sess.mu.Lock()
+		scrollback := make([]byte, len(sess.scrollback))
+		copy(scrollback, sess.scrollback)
+		syncSeq := sess.syncMessage()
+		sess.mu.Unlock()
+
+		if len(scrollback) > 0 {
+			stripped := stripAlternateScreen(scrollback)
+			if len(stripped) > 0 {
+				msg, _ := json.Marshal(map[string]any{
+					"type": "output",
+					"data": string(stripped),
+				})
+				wc.WriteMessage(websocket.TextMessage, msg)
+			}
+		}
+
+		if syncSeq != "" {
+			msg, _ := json.Marshal(map[string]any{
+				"type": "output",
+				"data": syncSeq,
+			})
+			wc.WriteMessage(websocket.TextMessage, msg)
+		}
+
+		// Register the client only after scrollback is fully written so
+		// that live output from ReadLoop doesn't interleave with the
+		// replay.
+		sess.mu.Lock()
+		sess.conns[wc] = true
+		sess.mu.Unlock()
+	}
+
+	// Wait for the first resize from the client, with a timeout fallback.
+	// If the client doesn't send a resize within 2s (e.g. older frontend
+	// or a headless client), fall back to sending scrollback with the
+	// session's current dimensions.
+	go func() {
+		select {
+		case <-firstResize:
+		case <-time.After(2 * time.Second):
+		}
+		sendScrollback()
 	}()
 
 	for {
@@ -157,6 +184,12 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			sess.mu.Lock()
 			sess.resizePTY(cols, rows)
 			sess.mu.Unlock()
+			// Signal the first resize so sendScrollback runs with the
+			// client's actual dimensions.
+			select {
+			case firstResize <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
