@@ -107,6 +107,13 @@ func init() {
 
 // handlePtyInput detects when the user submits a command to a PTY.
 // If the agent is currently idle, we transition it to thinking.
+//
+// To avoid false transitions from TUI initialization sequences (resize,
+// cursor positioning, etc. that contain \r\n), we only fire if the PTY
+// has already produced output — i.e., the agent process is actually
+// running and has rendered its UI. Without this guard, opening a new
+// agent session immediately flips to "thinking" because the terminal
+// sends control sequences on connect.
 func handlePtyInput(id string, data string) {
 	if !strings.ContainsAny(data, "\r\n") {
 		return
@@ -117,6 +124,12 @@ func handlePtyInput(id string, data string) {
 	activeSesMu.Unlock()
 
 	if !exists {
+		return
+	}
+
+	// Only transition if the agent has produced PTY output, indicating it
+	// is actually running (not just starting up).
+	if LastPtyActivity(id).IsZero() {
 		return
 	}
 
