@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 
 	"github.com/04mg/caw/internal/agent"
 	_ "github.com/04mg/caw/internal/agent/agents"
@@ -29,7 +28,6 @@ type Server struct {
 	frontendFS fs.FS
 	hub        *ws.Hub
 	mux        *ws.Multiplexer
-	upgrader   websocket.Upgrader
 }
 
 func New() *Server {
@@ -47,7 +45,6 @@ func New() *Server {
 		store:      state.NewStore(state.DefaultDBPath()),
 		hub:        ws.NewHub(),
 		mux:        mux,
-		upgrader:   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
 	state.RegisterMuxChannel(mux, s.store)
 	agent.RegisterMuxChannel(mux)
@@ -64,7 +61,7 @@ func (s *Server) Engine() *gin.Engine {
 
 	api := r.Group("/api")
 	{
-		terminal.Register(api, s.store, &s.upgrader)
+		terminal.Register(api, s.store, &ws.TerminalUpgrader)
 		state.RegisterHTTP(api, s.store, s.mux)
 		workspace.Register(api)
 		git.Register(api)
@@ -84,7 +81,7 @@ func (s *Server) Engine() *gin.Engine {
 		agent.HandleStatusWS(c.Writer, c.Request, agent.StatusHub())
 	})
 	r.GET("/ws/terminals/:id", func(c *gin.Context) {
-		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &s.upgrader)
+		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &ws.TerminalUpgrader)
 	})
 
 	r.NoRoute(func(c *gin.Context) {
