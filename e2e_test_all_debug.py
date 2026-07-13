@@ -8,11 +8,11 @@ BASE_URL = "http://localhost:8080"
 WS_URL = "ws://localhost:8080"
 
 AGENTS = {
-    "claude": ['claude', '--dangerously-skip-permissions'],
+    "claude": ['claude'],
     "codex": ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
     "copilot": ['copilot', '--allow-all-tools', '--allow-all-paths'],
     "agy": ['agy', '--dangerously-skip-permissions'],
-    "opencode": ['opencode', '--dangerously-skip-permissions'],
+    "opencode": ['opencode', '--auto'],
     "pi": ['pi']
 }
 

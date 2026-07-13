@@ -102,6 +102,35 @@ func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
 	terminal.OnPtyActivity = handlePtyActivity
+	terminal.OnPtyInput = handlePtyInput
+}
+
+// handlePtyInput detects when the user submits a command to a PTY.
+// If the agent is currently idle, we transition it to thinking.
+func handlePtyInput(id string, data string) {
+	if !strings.ContainsAny(data, "\r\n") {
+		return
+	}
+
+	activeSesMu.Lock()
+	wCtx, exists := activeSessions[id]
+	activeSesMu.Unlock()
+
+	if !exists {
+		return
+	}
+
+	statusesMu.Lock()
+	prev, hasPrev := statuses[id]
+	statusesMu.Unlock()
+
+	if !hasPrev {
+		return
+	}
+
+	if prev.Status == "idle" {
+		updateStatus(id, wCtx.agentId, wCtx.cwd, "thinking", prev.Tool, prev.Details, prev.Title)
+	}
 }
 
 // handlePtyActivity records that the PTY for the given leaf/session id just
