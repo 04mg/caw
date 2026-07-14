@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
@@ -414,25 +413,18 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 			return
 		}
 
-		// Otherwise, the assistant turn is complete (finish = "stop" or "completed").
-		status := "idle"
-		var textContent string
-		for _, p := range parts {
-			if p.Type == "text" {
-				textContent = p.Text
-			}
+	// Otherwise, the assistant turn is complete (finish = "stop" or "completed").
+	// Only the canonical "question" tool (handled above) signals waiting_input;
+	// scanning the assistant text for confirmation keywords produces false
+	// positives (e.g. planning prose that happens to contain "confirm" or
+	// "approve"), so it has been removed.
+	var textContent string
+	for _, p := range parts {
+		if p.Type == "text" {
+			textContent = p.Text
 		}
-		textContentLower := strings.ToLower(textContent)
-		if strings.Contains(textContentLower, "[y/n]") ||
-			strings.Contains(textContentLower, "[y/n]") ||
-			strings.Contains(textContentLower, "[y/N]") ||
-			strings.Contains(textContentLower, "[Y/n]") ||
-			strings.Contains(textContentLower, "(y/n)") ||
-			strings.Contains(textContentLower, "confirm") ||
-			strings.Contains(textContentLower, "approve") {
-			status = "waiting_input"
-		}
-		callback(status, "", textContent, sessionTitle)
+	}
+	callback("idle", "", textContent, sessionTitle)
 
 	default:
 		callback("idle", "", "", sessionTitle)
