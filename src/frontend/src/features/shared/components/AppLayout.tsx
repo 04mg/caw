@@ -1719,7 +1719,7 @@ export function AppLayout() {
                           )}
                         </div>
                       </div>
-                      <div className="flex-1 min-h-0 relative">
+                      <div className="flex-1 min-h-0 relative flex flex-col">
                         {terminalBody}
                       </div>
                     </div>
