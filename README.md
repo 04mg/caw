@@ -13,7 +13,7 @@
   </p>
 
   <p align="center">
-    A single self-hostable binary that runs AI coding agents inside browser-based terminal panes, with live status tracking, git isolation and push notifications.
+    A single self-hostable binary for managing multiple AI coding agents in parallel.
   </p>
 
   <p align="center">
