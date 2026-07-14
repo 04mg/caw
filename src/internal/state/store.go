@@ -136,7 +136,7 @@ func (s *Store) loadTabLayouts(workspaceID string) []TabLayout {
 		if err := rows.Scan(&tl.ID, &tl.Name, new(int)); err != nil {
 			continue
 		}
-		tl.Layout = s.loadLayoutTree(tl.ID, "")
+		tl.Layout = s.loadLayoutTree(tl.ID, "", true)
 		layouts = append(layouts, tl)
 	}
 	if layouts == nil {
@@ -145,22 +145,21 @@ func (s *Store) loadTabLayouts(workspaceID string) []TabLayout {
 	return layouts
 }
 
-func (s *Store) loadLayoutTree(tabID, parentID string) LayoutNode {
+func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	var ln LayoutNode
 	var cmdJSON, sizesJSON string
 	var isDiff int
 
-	// If parentID is empty, get the root node
 	var row *sql.Row
-	if parentID == "" {
+	if isRoot {
 		row = s.db.QueryRow(
 			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
 			tabID,
 		)
 	} else {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch FROM layout_nodes WHERE tab_id = ? AND parent_id = ?",
-			tabID, parentID,
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch FROM layout_nodes WHERE tab_id = ? AND id = ?",
+			tabID, nodeID,
 		)
 	}
 
@@ -188,7 +187,7 @@ func (s *Store) loadLayoutTree(tabID, parentID string) LayoutNode {
 		if err := childRows.Scan(&childID); err != nil {
 			continue
 		}
-		child := s.loadLayoutTree(tabID, childID)
+		child := s.loadLayoutTree(tabID, childID, false)
 		ln.Children = append(ln.Children, child)
 	}
 	if ln.Children == nil {
