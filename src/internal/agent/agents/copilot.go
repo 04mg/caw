@@ -67,7 +67,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	stateDir := filepath.Join(home, ".copilot", "session-state")
 	const agentID = "copilot"
 
-	watcherStart := time.Now()
+	watcherStart := time.Now().Add(-10 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
@@ -260,6 +260,9 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 		}
 		switch ev.Type {
 		case "assistant.turn_end":
+			callback("idle", "", "", sessionTitle)
+			return
+		case "abort":
 			callback("idle", "", "", sessionTitle)
 			return
 		case "assistant.ask_user":

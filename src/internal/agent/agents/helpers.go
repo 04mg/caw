@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -375,6 +376,10 @@ func CleanPrompt(raw string) string {
 		s = strings.Trim(s, "\n\r\t ")
 		s = strings.Trim(s, "\"")
 	}
+
+	// 3.8. Strip any remaining XML-like tags (e.g. <bash-input>) but keep their content.
+	xmlTagRx := regexp.MustCompile("</?[a-zA-Z0-9_-]+[^>]*>")
+	s = xmlTagRx.ReplaceAllString(s, "")
 
 	// 4. Collapse newlines, carriage returns, tabs and multiple spaces into a single space
 	s = strings.ReplaceAll(s, "\r\n", " ")
