@@ -19,6 +19,7 @@
 
 - [ ] `make build` passes
 - [ ] `make lint` passes
+- [ ] `make test` passes
 - [ ] Manually tested in browser
 
 ## Notes for Reviewer
