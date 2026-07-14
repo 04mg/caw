@@ -74,8 +74,10 @@ var permissionStepTypes = map[string]bool{
 }
 
 var (
-	taskStartRx  = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
-	taskFinishRx = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+	taskStartRx   = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskFinishRx  = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
+	taskStatusRx  = regexp.MustCompile(`(?i)task:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
+	taskSenderRx  = regexp.MustCompile(`(?i)sender=([a-zA-Z0-9_\-\./]+)`)
 )
 
 func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -118,20 +120,19 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			heartbeat()
 			if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
-				// Gate on PTY activity: only claim if this watcher's PTY has
-				// recently produced output, preventing a silent watcher from
-				// stealing a session created by an active sibling agent.
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				if time.Since(lastPtyOut) < 3*time.Second {
-					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-					if err == nil && len(candidates) > 0 {
-						watchedFilePath = candidates[0]
-						lastFileSize = 0
-						lastCheck = time.Now()
-						if info, err := os.Stat(watchedFilePath); err == nil {
-							lastActivity = info.ModTime()
+				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+				if err == nil && len(candidates) > 0 {
+					for _, c := range candidates {
+						if ClaimSession(agentID, cwd, c) {
+							watchedFilePath = c
+							lastFileSize = 0
+							lastCheck = time.Now()
+							if info, err := os.Stat(watchedFilePath); err == nil {
+								lastActivity = info.ModTime()
+							}
+							silentTicks = 0
+							break
 						}
-						silentTicks = 0
 					}
 				}
 			}
@@ -201,9 +202,7 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 	}
 	var result []string
 	for _, c := range cands {
-		if ClaimSession(agentID, cwd, c.path) {
-			result = append(result, c.path)
-		}
+		result = append(result, c.path)
 	}
 	return result, nil
 }
@@ -247,16 +246,18 @@ func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]
 						if json.Unmarshal([]byte(uris), &uriList) != nil {
 							continue
 						}
+						matched := false
 						for _, u := range uriList {
 							p := uriToPath(u)
 							if p == "" {
 								continue
 							}
 							if filepath.Clean(p) == absCwd {
-								workspaceMatch[convID] = true
+								matched = true
 								break
 							}
 						}
+						workspaceMatch[convID] = matched
 					}
 					rows.Close()
 				}
@@ -371,9 +372,29 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				runningTasks[m[1]] = true
 			}
 		}
-		// Also scan step content (e.g. SYSTEM_MESSAGE, PLANNER_RESPONSE, etc.) for finished tasks
+		// Scan for finished/cancelled tasks in SYSTEM_MESSAGE content.
 		if m := taskFinishRx.FindStringSubmatch(step.Content); len(m) > 1 {
 			delete(runningTasks, m[1])
+		}
+		// SYSTEM_MESSAGE cancellation: "sender=<task-id> ... was cancelled"
+		// The task id is in the sender= field, not as "task id ... finished".
+		if step.Type == "SYSTEM_MESSAGE" {
+			if ms := taskSenderRx.FindStringSubmatch(step.Content); len(ms) > 1 {
+				if strings.Contains(strings.ToLower(step.Content), "cancelled") ||
+					strings.Contains(strings.ToLower(step.Content), "canceled") {
+					delete(runningTasks, ms[1])
+				}
+			}
+		}
+		// GENERIC steps report "Task: <id>\nStatus: DONE|RUNNING" — when the
+		// status is DONE, the task has completed and should be removed from
+		// the running set.
+		if step.Type == "GENERIC" && step.Status == "DONE" {
+			if mt := taskStatusRx.FindStringSubmatch(step.Content); len(mt) > 1 {
+				if strings.Contains(step.Content, "Status: DONE") {
+					delete(runningTasks, mt[1])
+				}
+			}
 		}
 	}
 

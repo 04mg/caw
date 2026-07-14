@@ -1,0 +1,194 @@
+package update
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
+		Name        string `json:"name"`
+		DownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+var apiURL = "https://api.github.com/repos/04mg/caw/releases/latest"
+var testExePath string
+
+// getAssetName returns the binary release asset name based on the current GOOS and GOARCH.
+func getAssetName() (string, error) {
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+
+	switch osName {
+	case "linux":
+		if archName == "amd64" {
+			return "caw-linux-amd64", nil
+		}
+	case "darwin":
+		if archName == "amd64" {
+			return "caw-darwin-amd64", nil
+		}
+		if archName == "arm64" {
+			return "caw-darwin-arm64", nil
+		}
+	case "windows":
+		if archName == "amd64" {
+			return "caw-windows-amd64.exe", nil
+		}
+	}
+	return "", fmt.Errorf("unsupported system: %s/%s", osName, archName)
+}
+
+// Run executes the self-update logic.
+func Run(currentVersion string) error {
+	assetName, err := getAssetName()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Checking for updates from GitHub...")
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "caw-updater")
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("no release found (the repository might not have any releases yet)")
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("github API rate limit exceeded or access forbidden (status 403)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("github API returned status %s", resp.Status)
+	}
+
+	var rel githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return fmt.Errorf("failed to parse release JSON: %w", err)
+	}
+
+	log.Printf("Current version: %s, latest version: %s", currentVersion, rel.TagName)
+	if currentVersion != "dev" && currentVersion == rel.TagName {
+		log.Printf("Caw is already up-to-date!")
+		return nil
+	}
+
+	var downloadURL string
+	for _, asset := range rel.Assets {
+		if asset.Name == assetName {
+			downloadURL = asset.DownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		return fmt.Errorf("no release asset found for name %s", assetName)
+	}
+
+	exePath := testExePath
+	if exePath == "" {
+		var err error
+		exePath, err = os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to get executable path: %w", err)
+		}
+		// Resolve symlinks to target the real executable
+		evalPath, err := filepath.EvalSymlinks(exePath)
+		if err == nil {
+			exePath = evalPath
+		}
+	}
+
+	log.Printf("Downloading latest binary from %s...", downloadURL)
+	resp, err = http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("failed to download release binary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download release binary, status: %s", resp.Status)
+	}
+
+	exeDir := filepath.Dir(exePath)
+	tmpFile, err := os.CreateTemp(exeDir, "caw-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file in %s: %w", exeDir, err)
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		// Clean up the temp file if it's still around
+		if _, err := os.Stat(tmpPath); err == nil {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write binary to temp file: %w", err)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	var mode os.FileMode = 0755
+	if info, err := os.Stat(exePath); err == nil {
+		mode = info.Mode()
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("failed to make temp file executable: %w", err)
+	}
+
+	backupPath := exePath + ".old"
+	os.Remove(backupPath) // ignore error if it doesn't exist
+
+	// Rename current binary to backup path
+	if err := os.Rename(exePath, backupPath); err != nil {
+		return fmt.Errorf("failed to backup current executable: %w", err)
+	}
+
+	// Move new binary to replace the current binary path
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		// Rollback if possible
+		if rollbackErr := os.Rename(backupPath, exePath); rollbackErr != nil {
+			return fmt.Errorf("failed to apply update (%w) and rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("failed to apply update, rolled back: %w", err)
+	}
+
+	// Attempt cleanup of the backup file
+	if err := os.Remove(backupPath); err != nil {
+		log.Printf("Successfully updated, but could not remove backup file %s: %v", backupPath, err)
+		if runtime.GOOS == "windows" {
+			log.Printf("On Windows, you can delete this file after exiting.")
+		}
+	} else {
+		log.Printf("Successfully updated caw to %s!", rel.TagName)
+	}
+
+	return nil
+}

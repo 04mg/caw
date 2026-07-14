@@ -17,11 +17,11 @@ func NewService() *Service { return &Service{} }
 
 func (s *Service) ListAgents() []Info {
 	agentsList := []Info{
-		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}},
+		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
 		{ID: "codex", Label: "Codex CLI", Cmd: []string{"codex", "--sandbox", "workspace-write", "--ask-for-approval", "never"}},
 		{ID: "copilot", Label: "GitHub Copilot", Cmd: []string{"copilot", "--allow-all-tools", "--allow-all-paths"}},
 		{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},
-		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--dangerously-skip-permissions"}},
+		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--auto"}},
 		{ID: "pi", Label: "Pi", Cmd: []string{"pi"}},
 	}
 	available := []Info{}

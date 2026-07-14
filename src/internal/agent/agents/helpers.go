@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -280,6 +281,18 @@ func stripXMLTag(s, openTagPrefix, closeTag string) string {
 	return s
 }
 
+// encodePathForDir encodes an OS path into the format used by agent CLIs
+// (Claude, Pi) for their per-project session subdirectories. These CLIs
+// replace every path separator AND the Windows drive-letter colon with "-".
+// On Unix that is just "/"; on Windows we must also handle "\" and ":" so
+// e.g. "C:\Users\foo" -> "C--Users-foo" (matching what Claude/Pi create).
+func encodePathForDir(p string) string {
+	s := strings.ReplaceAll(p, "\\", "-")
+	s = strings.ReplaceAll(s, "/", "-")
+	s = strings.ReplaceAll(s, ":", "-")
+	return s
+}
+
 // CleanPrompt sanitizes the prompt by removing system/XML tags, collapsing
 // newlines and multiple spaces to keep it clean for UI rendering,
 // and truncating to a reasonable preview length.
@@ -293,6 +306,12 @@ func CleanPrompt(raw string) string {
 	if idx := strings.Index(s, "</USER_REQUEST>"); idx != -1 {
 		s = s[:idx]
 	}
+
+	// 1.5. Strip command name and message tags with content, and command args tags only
+	s = stripXMLTag(s, "<command-name", "</command-name>")
+	s = stripXMLTag(s, "<command-message", "</command-message>")
+	s = strings.ReplaceAll(s, "<command-args>", "")
+	s = strings.ReplaceAll(s, "</command-args>", "")
 
 	// 2. Strip system XML blocks
 	s = stripXMLTag(s, "<skill", "</skill>")
@@ -309,10 +328,27 @@ func CleanPrompt(raw string) string {
 	s = stripXMLTag(s, "<slash_commands", "</slash_commands>")
 	s = stripXMLTag(s, "<guidelines", "</guidelines>")
 	s = stripXMLTag(s, "<communication_style", "</communication_style>")
+	s = stripXMLTag(s, "<local-command-caveat", "</local-command-caveat>")
+	s = stripXMLTag(s, "<environment_context", "</environment_context>")
+	s = stripXMLTag(s, "<filesystem", "</filesystem>")
+	s = stripXMLTag(s, "<workspace_roots", "</workspace_roots>")
+	s = stripXMLTag(s, "<permission_profile", "</permission_profile>")
+	s = stripXMLTag(s, "<file_system", "</file_system>")
+	s = stripXMLTag(s, "<INSTRUCTIONS", "</INSTRUCTIONS>")
 
 	// 3. Truncate at other metadata/system block boundaries.
 	tags := []string{
 		"<ADDITIONAL_METADATA>",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
+		"<local-command-caveat>",
+		"<environment_context>",
+		"<filesystem>",
+		"<workspace_roots>",
+		"<permission_profile>",
+		"<file_system>",
+		"<INSTRUCTIONS>",
 		"<user_information>",
 		"<mcp_servers>",
 		"<web_application_development>",
@@ -340,6 +376,10 @@ func CleanPrompt(raw string) string {
 		s = strings.Trim(s, "\n\r\t ")
 		s = strings.Trim(s, "\"")
 	}
+
+	// 3.8. Strip any remaining XML-like tags (e.g. <bash-input>) but keep their content.
+	xmlTagRx := regexp.MustCompile("</?[a-zA-Z0-9_-]+[^>]*>")
+	s = xmlTagRx.ReplaceAllString(s, "")
 
 	// 4. Collapse newlines, carriage returns, tabs and multiple spaces into a single space
 	s = strings.ReplaceAll(s, "\r\n", " ")

@@ -2,7 +2,7 @@ package agents
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,27 +17,66 @@ func init() {
 	agent.RegisterStatusWatcher("copilot", &CopilotWatcher{})
 }
 
+// copilotEvent mirrors one line of the events.jsonl written by GitHub Copilot
+// CLI under ~/.copilot/session-state/<session-id>/events.jsonl.
+type copilotEvent struct {
+	Type      string          `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Timestamp string          `json:"timestamp,omitempty"`
+}
+
+// copilotAssistantMsg is the data payload for "assistant.message" events.
+type copilotAssistantMsg struct {
+	MessageID     string             `json:"messageId"`
+	Content       string             `json:"content"`
+	ToolRequests  []copilotToolReq   `json:"toolRequests,omitempty"`
+	ReasoningText string             `json:"reasoningText,omitempty"`
+}
+
+type copilotToolReq struct {
+	ToolCallID string `json:"toolCallId"`
+	Name       string `json:"name"`
+}
+
+// copilotToolResult is the data payload for "tool.result" events.
+type copilotToolResult struct {
+	ToolCallID string `json:"toolCallId"`
+}
+
+// copilotTurnEnd is the data payload for "assistant.turn_end" events.
+type copilotTurnEnd struct {
+	TurnID string `json:"turnId"`
+}
+
+// copilotUserMsg is the data payload for "user.message" events.
+type copilotUserMsg struct {
+	Content            string `json:"content"`
+	TransformedContent string `json:"transformedContent"`
+}
+
+// copilotAskUser is the data payload for "assistant.ask_user" events.
+type copilotAskUser struct {
+	Question string `json:"question"`
+}
+
 func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".copilot", "session-store.db")
+	stateDir := filepath.Join(home, ".copilot", "session-state")
 	const agentID = "copilot"
 
-	var lastDBMod time.Time
-	var copilotSessionID string
-	// For a fresh start, only match sessions created after the watcher
-	// started (no negative offset). On resume, the session may predate the
-	// watcher so the recency filter is skipped in findUnclaimedCopilotSession.
-	watcherStart := time.Now()
-	// Re-bind bookkeeping for /new and /resume detection.
+	watcherStart := time.Now().Add(-10 * time.Second)
+	var lastFileSize int64 = 0
+	var watchedFilePath string
+	var sessionTitle string
 	var lastActivity time.Time
 	var silentTicks int
 
 	defer func() {
-		if copilotSessionID != "" {
-			UnclaimSession(agentID, cwd, copilotSessionID)
+		if watchedFilePath != "" {
+			UnclaimSession(agentID, cwd, watchedFilePath)
 		}
 	}()
 
@@ -47,49 +86,53 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			return
 		case <-ticker.C:
 			heartbeat()
-			info, err := os.Stat(dbPath)
-			if err != nil {
-				continue
-			}
-			if info.ModTime() == lastDBMod {
-				silentTicks++
-				// Still run the re-bind check below even when the DB mtime
-				// hasn't changed, since a /resume into an older session may
-				// not bump the top-level db file mtime immediately.
-			} else {
-				lastDBMod = info.ModTime()
-			}
-			if copilotSessionID == "" {
-				copilotSessionID = findUnclaimedCopilotSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
-				if copilotSessionID != "" {
-					lastActivity = time.Now()
-					silentTicks = 0
-				}
-			}
-			if copilotSessionID != "" {
-				before := lastActivity
-				w.parseCopilotDB(dbPath, cwd, copilotSessionID, func(status, tool, details, title string) {
-					lastActivity = time.Now()
-					callback(status, tool, details, title)
-				})
-				if lastActivity.Equal(before) {
-					silentTicks++
-				} else {
-					silentTicks = 0
-				}
-			} else {
-				silentTicks++
-			}
-
-			// Mid-session re-bind for /new and /resume.
-			if copilotSessionID != "" && silentTicks >= rebindSilenceTicks {
-				newKey := findRebindCopilotSession(dbPath, cwd, lastActivity, copilotSessionID, sessionID)
-				if newKey != "" && newKey != copilotSessionID {
-					if ClaimSession(agentID, cwd, newKey) {
-						UnclaimSession(agentID, cwd, copilotSessionID)
-						copilotSessionID = newKey
-						silentTicks = 0
+			if watchedFilePath == "" {
+				candidate := findCopilotEventsFile(stateDir, cwd, watcherStart, resume, agentID, sessionID)
+				if candidate != "" {
+					if ClaimSession(agentID, cwd, candidate) {
+						watchedFilePath = candidate
+						lastFileSize = 0
 						lastActivity = time.Now()
+						silentTicks = 0
+					}
+				}
+			}
+			if watchedFilePath != "" {
+				info, err := os.Stat(watchedFilePath)
+				if err == nil {
+					if info.Size() > lastFileSize {
+						wrappedCallback := func(status, tool, details, title string) {
+							if title != "" {
+								sessionTitle = title
+							}
+							callback(status, tool, details, sessionTitle)
+						}
+						w.parseCopilotEvents(watchedFilePath, lastFileSize, wrappedCallback)
+						lastFileSize = info.Size()
+						lastActivity = info.ModTime()
+						silentTicks = 0
+					} else {
+						silentTicks++
+					}
+				} else {
+					UnclaimSession(agentID, cwd, watchedFilePath)
+					watchedFilePath = ""
+					continue
+				}
+
+				// Mid-session re-bind for /new.
+				if silentTicks >= rebindSilenceTicks {
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second {
+						newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
+						if newFile != "" && newFile != watchedFilePath {
+							if ClaimSession(agentID, cwd, newFile) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newFile
+								lastFileSize = 0
+								silentTicks = 0
+							}
+						}
 					}
 				}
 			}
@@ -97,180 +140,185 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	}
 }
 
-// findUnclaimedCopilotSession enumerates candidate Copilot sessions in the
-// session-store db (filtered by cwd when possible and started after
-// watcherStart) and returns the id of the earliest one (oldest first) that is
-// not already claimed by another watcher of the same agent type+cwd.
-//
-// PTY activity correlation gates claiming: only a watcher whose PTY has
-// recently produced output may claim a new session, preventing a silent
-// watcher from stealing a session created by an active sibling agent.
-func findUnclaimedCopilotSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, ptyID string) string {
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+// findCopilotEventsFile searches ~/.copilot/session-state/*/events.jsonl for
+// the most recently modified one whose session.start event contains a cwd
+// matching the given cwd. Returns the first matching candidate path; the caller
+// is responsible for calling ClaimSession on the returned path.
+func findCopilotEventsFile(stateDir, cwd string, after time.Time, resume bool, agentID, ptyID string) string {
+	entries, err := os.ReadDir(stateDir)
 	if err != nil {
 		return ""
 	}
-	defer db.Close()
-
-	type row struct {
-		id        string
-		updatedAt string
+	type candidate struct {
+		path    string
+		modTime time.Time
 	}
-	var candidates []row
-
-	if cwd != "" {
-		rows, qerr := db.Query(
-			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at ASC",
-			cwd,
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var r row
-				rows.Scan(&r.id, &r.updatedAt)
-				candidates = append(candidates, r)
-			}
-			rows.Close()
-		}
-	}
-	if len(candidates) == 0 {
-		rows, qerr := db.Query(
-			"SELECT id, updated_at FROM sessions ORDER BY updated_at ASC",
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var r row
-				rows.Scan(&r.id, &r.updatedAt)
-				candidates = append(candidates, r)
-			}
-			rows.Close()
-		}
-	}
-
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
-
-	for _, r := range candidates {
-		// On resume, skip the recency filter — the session may predate the
-		// watcher. On fresh start, only match sessions started after the
-		// watcher launched to avoid grabbing a stale session.
-		if !resume {
-			if t, err := time.Parse(time.RFC3339, r.updatedAt); err == nil {
-				if !t.After(watcherStart) {
-					continue
-				}
-			}
-		}
-		if !ptyRecentlyActive {
+	var cands []candidate
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		if ClaimSession(agentID, cwd, r.id) {
-			return r.id
+		eventsPath := filepath.Join(stateDir, entry.Name(), "events.jsonl")
+		info, err := os.Stat(eventsPath)
+		if err != nil {
+			continue
+		}
+		if !resume && !info.ModTime().After(after) {
+			continue
+		}
+		if cwd != "" {
+			if !copilotEventsMatchesCwd(eventsPath, cwd) {
+				continue
+			}
+		}
+		cands = append(cands, candidate{path: eventsPath, modTime: info.ModTime()})
+	}
+	if len(cands) == 0 {
+		return ""
+	}
+	// Sort newest-first (most recently modified first) to ensure we claim the most recent session.
+	for i := 0; i < len(cands)-1; i++ {
+		for j := i + 1; j < len(cands); j++ {
+			if cands[j].modTime.After(cands[i].modTime) {
+				cands[i], cands[j] = cands[j], cands[i]
+			}
 		}
 	}
-	return ""
+	return cands[0].path
 }
 
-// findRebindCopilotSession looks for a different Copilot session in the same
-// cwd whose updated_at is more recent than lastActivity. Used by the
-// mid-session re-bind pass to detect /new and /resume. Gates on PTY activity.
-// It does NOT claim the returned session; the caller is responsible for
-// calling ClaimSession.
-func findRebindCopilotSession(dbPath string, cwd string, lastActivity time.Time, currentID string, ptyID string) string {
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+// copilotEventsMatchesCwd reads the first line of events.jsonl looking for a
+// session.start event with a matching cwd. Returns false if no match or if
+// the file can't be read.
+func copilotEventsMatchesCwd(eventsPath, cwd string) bool {
+	data, err := os.ReadFile(eventsPath)
 	if err != nil {
-		return ""
+		return false
 	}
-	defer db.Close()
-
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	if time.Since(lastPtyOut) > 3*time.Second {
-		return ""
-	}
-
-	var bestID string
-	var bestTime time.Time
-
-	if cwd != "" {
-		rows, qerr := db.Query(
-			"SELECT id, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at DESC",
-			cwd,
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var id, updatedAt string
-				if rows.Scan(&id, &updatedAt) != nil {
-					continue
-				}
-				if id == currentID {
-					continue
-				}
-				t, err := time.Parse(time.RFC3339, updatedAt)
-				if err != nil {
-					continue
-				}
-				if t.After(lastActivity) && t.After(bestTime) {
-					bestID = id
-					bestTime = t
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var ev copilotEvent
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			continue
+		}
+		if ev.Type == "session.start" {
+			var startData struct {
+				Context struct {
+					Cwd string `json:"cwd"`
+				} `json:"context"`
+			}
+			if json.Unmarshal(ev.Data, &startData) == nil {
+				if filepath.Clean(startData.Context.Cwd) == filepath.Clean(cwd) {
+					return true
 				}
 			}
-			rows.Close()
 		}
 	}
-	return bestID
+	return false
 }
 
-func (w *CopilotWatcher) parseCopilotDB(dbPath string, sessionCwd string, copilotSessionID string, callback func(status, tool, details, title string)) {
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return
-	}
-	defer db.Close()
-
-	// The session id was already resolved and claimed by findUnclaimedCopilotSession.
-	resolvedID := copilotSessionID
-
-	if resolvedID == "" {
+// parseCopilotEvents reads new lines from the events.jsonl file and derives
+// the current status from the last meaningful event.
+func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callback func(status, tool, details, title string)) {
+	lines, err := ReadNewLines(filePath, offset)
+	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Retrieve the session title: try summary first, then first user prompt.
+	// Forward pass: collect the first user prompt as the session title.
 	var sessionTitle string
-	_ = db.QueryRow(
-		"SELECT summary FROM sessions WHERE id = ?",
-		resolvedID,
-	).Scan(&sessionTitle)
-	if sessionTitle == "" {
-		_ = db.QueryRow(
-			"SELECT content FROM turns WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC LIMIT 1",
-			resolvedID,
-		).Scan(&sessionTitle)
-	}
-	sessionTitle = CleanPrompt(sessionTitle)
-
-	// Determine status from the most recent turn.
-	var role, content string
-	err = db.QueryRow(
-		"SELECT role, content FROM turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-		resolvedID,
-	).Scan(&role, &content)
-	if err != nil {
-		return
-	}
-
-	if role == "user" {
-		// User just sent a message — agent is processing.
-		callback("thinking", "", "", sessionTitle)
-	} else {
-		status := "idle"
-		contentLower := strings.ToLower(content)
-		if strings.Contains(contentLower, "[y/n]") ||
-			strings.Contains(contentLower, "[y/N]") ||
-			strings.Contains(contentLower, "[Y/n]") ||
-			strings.Contains(contentLower, "(y/n)") ||
-			strings.Contains(contentLower, "confirm") ||
-			strings.Contains(contentLower, "approve") {
-			status = "waiting_input"
+	for _, line := range lines {
+		var ev copilotEvent
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			continue
 		}
-		callback(status, "", "", sessionTitle)
+		if ev.Type == "user.message" {
+			var msg copilotUserMsg
+			if json.Unmarshal(ev.Data, &msg) == nil {
+				prompt := msg.Content
+				if prompt == "" {
+					prompt = msg.TransformedContent
+				}
+				if prompt != "" && sessionTitle == "" {
+					sessionTitle = CleanPrompt(prompt)
+				}
+			}
+		}
+	}
+
+	// Reverse pass: determine status from the last meaningful event.
+	// Skip intermediate events (hooks, tool execution_start/complete) that
+	// don't represent agent status.
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev copilotEvent
+		if json.Unmarshal([]byte(lines[i]), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "assistant.turn_end":
+			callback("idle", "", "", sessionTitle)
+			return
+		case "abort":
+			callback("idle", "", "", sessionTitle)
+			return
+		case "assistant.ask_user":
+			var ask copilotAskUser
+			question := ""
+			if json.Unmarshal(ev.Data, &ask) == nil {
+				question = ask.Question
+			}
+			callback("waiting_input", "ask_user", question, sessionTitle)
+			return
+		case "tool.result":
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "assistant.message":
+			var msg copilotAssistantMsg
+			if json.Unmarshal(ev.Data, &msg) != nil {
+				continue
+			}
+			if len(msg.ToolRequests) > 0 {
+				toolName := msg.ToolRequests[0].Name
+				status := "executing"
+				if toolName == "ask_user" {
+					status = "waiting_input"
+				}
+				callback(status, toolName, "", sessionTitle)
+				return
+			}
+			if msg.ReasoningText != "" && msg.Content == "" {
+				callback("thinking", "", "", sessionTitle)
+				return
+			}
+			if msg.Content != "" {
+				status := "idle"
+				contentLower := strings.ToLower(msg.Content)
+				if strings.Contains(contentLower, "[y/n]") ||
+					strings.Contains(contentLower, "[y/N]") ||
+					strings.Contains(contentLower, "[Y/n]") ||
+					strings.Contains(contentLower, "(y/n)") ||
+					strings.Contains(contentLower, "confirm") ||
+					strings.Contains(contentLower, "approve") {
+					status = "waiting_input"
+				}
+				callback(status, "", msg.Content, sessionTitle)
+				return
+			}
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "assistant.turn_start":
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "user.message":
+			callback("thinking", "", "", sessionTitle)
+			return
+		}
+		// Skip hook.start, hook.end, tool.execution_start,
+		// tool.execution_complete, session.*, system.* — they are
+		// intermediate and don't represent agent status.
 	}
 }

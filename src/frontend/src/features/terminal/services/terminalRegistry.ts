@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { RingBuffer } from './ringBuffer'
 
 export interface TerminalInstance {
   leafId: string
@@ -10,12 +11,16 @@ export interface TerminalInstance {
   /** Backend session ID used to re-connect the WebSocket after a drop. */
   backendId: string
   /** Buffer of output received before the term was ready, replayed on open. */
-  buffer: string[]
+  buffer: RingBuffer<string>
   exited: boolean
   /** @internal set during buffer replay to queue incoming ws messages */
   _replaying: boolean
   /** @internal messages queued during replay */
   _pendingQueue: string[]
+  /** @internal output chunks accumulated for batched rendering per frame */
+  _pendingOutput: string[]
+  /** @internal rAF id for the scheduled output flush, 0 when idle */
+  _rafId: number
   /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
@@ -149,8 +154,39 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
         }
       }
     }
-    return dims
   }
+  
+  // Register OSC 52 handler to capture TUI clipboard writes
+  term.parser.registerOscHandler(52, (data) => {
+    try {
+      const parts = data.split(';')
+      let base64Data = ''
+      if (parts.length > 1) {
+        base64Data = parts[1]
+      } else {
+        base64Data = parts[0]
+      }
+      if (base64Data === '?') {
+        // Query - ignore
+        return true
+      }
+      if (!base64Data) {
+        ;(term as any)._tuiClipboard = ''
+        return true
+      }
+      const binaryString = atob(base64Data.trim())
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      const decoded = new TextDecoder().decode(bytes)
+      ;(term as any)._tuiClipboard = decoded
+    } catch (e) {
+      console.error('Failed to parse OSC 52 data:', e)
+    }
+    return true
+  })
+
   return { term, fit }
 }
 
@@ -210,6 +246,7 @@ export function reconnectTerminalWs(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst || inst.exited || !inst.backendId) return
   if (inst.ws?.readyState === WebSocket.OPEN) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   inst.ws = null
   connectWs(inst, inst.backendId)
@@ -270,7 +307,7 @@ function wireInput(inst: TerminalInstance) {
 const SYNC_MODES = new Set([1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004])
 // Matches a single DEC private mode set/reset, e.g. "\x1b[?1003h" or
 // "\x1b[?2004l". TUI apps emit one mode per sequence.
-const MODE_RE = /\x1b\[\?(\d+)([hl])/g
+const MODE_RE = new RegExp(String.fromCharCode(27) + '\\[\\?(\\d+)([hl])', 'g')
 
 function trackModes(inst: TerminalInstance, data: string) {
   let m: RegExpExecArray | null
@@ -300,6 +337,45 @@ function safeScrollToBottom(inst: TerminalInstance) {
   } catch { /* ignore if not attached to DOM */ }
 }
 
+// scheduleFlush accumulates output chunks and flushes them to xterm.js in
+// a single term.write per animation frame. This replaces the previous
+// pattern of calling term.write(data, cb) + scrollToBottom for every WS
+// message, which caused N independent renders per burst. Batching into
+// one write per frame (~16ms) keeps the terminal responsive under high
+// output (compiles, log tailing, find /) and eliminates visible jank.
+function scheduleFlush(inst: TerminalInstance) {
+  if (inst._rafId !== 0) return
+  inst._rafId = requestAnimationFrame(() => {
+    inst._rafId = 0
+    const chunks = inst._pendingOutput
+    inst._pendingOutput = []
+    if (chunks.length === 0) return
+    const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+    inst.term.write(combined, () => {
+      safeScrollToBottom(inst)
+    })
+    for (const ch of chunks) {
+      inst.buffer.push(ch)
+    }
+  })
+}
+
+function cancelFlush(inst: TerminalInstance) {
+  if (inst._rafId !== 0) {
+    cancelAnimationFrame(inst._rafId)
+    inst._rafId = 0
+  }
+  if (inst._pendingOutput.length > 0) {
+    const chunks = inst._pendingOutput
+    inst._pendingOutput = []
+    if (chunks.length > 0) {
+      const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+      try { inst.term.write(combined) } catch { /* ignore */ }
+      for (const ch of chunks) inst.buffer.push(ch)
+    }
+  }
+}
+
 function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
@@ -308,8 +384,9 @@ function flushPending(inst: TerminalInstance) {
       safeScrollToBottom(inst)
     })
     inst.buffer.push(data)
-    if (inst.buffer.length > 10000) inst.buffer.shift()
   }
+  // After replay, any subsequently batched output should resume normal
+  // rAF scheduling.
 }
 
 function connectWs(inst: TerminalInstance, backendId: string) {
@@ -333,11 +410,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
           inst._pendingQueue.push(msg.data)
           return
         }
-        inst.term.write(msg.data, () => {
-          safeScrollToBottom(inst)
-        })
-        inst.buffer.push(msg.data)
-        if (inst.buffer.length > 10000) inst.buffer.shift()
+        // Batch: accumulate the chunk and flush once per animation frame
+        // instead of writing + scrollToBottom per WS message.
+        inst._pendingOutput.push(msg.data)
+        scheduleFlush(inst)
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
@@ -364,14 +440,60 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       // once the OS kills the background socket, and the user is forced
       // to reload the page to regain input.
       if (!inst.exited && inst.backendId) {
-        setTimeout(() => {
-          if (!inst.exited && inst.ws === null) {
-            connectWs(inst, inst.backendId)
-          }
-        }, 1000)
+        fetch(`/api/terminals/${encodeURIComponent(inst.backendId)}`)
+          .then((res) => {
+            if (res.status === 404) {
+              inst.exited = true
+              onTerminalExit?.(inst.leafId)
+            } else {
+              setTimeout(() => {
+                if (!inst.exited && inst.ws === null) {
+                  connectWs(inst, inst.backendId)
+                }
+              }, 1000)
+            }
+          })
+          .catch(() => {
+            // Network/offline error, continue retrying
+            setTimeout(() => {
+              if (!inst.exited && inst.ws === null) {
+                connectWs(inst, inst.backendId)
+              }
+            }, 1000)
+          })
       }
     }
   }
+}
+
+// waitForLayout resolves when the container element has non-zero width
+// and height (i.e. the layout engine has applied final dimensions).
+// react-resizable-panels applies sizes asynchronously, so calling term.open
+// + fit.fit immediately after mount produces wrong cols/rows and garbled
+// rendering. We wait for the layout to settle, with a 500ms fallback so
+// we never block forever on a hidden/offscreen panel.
+function waitForLayout(el: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    const rect = el.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) {
+      resolve()
+      return
+    }
+    let resolved = false
+    const finish = () => {
+      if (resolved) return
+      resolved = true
+      ro.disconnect()
+      clearTimeout(timer)
+      resolve()
+    }
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) finish()
+    })
+    ro.observe(el)
+    const timer = setTimeout(finish, 500)
+  })
 }
 
 export async function attachTerminal(
@@ -388,51 +510,65 @@ export async function attachTerminal(
     const { term, fit } = makeTerminal()
     existing.term = term
     existing.fit = fit
+    // Wait for the container to have real dimensions before opening
+    // xterm.js, so fit.fit() computes correct cols/rows and the terminal
+    // doesn't render garbled output that requires a manual resize.
+    await waitForLayout(el)
     term.open(el)
-    // Fit first so the terminal dimensions are correct before writing.
     fit.fit()
-    // Replay buffered output so the terminal isn't blank after re-attach.
-    // Queue incoming WS messages during replay to avoid interleaved writes.
-    existing._replaying = true
-    existing._pendingQueue = []
-    if (existing.buffer.length > 0) {
-      term.write(existing.buffer.join(''), () => {
-        term.scrollToBottom()
-        existing._replaying = false
-        // Re-apply the tracked DEC private modes (mouse tracking, SGR
-        // mouse, bracketed paste, etc.) so the fresh xterm.js instance
-        // enters the same input-routing mode the running TUI expects.
-        // Without this, clicks and wheel scroll break after switching
-        // tabs / remounting, because the new xterm.js starts with all
-        // private modes OFF even though the TUI still has them on.
-        const sync = syncModes(existing)
-        if (sync) term.write(sync)
-        flushPending(existing)
-      })
-    } else {
-      existing._replaying = false
-      const sync = syncModes(existing)
-      if (sync) term.write(sync)
-      flushPending(existing)
-    }
 
     // Re-wire input handlers since the old term was disposed.
     wireInput(existing)
 
-    // Send a resize for the new dimensions.
-    if (existing.ws?.readyState === WebSocket.OPEN) {
+    if (existing.ws && existing.ws.readyState === WebSocket.OPEN) {
+      // Replay buffered output so the terminal isn't blank after re-attach.
+      // Queue incoming WS messages during replay to avoid interleaved writes.
+      existing._replaying = true
+      existing._pendingQueue = []
+      if (existing.buffer.length > 0) {
+        term.write(existing.buffer.join(''), () => {
+          term.scrollToBottom()
+          existing._replaying = false
+          // Re-apply the tracked DEC private modes (mouse tracking, SGR
+          // mouse, bracketed paste, etc.) so the fresh xterm.js instance
+          // enters the same input-routing mode the running TUI expects.
+          const sync = syncModes(existing)
+          if (sync) term.write(sync)
+          flushPending(existing)
+        })
+      } else {
+        existing._replaying = false
+        const sync = syncModes(existing)
+        if (sync) term.write(sync)
+        flushPending(existing)
+      }
+
+      // Send a resize for the new dimensions.
       const dims = fit.proposeDimensions()
       if (dims) existing.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+    } else {
+      // WebSocket is closed, closing, or null. Clear the local buffer to prevent
+      // duplication of replayed scrollback from the new WS connection.
+      existing.buffer.clear()
+      existing._replaying = false
+      existing._pendingQueue = []
+      if (!existing.exited && existing.backendId) {
+        connectWs(existing, existing.backendId)
+      }
     }
 
     return existing
   }
 
   const { term, fit } = makeTerminal()
+  // Wait for the container to have real dimensions before opening
+  // xterm.js, so fit.fit() computes correct cols/rows and the terminal
+  // doesn't render garbled output that requires a manual resize.
+  await waitForLayout(el)
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: [], exited: false, _replaying: false, _pendingQueue: [], _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -465,6 +601,7 @@ export function setAllTerminalThemes(theme: 'dark' | 'light') {
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
@@ -477,6 +614,9 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
 export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
+  try { inst.ws?.close() } catch { /* ignore */ }
+  inst.ws = null
   try { inst.term.dispose() } catch { /* ignore */ }
 }
 
@@ -491,6 +631,7 @@ export function detachTerminal(leafId: string) {
 export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)

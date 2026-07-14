@@ -21,4 +21,5 @@ var (
 	// OpenCode sessions created on first user message) to the correct PTY
 	// when multiple agents of the same type run in the same cwd.
 	OnPtyActivity func(id string, n int)
+	OnPtyInput    func(id string, data string)
 )

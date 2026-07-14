@@ -41,7 +41,6 @@ graphify-out/
 .serena/
 .playwright-mcp/
 .wterm_trash/
-.caw_trash/
 e2e/node_modules/
 e2e/test-results/
 e2e/playwright-report/
