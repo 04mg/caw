@@ -52,7 +52,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	// search window to 1 hour so the resumed session is found. For a fresh
 	// start, only look for files modified after the watcher started (no
 	// negative offset) to avoid grabbing a sibling agent's session.
-	lookback := 0 * time.Second
+	lookback := 10 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -193,7 +193,7 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		}
 		p := logLine.Payload
 		switch p.Type {
-		case "task_complete":
+		case "task_complete", "turn_aborted":
 			turnCompleted = true
 			continue
 		case "function_call":

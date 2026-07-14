@@ -74,7 +74,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// found; for a fresh start, only look for files modified after the
 	// watcher started (no negative offset) to avoid grabbing a sibling
 	// agent's session that was created moments before this watcher launched.
-	lookback := 0 * time.Second
+	lookback := 10 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
