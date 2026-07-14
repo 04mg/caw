@@ -70,6 +70,7 @@ export function TerminalGrid({
               }}
               className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
               title="Close pane"
+              data-testid={`terminal-close-${node.id}`}
             >
               <X className="h-3 w-3" />
             </button>

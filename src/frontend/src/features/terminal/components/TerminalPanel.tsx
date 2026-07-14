@@ -357,6 +357,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     <div
       className="relative h-full w-full overflow-hidden custom-context-menu"
       onContextMenu={handleContextMenu}
+      data-testid={`terminal-panel-${terminalId}`}
     >
       <div ref={elRef} className="h-full w-full overflow-hidden" />
       {contextMenu && (
