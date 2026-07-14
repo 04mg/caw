@@ -41,6 +41,10 @@ func buildTree(dir string, depth int) (FileNode, error) {
 }
 
 func searchAll(dir, q string, results *[]FileNode, depth, maxDepth, maxResults int) {
+	searchAllRec(dir, dir, q, results, depth, maxDepth, maxResults)
+}
+
+func searchAllRec(root, dir, q string, results *[]FileNode, depth, maxDepth, maxResults int) {
 	if depth > maxDepth || len(*results) >= maxResults {
 		return
 	}
@@ -62,11 +66,16 @@ func searchAll(dir, q string, results *[]FileNode, depth, maxDepth, maxResults i
 		path := filepath.Join(dir, name)
 		isDir := e.IsDir()
 
-		if q == "" || containsFold(name, q) {
+		relPath, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			relPath = name
+		}
+
+		if q == "" || containsFold(name, q) || containsFold(relPath, q) {
 			*results = append(*results, FileNode{Name: name, Path: path, IsDir: isDir})
 		}
 		if isDir {
-			searchAll(path, q, results, depth+1, maxDepth, maxResults)
+			searchAllRec(root, path, q, results, depth+1, maxDepth, maxResults)
 		}
 	}
 }

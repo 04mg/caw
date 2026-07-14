@@ -304,13 +304,14 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 				<>
 					<Tooltip delayDuration={0}>
 						<TooltipTrigger asChild>
-							<button
-								onClick={onToggleAgentBoard}
-								className={cn(
-									"shrink-0 transition-colors cursor-pointer",
-									agentBoardOpen ? "text-primary" : isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-								)}
-							>
+						<button
+							onClick={onToggleAgentBoard}
+							data-testid="status-bar-control-center"
+							className={cn(
+								"shrink-0 transition-colors cursor-pointer",
+								agentBoardOpen ? "text-primary" : isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+							)}
+						>
 								<SquareKanban className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
 							</button>
 						</TooltipTrigger>
@@ -364,7 +365,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-				<button className={cn("flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer", !isMobile && "px-2")}>
+				<button data-testid="status-bar-quota-trigger" className={cn("flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer", !isMobile && "px-2")}>
 					{isLoading ? (
 						<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
 					) : (
@@ -410,6 +411,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								refreshAll()
 							}}
 							disabled={isLoading}
+							data-testid="status-bar-quota-refresh"
 							className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
 							title="Refresh Limits"
 						>
@@ -427,6 +429,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									onClick={() => {
 										onOpenSettings('limits')
 									}}
+									data-testid="quota-configure-providers"
 									className="mt-2 block w-full px-2 py-1.5 text-center text-xs font-medium text-primary bg-secondary/40 border border-border rounded hover:bg-secondary transition-all"
 								>
 									Configure Providers in Settings
@@ -435,7 +438,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 						) : (
 							<>
 								{hasClaude && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-claude" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<Claude.Color className="h-3.5 w-3.5 shrink-0" />
 											Claude
@@ -477,7 +480,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{hasClaude && hasCodex && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasCodex && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-codex" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<Codex.Color className="h-3.5 w-3.5 shrink-0" />
 											Codex
@@ -518,7 +521,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{(hasClaude || hasCodex) && hasCopilot && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasCopilot && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-copilot" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
 											Copilot
@@ -559,7 +562,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{(hasClaude || hasCodex || hasCopilot) && hasAntigravity && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasAntigravity && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-antigravity" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<Antigravity.Color className="h-3.5 w-3.5 shrink-0" />
 											Antigravity
@@ -631,7 +634,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{hasAntigravity && hasOpenCode && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasOpenCode && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-opencode" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<OpenCode className="h-3.5 w-3.5 shrink-0" />
 											OpenCode Go
@@ -673,7 +676,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{(hasAntigravity || hasOpenCode) && hasOllama && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasOllama && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-ollama" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<Ollama className="h-3.5 w-3.5 shrink-0" />
 											Ollama
@@ -713,7 +716,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								{(hasAntigravity || hasOpenCode || hasOllama) && hasOpenRouter && <DropdownMenuSeparator className="bg-border" />}
 
 								{hasOpenRouter && (
-									<div className="px-2 flex flex-col gap-2">
+									<div data-testid="quota-row-openrouter" className="px-2 flex flex-col gap-2">
 										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
 											<OpenRouter className="h-3.5 w-3.5 shrink-0" />
 											OpenRouter
@@ -790,6 +793,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									onClick={() => {
 										onOpenSettings('limits')
 									}}
+									data-testid="quota-configure-providers"
 									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer font-sans"
 								>
 									<Key className="h-3 w-3" />

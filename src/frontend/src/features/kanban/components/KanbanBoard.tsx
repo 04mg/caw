@@ -249,6 +249,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       <div
         key={agent.sessionId}
         data-card-id={agent.sessionId}
+        data-testid="kanban-card"
         onClick={handleCardClick}
         className={`group relative overflow-hidden cursor-pointer rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 active:scale-[0.98] select-none flex flex-col gap-3.5 shadow-sm hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`}
       >
@@ -404,13 +405,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       )
     }
     return (
-      <div className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
+        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
           const ColIcon = col.icon
           return (
-            <div key={col.id} className="flex flex-col shrink-0 gap-3 rounded-xl p-3 bg-secondary/5">
+            <div key={col.id} data-testid={`kanban-column-${col.id}`} className="flex flex-col shrink-0 gap-3 rounded-xl p-3 bg-secondary/5">
               <div className="flex items-center justify-between pb-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
                   <ColIcon className="w-4 h-4 text-foreground" />
@@ -442,7 +443,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   }
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
+    <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
       {/* Kanban Board Columns */}
       <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2">
         {COLUMNS.map((col) => {
@@ -451,7 +452,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
           return (
             <div 
-              key={col.id} 
+              key={col.id}
+              data-testid={`kanban-column-${col.id}`}
               className="flex flex-col min-w-[280px] flex-1 rounded-xl p-4 min-h-[400px]"
             >
               {/* Column Header */}

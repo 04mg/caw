@@ -347,6 +347,10 @@ func (s *Store) Close() {
 }
 
 func DefaultDBPath() string {
+	if p := os.Getenv("CAW_DB_PATH"); p != "" {
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		return p
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home, err = os.UserConfigDir()
@@ -360,6 +364,10 @@ func DefaultDBPath() string {
 }
 
 func DefaultStatePath() string {
+	if p := os.Getenv("CAW_STATE_PATH"); p != "" {
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		return p
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home, err = os.UserConfigDir()

@@ -274,16 +274,10 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		if turnCompleted {
 			status = "idle"
 		}
-		msgLower := strings.ToLower(lastAssistantText)
-		if strings.Contains(msgLower, "[y/n]") ||
-			strings.Contains(msgLower, "[y/n]") ||
-			strings.Contains(msgLower, "[y/N]") ||
-			strings.Contains(msgLower, "[Y/n]") ||
-			strings.Contains(msgLower, "(y/n)") ||
-			strings.Contains(msgLower, "confirm") ||
-			strings.Contains(msgLower, "approve") {
-			status = "waiting_input"
-		}
+		// Only canonical user-input tools (handled above) signal waiting_input.
+		// Keyword scanning of assistant text for "confirm"/"approve"/"[y/n]"
+		// was removed: it produced false positives when the assistant's
+		// explanation or plan happened to use those words.
 		callback(status, "", "", sessionTitle)
 		return
 	}
