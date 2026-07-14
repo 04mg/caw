@@ -18,8 +18,10 @@ func init() {
 }
 
 type PiMessage struct {
-	Role    string    `json:"role"`
-	Content []PiBlock `json:"content"`
+	Role         string    `json:"role"`
+	Content      []PiBlock `json:"content"`
+	StopReason   string    `json:"stopReason,omitempty"`
+	ErrorMessage string    `json:"errorMessage,omitempty"`
 }
 
 type PiBlock struct {
@@ -39,7 +41,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 	// whose transcript may predate this watcher. Widen the search window to
 	// 1 hour so the resumed session is found. For a fresh start, only look
 	// for files modified after the watcher started (no negative offset).
-	lookback := 0 * time.Second
+	lookback := 10 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -244,6 +246,9 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 	}
 
 	if roleLower == "assistant" || roleLower == "agent" {
+		if strings.ToLower(msg.StopReason) == "aborted" || strings.Contains(strings.ToLower(msg.ErrorMessage), "aborted") {
+			return "idle", ""
+		}
 		var lastToolName string
 		var hasText bool
 		var hasThinking bool
