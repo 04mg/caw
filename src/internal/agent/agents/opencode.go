@@ -36,6 +36,9 @@ type openCodeMessage struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
 	} `json:"parts,omitempty"`
+	Error *struct {
+		Name string `json:"name"`
+	} `json:"error,omitempty"`
 }
 
 func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -62,7 +65,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	// started (no negative offset) to avoid grabbing a sibling agent's
 	// session. On resume, the session may predate the watcher so we skip
 	// the recency filter entirely in findUnclaimedOpenCodeSession.
-	watcherStart := time.Now()
+	watcherStart := time.Now().Add(-10 * time.Second)
 	// Re-bind bookkeeping for /new and /resume detection.
 	var silentTicks int
 
@@ -399,6 +402,10 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		// status to flash idle→executing repeatedly. Treat an unfinished
 		// assistant message as "thinking" (actively working) instead.
 		if msg.Finish == "" {
+			if msg.Error != nil && msg.Error.Name == "MessageAbortedError" {
+				callback("idle", "", "", sessionTitle)
+				return
+			}
 			if lastToolName != "" {
 				callback("executing", lastToolName, "", sessionTitle)
 			} else {
