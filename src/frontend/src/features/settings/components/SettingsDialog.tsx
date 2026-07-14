@@ -495,6 +495,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         key={agent.id}
                         icon={Icon}
                         label={agent.label}
+                        testId={`settings-agent-${agent.id}`}
                         onClick={() => {
                           setSelectedAgentId(agent.id)
                           const existing = getAgentCmdOverrides()[agent.id]
@@ -574,6 +575,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   </div>
                   <button
                     onClick={() => toggleAgent(selectedAgentId)}
+                    data-testid={`agent-toggle-${selectedAgentId}`}
                     className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring ${
                       !disabledAgents.includes(selectedAgentId) ? 'bg-primary' : 'bg-muted-foreground/30'
                     }`}
@@ -839,6 +841,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       key={prov.id}
                       icon={Icon}
                       label={prov.label}
+                      testId={`settings-provider-${prov.id}`}
                       onClick={() => {
                         setSelectedLimitProvider(prov.id as any)
                         setLimitStep(2)
@@ -1400,7 +1403,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent hideClose={isMobile} className={`p-0 flex flex-row overflow-hidden bg-background ${
+      <DialogContent hideClose={isMobile} data-testid="settings-dialog" className={`p-0 flex flex-row overflow-hidden bg-background ${
         isMobile
           ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
           : 'w-[600px] h-[400px] max-w-none max-h-none border border-border sm:rounded-lg'
@@ -1424,6 +1427,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <button
                         key={s.id}
                         onClick={() => selectSection(s.id)}
+                        data-testid={`settings-section-${s.id}`}
                         className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-foreground hover:bg-accent/40 transition-all"
                       >
                         <Icon className="h-4 w-4" />
@@ -1479,6 +1483,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <button
                     key={s.id}
                     onClick={() => setActiveSection(s.id)}
+                    data-testid={`settings-section-${s.id}`}
                     className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                       activeSection === s.id
                         ? 'bg-accent text-accent-foreground shadow-sm'
