@@ -263,6 +263,7 @@ export function FolderSidebar({
         <div className={dragOverPath === workspacePath ? 'ring-1 ring-primary rounded-sm' : ''}>
           {workspacePath ? (
             <LazyFileNode
+              key={workspacePath}
               name={
                 isWorktree
                   ? `Worktree: ${workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath}`
