@@ -76,6 +76,7 @@ var (
 	statusesMu     sync.RWMutex
 	activeSessions = make(map[string]*watcherContext)
 	activeSesMu    sync.Mutex
+	statusMux      *ws.Multiplexer
 	statusHub      = ws.NewHub()
 	watchers       = make(map[string]StatusWatcher)
 	watchersMu     sync.Mutex
@@ -93,6 +94,12 @@ var (
 	ptyActivityMu sync.RWMutex
 )
 
+// SetStatusMux wires the multiplexer into the agent package so that status
+// transitions broadcast on the "agents" channel. Called once from
+// server.New(). Falls back to the legacy statusHub when nil (legacy
+// /ws/agents/statuses endpoint).
+func SetStatusMux(m *ws.Multiplexer) { statusMux = m }
+
 // SetPushStore wires the state store into the agent package so that status
 // transitions can dispatch web push notifications. Called once from
 // server.New().
@@ -102,6 +109,22 @@ func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
 	terminal.OnPtyActivity = handlePtyActivity
+	terminal.OnPtyInput = handlePtyInput
+}
+
+// handlePtyInput detects when the user submits a command to a PTY.
+// If the agent is currently idle, we transition it to thinking.
+//
+// To avoid false transitions from TUI initialization sequences (resize,
+// cursor positioning, etc. that contain \r\n), we only fire if the PTY
+// has already produced output — i.e., the agent process is actually
+// running and has rendered its UI. Without this guard, opening a new
+// agent session immediately flips to "thinking" because the terminal
+// sends control sequences on connect.
+func handlePtyInput(id string, data string) {
+	// Disabled to prevent transitioning to "thinking" on non-agent PTY inputs.
+	// (e.g. regular shell commands). The status will transition to "thinking"
+	// or "executing" via the log watcher when the agent actually starts.
 }
 
 // handlePtyActivity records that the PTY for the given leaf/session id just
@@ -138,6 +161,10 @@ func StatusHub() *ws.Hub { return statusHub }
 func marshalEvent(ev Event) ([]byte, error) { return json.Marshal(ev) }
 
 func broadcastEvent(ev Event) {
+	if statusMux != nil {
+		statusMux.Broadcast("agents", ev)
+		return
+	}
 	msg, err := marshalEvent(ev)
 	if err != nil {
 		return
@@ -195,7 +222,10 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		case "thinking", "executing":
 			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") {
+			// Suppress the "finished" notification when the agent was running
+			// a background task — the agent is still working, it just completed
+			// a sub-task. A "finished" notification here would mislead the user.
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") && prev.Tool != "background_task" {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}
@@ -298,12 +328,15 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 		return
 	}
 
-	// lastActivity tracks when the watcher last received any status update so
-	// we can apply the idle timeout even if the watcher goroutine is still running.
+	// lastActivity tracks when the watcher last received an actual status change
+	// from the agent log.
 	lastActivity := time.Now()
+	// lastHeartbeat tracks the last poll confirmation from the watcher.
+	lastHeartbeat := time.Now()
 
 	// Idle-timeout watchdog: if the agent hasn't emitted a status change in
-	// idleTimeout seconds and the last known status is non-idle, revert to idle.
+	// idleTimeout seconds, or if the watcher itself has stopped calling the
+	// heartbeat callback (indicating a crash), revert to idle.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -312,18 +345,17 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if time.Since(lastActivity) < idleTimeout {
-					continue
-				}
-				statusesMu.RLock()
-				s, exists := statuses[wCtx.sessionId]
-				statusesMu.RUnlock()
-				// Do NOT auto-revert "waiting_input": the agent is blocked
-				// waiting for the user to answer — this can take minutes.
-				// Only revert transient "working" states (thinking/executing)
-				// that have stalled, which indicates a crash.
-				if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" {
-					updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
+				if time.Since(lastHeartbeat) > 30*time.Second || time.Since(lastActivity) > idleTimeout {
+					statusesMu.RLock()
+					s, exists := statuses[wCtx.sessionId]
+					statusesMu.RUnlock()
+					// Do NOT auto-revert "waiting_input": the agent is blocked
+					// waiting for the user to answer — this can take minutes.
+					// Only revert transient "working" states (thinking/executing)
+					// that have stalled.
+					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" {
+						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
+					}
 				}
 			}
 		}
@@ -331,9 +363,10 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
 		lastActivity = time.Now()
+		lastHeartbeat = time.Now()
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
 	}, func() {
-		lastActivity = time.Now()
+		lastHeartbeat = time.Now()
 	})
 }
 

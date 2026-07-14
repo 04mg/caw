@@ -23,6 +23,23 @@ export function collectGroups(node: TabGroupsNode): Extract<TabGroupsNode, { typ
   return node.children.flatMap(collectGroups)
 }
 
+/**
+ * Returns the ID of the group that occupies the top-right corner of the screen.
+ * At each horizontal split, we take the rightmost child.
+ * At each vertical split, we take the first (topmost) child.
+ */
+export function getTopRightGroupId(node: TabGroupsNode): string {
+  if (node.type === 'group') {
+    return node.id
+  }
+  if (node.orientation === 'horizontal') {
+    // rightmost child
+    return getTopRightGroupId(node.children[node.children.length - 1])
+  }
+  // vertical split — take the first (top) child
+  return getTopRightGroupId(node.children[0])
+}
+
 export function findGroupWithTab(node: TabGroupsNode, tabId: string): Extract<TabGroupsNode, { type: 'group' }> | null {
   if (node.type === 'group') {
     return node.tabs.includes(tabId) ? node : null

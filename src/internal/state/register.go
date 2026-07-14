@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -32,19 +33,66 @@ func (h *Handler) PutWorkspaces(c *gin.Context) {
 	httpx.OK(c, map[string]bool{"ok": true})
 }
 
-func RegisterHTTP(rg *gin.RouterGroup, store *Store, hub *ws.Hub) {
-	h := NewHandler(NewService(store, hub))
+func RegisterHTTP(rg *gin.RouterGroup, store *Store, mux *ws.Multiplexer) {
+	h := NewHandler(NewService(store, mux))
 	rg.GET("/workspaces", h.GetWorkspaces)
 	rg.POST("/workspaces", h.PutWorkspaces)
 }
 
+// RegisterMuxChannel wires the "state" channel into the multiplexer.
+// On subscribe, the current state is sent to the client. Inbound messages
+// are treated as state updates and broadcast to other subscribers. The
+// broadcast is skipped if the normalized state JSON is identical to the
+// last broadcast, preventing redundant full-state fan-out when multiple
+// clients persist the same state in quick succession.
+var (
+	lastStateJSON []byte
+	lastStateMu   sync.Mutex
+)
+
+func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
+	mux.HandleChannel("state",
+		func(c *ws.MuxClient) {
+			cur := store.Get()
+			_ = c.Send("state", cur)
+		},
+		nil,
+		func(c *ws.MuxClient, data []byte) {
+			var s AppState
+			if err := json.Unmarshal(data, &s); err != nil {
+				return
+			}
+			if s.Workspaces == nil {
+				s.Workspaces = []Workspace{}
+			}
+			store.Set(s)
+			next := store.Get()
+			nextJSON, _ := json.Marshal(next)
+
+			lastStateMu.Lock()
+			if string(nextJSON) == string(lastStateJSON) {
+				lastStateMu.Unlock()
+				return
+			}
+			lastStateJSON = nextJSON
+			lastStateMu.Unlock()
+
+			mux.BroadcastExcept("state", json.RawMessage(nextJSON), c)
+		},
+	)
+}
+
+// HandleStateWS is the legacy /ws/state endpoint kept for backward
+// compatibility. New clients should use /ws with channel "state".
 func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws.Hub) {
 	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	wc := hub.Register(c)
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer func() {
+		stopPing()
 		hub.Unregister(wc)
 		c.Close()
 	}()

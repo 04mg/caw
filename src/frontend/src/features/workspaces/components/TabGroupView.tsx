@@ -10,7 +10,7 @@ interface TabGroupViewProps {
   workspace: Workspace
   group: Extract<TabGroupsNode, { type: 'group' }>
   isActive: boolean
-  isLastGroup: boolean
+  isTopRightGroup: boolean
   draggedTabId: string | null
   activePaneId: string
   gitStatuses: Record<string, string>
@@ -44,7 +44,7 @@ export function TabGroupView({
   workspace,
   group,
   isActive,
-  isLastGroup,
+  isTopRightGroup,
   draggedTabId,
   activePaneId,
   gitStatuses,
@@ -142,7 +142,7 @@ export function TabGroupView({
             onDragStart={onDragStart}
           />
         </div>
-        {isLastGroup && (
+        {isTopRightGroup && (
           <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
             {/* Settings Button */}
             <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
@@ -187,7 +187,6 @@ export function TabGroupView({
             onSplitVert={onSplitVert}
             onSplitHoriz={onSplitHoriz}
             onClose={onClosePane}
-            leafCount={leafCount}
             cwd={workspace.path}
             onSizesChange={onSizesChange}
             gitStatuses={gitStatuses}

@@ -1,43 +1,43 @@
 import { type AgentStatus, type AgentStatusEvent } from '../types'
+import { wsMux } from '@/features/shared/services/wsMultiplexer'
 
 
 type AgentStatusListener = (statuses: Record<string, AgentStatus>) => void
 
 let activeStatuses: Record<string, AgentStatus> = {}
 const listeners = new Set<AgentStatusListener>()
-let statusWs: WebSocket | null = null
+let unsubMux: (() => void) | null = null
 
-function ensureWs() {
-  if (statusWs) return
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  statusWs = new WebSocket(`${protocol}//${location.host}/ws/agents/statuses`)
-
-  statusWs.onmessage = (e) => {
+function ensureMux() {
+  if (unsubMux) return
+  unsubMux = wsMux.subscribe('agents', (data) => {
     try {
-      const data = JSON.parse(e.data) as AgentStatusEvent
-      if (!data || !data.sessionId) return
+      const ev = data as AgentStatusEvent
+      if (!ev || !ev.sessionId) return
 
-      if (data.event === 'agent_stopped') {
-        delete activeStatuses[data.sessionId]
-      } else if (data.event === 'agent_started') {
-        activeStatuses[data.sessionId] = {
-          sessionId: data.sessionId,
-          agentId: data.agentId,
+      if (ev.event === 'agent_stopped') {
+        delete activeStatuses[ev.sessionId]
+      } else if (ev.event === 'agent_started') {
+        activeStatuses[ev.sessionId] = {
+          sessionId: ev.sessionId,
+          agentId: ev.agentId,
+          cwd: ev.cwd,
           status: 'idle',
-          timestamp: data.timestamp || new Date().toISOString(),
-          sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
+          timestamp: ev.timestamp || new Date().toISOString(),
+          sequence: typeof ev.sequence === 'number' ? ev.sequence : undefined,
         }
       } else {
         // agent_status or initial payload
-        activeStatuses[data.sessionId] = {
-          sessionId: data.sessionId,
-          agentId: data.agentId,
-          status: data.status || 'idle',
-          tool: data.tool,
-          details: data.details,
-          title: data.title,
-          timestamp: data.timestamp || new Date().toISOString(),
-          sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
+        activeStatuses[ev.sessionId] = {
+          sessionId: ev.sessionId,
+          agentId: ev.agentId,
+          cwd: ev.cwd,
+          status: ev.status || 'idle',
+          tool: ev.tool,
+          details: ev.details,
+          title: ev.title,
+          timestamp: ev.timestamp || new Date().toISOString(),
+          sequence: typeof ev.sequence === 'number' ? ev.sequence : undefined,
         }
       }
 
@@ -45,12 +45,7 @@ function ensureWs() {
     } catch (err) {
       console.error('Error handling agent status message:', err)
     }
-  }
-
-  statusWs.onclose = () => {
-    statusWs = null
-    setTimeout(() => ensureWs(), 2000)
-  }
+  })
 }
 
 function notify() {
@@ -60,7 +55,7 @@ function notify() {
 
 export function subscribeAgentStatuses(cb: AgentStatusListener): () => void {
   listeners.add(cb)
-  ensureWs()
+  ensureMux()
   // Trigger initial callback with whatever state we currently have
   cb({ ...activeStatuses })
   return () => {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,17 +61,49 @@ func findWorkspaceRoot(path string) string {
 	return filepath.Dir(path)
 }
 
-func getTrashDir(filePath string) (string, error) {
-	wsRoot := findWorkspaceRoot(filePath)
-	trashDir := filepath.Join(wsRoot, ".caw_trash")
+func getTrashDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	trashDir := filepath.Join(home, ".caw", "trash")
 	if err := os.MkdirAll(trashDir, 0755); err != nil {
 		return "", err
 	}
 	return trashDir, nil
 }
 
+func moveFileOrDir(src, dest string) error {
+	if err := os.Rename(src, dest); err == nil {
+		return nil
+	}
+	// Fallback to copy + remove
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := os.MkdirAll(dest, 0755); err != nil {
+			return err
+		}
+		if err := copyDir(src, dest); err != nil {
+			os.RemoveAll(dest)
+			return err
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return err
+		}
+		if err := copyFile(src, dest); err != nil {
+			os.Remove(dest)
+			return err
+		}
+	}
+	return os.RemoveAll(src)
+}
+
 func moveToTrash(src string) (string, error) {
-	trashDir, err := getTrashDir(src)
+	trashDir, err := getTrashDir()
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +111,7 @@ func moveToTrash(src string) (string, error) {
 	timestamp := time.Now().UnixNano()
 	trashName := fmt.Sprintf("%d_%s", timestamp, base)
 	dest := filepath.Join(trashDir, trashName)
-	if err := os.Rename(src, dest); err != nil {
+	if err := moveFileOrDir(src, dest); err != nil {
 		return "", err
 	}
 	return dest, nil
@@ -89,8 +122,58 @@ func restoreFromTrash(trashPath, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return err
 	}
-	return os.Rename(trashPath, dest)
+	return moveFileOrDir(trashPath, dest)
 }
+
+func init() {
+	go func() {
+		// Run initial cleanup
+		cleanupTrash()
+		// Periodic cleanup every 5 minutes
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			cleanupTrash()
+		}
+	}()
+}
+
+func cleanupTrash() {
+	trashDir, err := getTrashDir()
+	if err != nil {
+		return
+	}
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		name := entry.Name()
+		idx := strings.Index(name, "_")
+		if idx != -1 {
+			var nano int64
+			_, err := fmt.Sscanf(name[:idx], "%d", &nano)
+			if err == nil {
+				t := time.Unix(0, nano)
+				if t.Before(cutoff) {
+					path := filepath.Join(trashDir, name)
+					_ = os.RemoveAll(path)
+				}
+				continue
+			}
+		}
+		// Fallback to ModTime
+		if info.ModTime().Before(cutoff) {
+			path := filepath.Join(trashDir, name)
+			_ = os.RemoveAll(path)
+		}
+	}
+}
+
 
 func (h *HistoryManager) Undo() error {
 	h.mu.Lock()

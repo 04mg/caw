@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
@@ -35,6 +36,9 @@ type openCodeMessage struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
 	} `json:"parts,omitempty"`
+	Error *struct {
+		Name string `json:"name"`
+	} `json:"error,omitempty"`
 }
 
 func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -61,9 +65,8 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	// started (no negative offset) to avoid grabbing a sibling agent's
 	// session. On resume, the session may predate the watcher so we skip
 	// the recency filter entirely in findUnclaimedOpenCodeSession.
-	watcherStart := time.Now()
+	watcherStart := time.Now().Add(-10 * time.Second)
 	// Re-bind bookkeeping for /new and /resume detection.
-	var lastActivity time.Time
 	var silentTicks int
 
 	defer func() {
@@ -95,9 +98,8 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			if openCodeSessionID == "" {
 				if changed {
-					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
+					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 					if openCodeSessionID != "" {
-						lastActivity = time.Now()
 						silentTicks = 0
 					}
 				}
@@ -115,7 +117,6 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 					}
 					w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
 					if before != lastReportedStatus || changed {
-						lastActivity = time.Now()
 						silentTicks = 0
 					} else {
 						silentTicks++
@@ -129,14 +130,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 			// Mid-session re-bind for /new and /resume.
 			if openCodeSessionID != "" && silentTicks >= rebindSilenceTicks {
-				newKey := findRebindOpenCodeSession(dbPath, cwd, lastActivity, agentID, openCodeSessionID, sessionID)
+				newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
 				if newKey != "" && newKey != openCodeSessionID {
 					if ClaimSession(agentID, cwd, newKey) {
 						UnclaimSession(agentID, cwd, openCodeSessionID)
 						openCodeSessionID = newKey
 						lastReportedStatus = ""
 						silentTicks = 0
-						lastActivity = time.Now()
 					}
 				}
 			}
@@ -156,7 +156,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 // the agent process in this PTY is the one that created the session. This
 // prevents watcher 1 from claiming a session that was created by watcher 2's
 // agent just because watcher 1 polled first.
-func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, ptyID string) string {
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
@@ -198,14 +198,6 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 		}
 	}
 
-	// Check if this watcher's PTY has had recent activity. If yes, it means
-	// the agent in this PTY is actively producing output (e.g. responding to
-	// a user message), and a new session appearing in the DB likely belongs
-	// to this PTY. If no, skip claiming — another watcher's PTY is the one
-	// that created the new session.
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	ptyRecentlyActive := time.Since(lastPtyOut) < 3*time.Second
-
 	for _, r := range candidates {
 		// On resume, skip the recency filter — the session may predate the
 		// watcher (the agent reattaches to an old session). On fresh start,
@@ -215,13 +207,6 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 			if !sessionCreated.After(watcherStart) {
 				continue
 			}
-		}
-		// PTY activity gate: when there are competing watchers (more PTYs
-		// than claimed sessions), only claim if this PTY recently produced
-		// output. This prevents a silent watcher from stealing a session
-		// created by an active sibling agent.
-		if !ptyRecentlyActive {
-			continue
 		}
 		if ClaimSession(agentID, cwd, r.id) {
 			return r.id
@@ -236,17 +221,15 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 // returned session; the caller is responsible for calling ClaimSession.
 // Gates on PTY activity to ensure only the watcher whose PTY is producing
 // output switches to the new session.
-func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time, agentID string, currentID string, ptyID string) string {
+func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, currentID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
 	}
 	defer db.Close()
 
-	lastPtyOut := agent.LastPtyActivity(ptyID)
-	if time.Since(lastPtyOut) > 3*time.Second {
-		return ""
-	}
+	var currentUpdated int64
+	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, currentID).Scan(&currentUpdated)
 
 	var bestID string
 	var bestTime int64
@@ -266,8 +249,7 @@ func findRebindOpenCodeSession(dbPath string, cwd string, lastActivity time.Time
 				if id == currentID {
 					continue
 				}
-				t := time.UnixMilli(tu)
-				if t.After(lastActivity) && t.After(time.UnixMilli(bestTime)) {
+				if tu > currentUpdated && tu > bestTime {
 					bestID = id
 					bestTime = tu
 				}
@@ -420,6 +402,10 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		// status to flash idle→executing repeatedly. Treat an unfinished
 		// assistant message as "thinking" (actively working) instead.
 		if msg.Finish == "" {
+			if msg.Error != nil && msg.Error.Name == "MessageAbortedError" {
+				callback("idle", "", "", sessionTitle)
+				return
+			}
 			if lastToolName != "" {
 				callback("executing", lastToolName, "", sessionTitle)
 			} else {
@@ -435,6 +421,16 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 			if p.Type == "text" {
 				textContent = p.Text
 			}
+		}
+		textContentLower := strings.ToLower(textContent)
+		if strings.Contains(textContentLower, "[y/n]") ||
+			strings.Contains(textContentLower, "[y/n]") ||
+			strings.Contains(textContentLower, "[y/N]") ||
+			strings.Contains(textContentLower, "[Y/n]") ||
+			strings.Contains(textContentLower, "(y/n)") ||
+			strings.Contains(textContentLower, "confirm") ||
+			strings.Contains(textContentLower, "approve") {
+			status = "waiting_input"
 		}
 		callback(status, "", textContent, sessionTitle)
 

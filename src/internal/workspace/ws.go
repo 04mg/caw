@@ -4,22 +4,21 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/websocket"
+	"github.com/04mg/caw/internal/ws"
 )
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
-	c, err := wsUpgrader.Upgrade(w, r, nil)
+	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
-	hub := getHub()
+	client := &connClient{conn: c}
+	stopPing := ws.StartKeepalive(c, ws.PingWriter(client.WriteMessage))
+	defer stopPing()
 
-	defer hub.UnsubscribeAll(c)
+	hub := getHub()
+	defer hub.UnsubscribeAll(client)
 
 	for {
 		_, data, err := c.ReadMessage()
@@ -33,11 +32,11 @@ func HandleFilesWS(w http.ResponseWriter, r *http.Request) {
 		switch msg["type"] {
 		case "subscribe":
 			if path, ok := msg["path"].(string); ok {
-				hub.Subscribe(c, path)
+				hub.Subscribe(client, path)
 			}
 		case "unsubscribe":
 			if path, ok := msg["path"].(string); ok {
-				hub.Unsubscribe(c, path)
+				hub.Unsubscribe(client, path)
 			}
 		}
 	}
