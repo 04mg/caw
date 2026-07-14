@@ -252,13 +252,11 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 		var lastToolName string
 		var hasText bool
 		var hasThinking bool
-		var textContent string
 		for _, b := range msg.Content {
 			if b.Type == "tool_call" || b.Type == "tool_use" || b.Type == "toolCall" {
 				lastToolName = b.Name
 			} else if b.Type == "text" {
 				hasText = true
-				textContent = b.Text
 			} else if b.Type == "thinking" {
 				hasThinking = true
 			}
@@ -271,23 +269,14 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 		// tool call or text yet means the model is still working — report
 		// "thinking" so the status doesn't prematurely flip to idle while
 		// the LLM is still generating. Once a text block appears alongside
-		// the thinking block, the turn is complete and we can report idle
-		// (or waiting_input if the text contains a confirmation prompt).
+		// the thinking block, the turn is complete and we can report idle.
+		// Only canonical user-input tools signal waiting_input; keyword
+		// scanning of assistant text was removed due to false positives.
 		if hasThinking && !hasText {
 			return "thinking", ""
 		}
 		if hasText {
-			status := "idle"
-			textContentLower := strings.ToLower(textContent)
-			if strings.Contains(textContentLower, "[y/n]") ||
-				strings.Contains(textContentLower, "[y/N]") ||
-				strings.Contains(textContentLower, "[Y/n]") ||
-				strings.Contains(textContentLower, "(y/n)") ||
-				strings.Contains(textContentLower, "confirm") ||
-				strings.Contains(textContentLower, "approve") {
-				status = "waiting_input"
-			}
-			return status, ""
+			return "idle", ""
 		}
 	}
 

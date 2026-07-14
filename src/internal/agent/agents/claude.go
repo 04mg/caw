@@ -307,15 +307,10 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 		if turnCompleted {
 			status = "idle"
 		}
-		textContentLower := strings.ToLower(lastAssistantText)
-		if strings.Contains(textContentLower, "[y/n]") ||
-			strings.Contains(textContentLower, "[y/N]") ||
-			strings.Contains(textContentLower, "[Y/n]") ||
-			strings.Contains(textContentLower, "(y/n)") ||
-			strings.Contains(textContentLower, "confirm") ||
-			strings.Contains(textContentLower, "approve") {
-			status = "waiting_input"
-		}
+		// Only canonical user-input tools (handled above) signal waiting_input.
+		// Keyword scanning of assistant text for "confirm"/"approve"/"[y/n]"
+		// was removed: it produced false positives when the assistant's
+		// explanation or plan happened to use those words.
 		callback(status, "", lastAssistantText, sessionTitle)
 		return
 	}
