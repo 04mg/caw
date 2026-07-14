@@ -259,6 +259,14 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 					// that was interrupted, so we can report it correctly.
 					continue
 				}
+				// Skip empty-content user messages — Claude writes a
+				// placeholder user entry with empty content immediately
+				// before the interrupt message. Treating it as a real
+				// user turn would stop the scan before the interrupt is
+				// found, causing the status to stay "thinking" forever.
+				if userText == "" {
+					continue
+				}
 				seenUser = true
 				break
 			} else if msg.Role == "assistant" {
