@@ -7,7 +7,7 @@ else
 	BINARY := caw
 endif
 
-.PHONY: build lint
+.PHONY: build lint test
 
 build:
 	cd $(FRONTEND_DIR) && npm install && npm run build
@@ -16,3 +16,7 @@ build:
 lint:
 	cd $(FRONTEND_DIR) && npm run lint
 	cd $(SERVER_DIR) && go vet ./...
+
+test:
+	cd e2e && npm install && npx playwright install --with-deps chromium
+	node e2e/run-tests.mjs

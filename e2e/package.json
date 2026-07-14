@@ -1,0 +1,20 @@
+{
+  "name": "caw-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:smoke": "playwright test --project=smoke",
+    "test:agents": "playwright test --project=agents",
+    "test:quota": "playwright test --project=quota",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^26.1.1",
+    "better-sqlite3": "^11.8.1",
+    "typescript": "^5.6.3"
+  }
+}

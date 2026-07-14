@@ -401,6 +401,12 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	// Determine current status from the last step type written to the transcript.
 	// Because steps are only written once complete ("DONE"), the last written
 	// step tells us what just finished, which implies what the agent is doing now.
+	//
+	// Once a PLANNER_RESPONSE with no tool calls is seen, the agent has given
+	// a final answer and is idle. Subsequent SYSTEM_MESSAGE or GENERIC steps
+	// (e.g. session metadata, task notifications) must NOT override this idle
+	// state — only a new USER_INPUT (which starts a new turn) should.
+	seenFinalAnswer := false
 	switch lastType {
 	case "USER_INPUT":
 		// The user just sent a message; planner hasn't responded yet.
@@ -433,6 +439,41 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		callback("executing", lastToolNames[0], "", sessionTitle)
 
 	default:
+		// Scan backwards to find the last PLANNER_RESPONSE. If it had no
+		// tool calls, the agent already gave a final answer and is idle —
+		// any subsequent SYSTEM_MESSAGE/GENERIC steps should not override.
+		for i := len(lines) - 1; i >= 0; i-- {
+			var step antigravityStep
+			if json.Unmarshal([]byte(lines[i]), &step) != nil {
+				continue
+			}
+			if step.Type == "USER_INPUT" {
+				// A new user turn started after the last PLANNER_RESPONSE —
+				// the agent is thinking (waiting for planner to respond).
+				break
+			}
+			if step.Type == "PLANNER_RESPONSE" {
+				if len(step.ToolCalls) == 0 {
+					seenFinalAnswer = true
+				}
+				break
+			}
+		}
+
+		if seenFinalAnswer {
+			if len(runningTasks) > 0 {
+				var activeTask string
+				for t := range runningTasks {
+					activeTask = t
+					break
+				}
+				callback("executing", "background_task", activeTask, sessionTitle)
+				return
+			}
+			callback("idle", "", "", sessionTitle)
+			return
+		}
+
 		if permissionStepTypes[lastType] {
 			// The permission/question tool itself just completed — still need input
 			// until the next PLANNER_RESPONSE is written.

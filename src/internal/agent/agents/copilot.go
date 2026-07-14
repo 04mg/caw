@@ -295,17 +295,12 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 				return
 			}
 			if msg.Content != "" {
-				status := "idle"
-				contentLower := strings.ToLower(msg.Content)
-				if strings.Contains(contentLower, "[y/n]") ||
-					strings.Contains(contentLower, "[y/N]") ||
-					strings.Contains(contentLower, "[Y/n]") ||
-					strings.Contains(contentLower, "(y/n)") ||
-					strings.Contains(contentLower, "confirm") ||
-					strings.Contains(contentLower, "approve") {
-					status = "waiting_input"
-				}
-				callback(status, "", msg.Content, sessionTitle)
+				// Only canonical user-input tools (ask_user, handled above)
+				// signal waiting_input. Keyword scanning of assistant text for
+				// "confirm"/"approve"/"[y/n]" was removed: it produced false
+				// positives when the assistant's explanation happened to use
+				// those words.
+				callback("idle", "", msg.Content, sessionTitle)
 				return
 			}
 			callback("thinking", "", "", sessionTitle)

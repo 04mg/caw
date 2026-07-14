@@ -195,7 +195,7 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
+      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" data-testid="command-palette">
         <div className="flex items-center border-b border-border px-3">
           <Search className="h-4 w-4 text-muted-foreground shrink-0" />
           <Input
@@ -206,6 +206,7 @@ export function CommandPalette({
             onKeyDown={handleKeyDown}
             placeholder="Type to search..."
             className="border-0 shadow-none focus-visible:ring-0 pl-2"
+            data-testid="command-palette-input"
           />
         </div>
 
@@ -229,6 +230,7 @@ export function CommandPalette({
                     key={item.id}
                     onClick={item.action}
                     onMouseEnter={() => setSelectedIndex(globalIdx)}
+                    data-testid={`command-palette-item-${item.id}`}
                     className={cn(
                       'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left',
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',
@@ -253,6 +255,7 @@ export function CommandPalette({
                     key={item.id}
                     onClick={item.action}
                     onMouseEnter={() => setSelectedIndex(globalIdx)}
+                    data-testid={`command-palette-item-${item.id}`}
                     className={cn(
                       'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left',
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',

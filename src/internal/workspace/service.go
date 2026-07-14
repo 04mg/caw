@@ -131,7 +131,7 @@ func (s *Service) SearchAll(q, root string) ([]FileNode, error) {
 		return []FileNode{}, nil
 	}
 	results := []FileNode{}
-	searchAll(abs, q, &results, 0, 4, 30)
+	searchAll(abs, q, &results, 0, 10, 50)
 	return results, nil
 }
 

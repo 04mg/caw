@@ -1697,6 +1697,7 @@ export function AppLayout() {
                               className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
                               onClick={() => setSettingsOpen(true)}
                               title="Settings"
+                              data-testid="settings-open-button"
                             >
                               <Settings className="h-3.5 w-3.5" />
                             </Button>
