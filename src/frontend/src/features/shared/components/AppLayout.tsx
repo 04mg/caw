@@ -1684,7 +1684,7 @@ export function AppLayout() {
                             onAdd={addTab}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
-                            triggerClassName="h-[33px] px-2 border-r-0"
+                            triggerClassName="h-[33px] px-2 border-r border-border"
                             align="start"
                           />
                         </div>
