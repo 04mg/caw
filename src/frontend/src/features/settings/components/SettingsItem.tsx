@@ -4,12 +4,14 @@ interface SettingsItemProps {
   icon: React.ElementType
   label: string
   onClick: () => void
+  testId?: string
 }
 
-export function SettingsItem({ icon: Icon, label, onClick }: SettingsItemProps) {
+export function SettingsItem({ icon: Icon, label, onClick, testId }: SettingsItemProps) {
   return (
     <button
       onClick={onClick}
+      data-testid={testId}
       className="flex items-center justify-between p-3 rounded-xl border border-border bg-card hover:bg-accent/40 cursor-pointer select-none transition-all group duration-200 text-left w-full outline-none focus:ring-1 focus:ring-ring"
     >
       <div className="flex items-center gap-3">
