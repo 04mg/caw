@@ -28,7 +28,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -1678,40 +1678,48 @@ export function AppLayout() {
                   ) : activeWorkspace ? (
                     <div className="flex flex-col h-full bg-background">
                       {/* Empty workspace header top bar */}
-                      <div className="flex items-center justify-between border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none px-2">
-                        <div className="flex items-center gap-1.5">
+                      <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
+                        <div className="flex flex-1 h-full">
                           <NewTabMenu
                             onAdd={addTab}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
-                            triggerClassName="h-[33px] px-2 border-r-0"
+                            triggerClassName="h-[33px] px-2 border-r border-border"
                             align="start"
                           />
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5 text-muted-foreground hover:text-foreground animate-none"
-                            onClick={() => setSettingsOpen(true)}
-                            title="Settings"
-                          >
-                            <Settings className="h-3.5 w-3.5" />
-                          </Button>
-                          {folderSidebarCollapsed && (
+                        <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
+                          {/* Settings Button */}
+                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-5 w-5 text-muted-foreground hover:text-foreground animate-none"
-                              onClick={toggleFolderSidebar}
-                              title="Workspace Files"
+                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                              onClick={() => setSettingsOpen(true)}
+                              title="Settings"
                             >
-                              <Folder className="h-3.5 w-3.5" />
+                              <Settings className="h-3.5 w-3.5" />
                             </Button>
+                          </div>
+
+                          {/* Folder Button */}
+                          {folderSidebarCollapsed && (
+                            <div className="group flex items-center justify-center h-full select-none" style={{ width: 36 }}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                                onClick={toggleFolderSidebar}
+                                title="Workspace Files"
+                              >
+                                <Folder className="h-3.5 w-3.5 group-hover:hidden" />
+                                <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                              </Button>
+                            </div>
                           )}
                         </div>
                       </div>
-                      <div className="flex-1 min-h-0 relative">
+                      <div className="flex-1 min-h-0 relative flex flex-col">
                         {terminalBody}
                       </div>
                     </div>
