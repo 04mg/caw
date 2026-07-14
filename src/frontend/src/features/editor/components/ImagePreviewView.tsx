@@ -28,7 +28,9 @@ export function ImagePreviewView({ filePath }: ImagePreviewViewProps) {
       })
       .then((blob) => {
         if (!active) return
-        const url = URL.createObjectURL(blob)
+        const isSvg = filePath.toLowerCase().endsWith('.svg')
+        const typedBlob = isSvg ? new Blob([blob], { type: 'image/svg+xml' }) : blob
+        const url = URL.createObjectURL(typedBlob)
         activeBlobUrl = url
         setBlobUrl(url)
       })
