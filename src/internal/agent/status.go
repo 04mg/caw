@@ -314,10 +314,10 @@ func handleSessionExit(id string) {
 // the KanbanBoard from showing "working" indefinitely if the agent crashes
 // without triggering a clean session exit.
 //
-// Set to 5 minutes because LLM responses can take several minutes (especially
-// for long tool chains or slow providers). A 30s timeout caused false "idle"
-// transitions while the agent was legitimately waiting for an LLM response.
-const idleTimeout = 5 * time.Minute
+// Set to 2 minutes as a balance: LLM responses can take a minute or more
+// for complex tool chains, but an interrupt that doesn't write to the
+// transcript should be detected sooner than 5 minutes.
+const idleTimeout = 2 * time.Minute
 
 func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watchersMu.Lock()
