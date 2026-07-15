@@ -23,6 +23,7 @@ export interface LazyFileNodeProps {
   onDragOver: (e: React.DragEvent, path: string) => void
   onDragLeave: () => void
   onDropFiles: (e: React.DragEvent, targetDir: string) => void
+  onHoverPath?: (path: string) => void
 }
 
 export function LazyFileNode({
@@ -46,6 +47,7 @@ export function LazyFileNode({
   onDragOver,
   onDragLeave,
   onDropFiles,
+  onHoverPath,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -236,6 +238,7 @@ export function LazyFileNode({
       <div
         className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
         onContextMenu={handleContextMenu}
+        onMouseEnter={() => onHoverPath?.(path)}
         onDragOver={(e) => { if (isDir) onDragOver(e, path) }}
         onDragLeave={onDragLeave}
         onDrop={(e) => { if (isDir) onDropFiles(e, path) }}
@@ -325,6 +328,7 @@ export function LazyFileNode({
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
               onDropFiles={onDropFiles}
+              onHoverPath={onHoverPath}
             />
           ))}
 

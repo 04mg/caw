@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Search, Folder, Check, ArrowLeft, FolderPlus } from 'lucide-react'
+import { Search, Folder, Check, ArrowLeft, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Input } from '@/components/input'
 
 import { LazyTree } from '@/features/explorer/components/LazyTree'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
+import { DeleteDialog } from '@/features/explorer/components/DeleteDialog'
 import { type FileNode } from '@/features/explorer/types'
 import { EmojiPicker } from 'frimousse'
 
@@ -32,8 +33,11 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   const treeScrollRef = useRef<HTMLDivElement>(null)
   const [treeVersion, setTreeVersion] = useState(0)
   const [createFolderParent, setCreateFolderParent] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ path: string; name: string } | null>(null)
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -44,6 +48,17 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!open || event.key !== 'F2' || !hoveredPath || hoveredPath === '/' || editingPath) return
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      event.preventDefault()
+      setEditingPath(hoveredPath)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [open, hoveredPath, editingPath])
 
   const [wsName, setWsName] = useState('')
   const [emoji, setEmoji] = useState('')
@@ -80,6 +95,9 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
       setEmoji('')
       setCreateFolderParent(null)
       setContextMenu(null)
+      setEditingPath(null)
+      setDeleteTarget(null)
+      setHoveredPath(null)
     }
   }, [open])
 
@@ -132,6 +150,37 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
     } catch { /* ignore */ }
   }, [])
 
+  const renameFolder = useCallback(async (oldPath: string, name: string) => {
+    const sep = oldPath.includes('\\') ? '\\' : '/'
+    const parentPath = oldPath.substring(0, oldPath.lastIndexOf(sep)) || sep
+    setEditingPath(null)
+    try {
+      const res = await fetch('/api/workspaces/files', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPath, newPath: parentPath + (parentPath.endsWith(sep) ? '' : sep) + name }),
+      })
+      if (res.ok) setTreeVersion((version) => version + 1)
+    } catch { /* ignore */ }
+  }, [])
+
+  const deleteFolder = useCallback(async () => {
+    const target = deleteTarget
+    if (!target) return
+    setDeleteTarget(null)
+    try {
+      const res = await fetch('/api/workspaces/files', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: target.path }),
+      })
+      if (res.ok) {
+        if (selected === target.path) setSelected(null)
+        setTreeVersion((version) => version + 1)
+      }
+    } catch { /* ignore */ }
+  }, [deleteTarget, selected])
+
   const showDropdown = query.trim().length > 0 && (searching || results.length > 0)
 
   return (
@@ -168,10 +217,14 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                   selected={selected}
                   onSelect={handleSelect}
                   focusPath={focusPath}
-                  onShowContextMenu={(path, _name, x, y) => setContextMenu({ path, x, y })}
+                  onShowContextMenu={(path, name, x, y) => setContextMenu({ path, name, x, y })}
                   createTargetPath={createFolderParent}
                   onCreateFolder={createFolder}
                   onCreateCancel={() => setCreateFolderParent(null)}
+                  editingPath={editingPath}
+                  onRenameFolder={renameFolder}
+                  onRenameCancel={() => setEditingPath(null)}
+                  onHoverPath={setHoveredPath}
                 />
               </div>
 
@@ -188,6 +241,33 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                     <FolderPlus className="h-3.5 w-3.5" />
                     New Folder
                   </button>
+                  {contextMenu.path !== '/' && (
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setContextMenu(null)
+                          setEditingPath(contextMenu.path)
+                        }}
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Rename
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const target = contextMenu
+                          setContextMenu(null)
+                          setDeleteTarget({ path: target.path, name: target.name })
+                        }}
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </button>
+                    </>
+                  )}
                 </SmartContextMenu>
               )}
 
@@ -209,6 +289,12 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                 </div>
               )}
             </div>
+
+            <DeleteDialog
+              target={deleteTarget ? { ...deleteTarget, isDir: true } : null}
+              onConfirm={deleteFolder}
+              onCancel={() => setDeleteTarget(null)}
+            />
 
             <div className="flex items-center justify-between gap-2 shrink-0">
               <span className="text-xs text-muted-foreground truncate">

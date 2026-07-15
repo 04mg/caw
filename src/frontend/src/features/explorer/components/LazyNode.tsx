@@ -32,6 +32,10 @@ export interface LazyNodeProps {
   createTargetPath?: string | null
   onCreateFolder?: (parentPath: string, name: string) => void
   onCreateCancel?: () => void
+  editingPath?: string | null
+  onRenameFolder?: (path: string, name: string) => void
+  onRenameCancel?: () => void
+  onHoverPath?: (path: string) => void
 }
 
 export function LazyNode({
@@ -46,14 +50,20 @@ export function LazyNode({
   createTargetPath,
   onCreateFolder,
   onCreateCancel,
+  editingPath,
+  onRenameFolder,
+  onRenameCancel,
+  onHoverPath,
 }: LazyNodeProps) {
   const [expanded, setExpanded] = useState(!!startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
   const [createValue, setCreateValue] = useState('')
+  const [renameValue, setRenameValue] = useState(name)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const createInputRef = useRef<HTMLInputElement>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (loaded || loading) return
@@ -100,6 +110,14 @@ export function LazyNode({
     }
   }, [isCreating, expanded, loaded, load])
 
+  useEffect(() => {
+    if (editingPath === path) {
+      setRenameValue(name)
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }
+  }, [editingPath, path, name])
+
   const submitCreate = () => {
     const value = createValue.trim()
     if (!value || !onCreateFolder) return
@@ -117,6 +135,20 @@ export function LazyNode({
     }
   }
 
+  const handleRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (renameValue.trim() && renameValue.trim() !== name) {
+        onRenameFolder?.(path, renameValue.trim())
+      } else {
+        onRenameCancel?.()
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onRenameCancel?.()
+    }
+  }
+
   const toggle = () => {
     setExpanded((e) => {
       const next = !e
@@ -131,6 +163,7 @@ export function LazyNode({
     <div>
       <button
         ref={buttonRef}
+        onMouseEnter={() => onHoverPath?.(path)}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -155,7 +188,22 @@ export function LazyNode({
         ) : (
           <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate text-muted-foreground">{name}</span>
+        {editingPath === path ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={() => {
+              if (renameValue.trim() && renameValue.trim() !== name) onRenameFolder?.(path, renameValue.trim())
+              else onRenameCancel?.()
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : (
+          <span className="truncate text-muted-foreground">{name}</span>
+        )}
         {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
       </button>
       {expanded && loaded && (
@@ -173,6 +221,10 @@ export function LazyNode({
               createTargetPath={createTargetPath}
               onCreateFolder={onCreateFolder}
               onCreateCancel={onCreateCancel}
+              editingPath={editingPath}
+              onRenameFolder={onRenameFolder}
+              onRenameCancel={onRenameCancel}
+              onHoverPath={onHoverPath}
             />
           ))}
           {isCreating && (

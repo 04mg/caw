@@ -43,6 +43,7 @@ export function FolderSidebar({
   } | null>(null)
   const [clipboard, setClipboard] = useState<{ path: string } | null>(null)
   const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [createTarget, setCreateTarget] = useState<{
     parentPath: string; type: 'file' | 'dir'
   } | null>(null)
@@ -72,6 +73,17 @@ export function FolderSidebar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'F2' || !hoveredPath || editingPath) return
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      event.preventDefault()
+      setEditingPath(hoveredPath)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [hoveredPath, editingPath])
 
   const triggerRefresh = useCallback(() => {
     setRefreshCounter((c) => c + 1)
@@ -341,6 +353,7 @@ export function FolderSidebar({
               onCancelRename={() => setEditingPath(null)}
               onCreateSubmit={handleCreateSubmit}
               onCreateCancel={() => setCreateTarget(null)}
+              onHoverPath={setHoveredPath}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDropFiles={handleDrop}
