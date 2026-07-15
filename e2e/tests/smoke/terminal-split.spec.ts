@@ -37,13 +37,13 @@ test.describe('Terminal split and close', () => {
     await expect(page.locator('[data-testid^="terminal-panel-"]')).toHaveCount(2, { timeout: 10_000 })
   })
 
-  test('closes a pane with Alt+C', async ({ page }) => {
+  test('closes a pane with Alt+W', async ({ page }) => {
     await waitForAppReady(page)
     await launchTerminal(page)
     await expect(page.locator('[data-testid^="terminal-panel-"]').first()).toBeVisible({ timeout: 15_000 })
     await page.keyboard.press('Alt+H')
     await expect(page.locator('[data-testid^="terminal-panel-"]')).toHaveCount(2, { timeout: 10_000 })
-    await page.keyboard.press('Alt+C')
+    await page.keyboard.press('Alt+W')
     await expect(page.locator('[data-testid^="terminal-panel-"]')).toHaveCount(1, { timeout: 10_000 })
   })
 })
