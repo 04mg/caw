@@ -41,7 +41,7 @@ type CodexPayload struct {
 }
 
 func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
@@ -64,55 +64,78 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	var lastActivity time.Time
 	var silentTicks int
 
+	var notifyCh <-chan struct{}
+	notifier, nerr := NewFileChangeNotifier()
+	if nerr == nil {
+		defer notifier.Close()
+		notifyCh = notifier.Notify()
+	}
+
 	defer func() {
 		if watchedFilePath != "" {
 			UnclaimSession(agentID, cwd, watchedFilePath)
 		}
 	}()
 
+	readWatched := func() bool {
+		if watchedFilePath == "" {
+			return false
+		}
+		info, err := os.Stat(watchedFilePath)
+		if err != nil {
+			UnclaimSession(agentID, cwd, watchedFilePath)
+			watchedFilePath = ""
+			if notifyCh != nil {
+				notifier.Watch("")
+			}
+			return false
+		}
+		if info.Size() <= lastFileSize {
+			return false
+		}
+		wrappedCallback := func(status, tool, details, title string) {
+			if title != "" {
+				sessionTitle = title
+			}
+			callback(status, tool, details, sessionTitle)
+		}
+		w.parseCodexLog(watchedFilePath, lastFileSize, wrappedCallback)
+		lastFileSize = info.Size()
+		lastActivity = info.ModTime()
+		silentTicks = 0
+		return true
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-notifyCh:
+			readWatched()
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-			candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
-			if err != nil {
-				continue
-			}
-			for _, c := range candidates {
-				if ClaimSession(agentID, cwd, c.Path) {
+				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
+				if err != nil {
+					continue
+				}
+				for _, c := range candidates {
+					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
 						lastActivity = c.ModTime
 						silentTicks = 0
+						if notifyCh != nil {
+							notifier.Watch(watchedFilePath)
+						}
 						break
 					}
 				}
 			}
 			if watchedFilePath != "" {
-				info, err := os.Stat(watchedFilePath)
-				if err == nil {
-					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, title string) {
-							if title != "" {
-								sessionTitle = title
-							}
-							callback(status, tool, details, sessionTitle)
-						}
-						w.parseCodexLog(watchedFilePath, lastFileSize, wrappedCallback)
-						lastFileSize = info.Size()
-						lastActivity = info.ModTime()
-						silentTicks = 0
-					} else {
-						silentTicks++
-					}
-				} else {
-					UnclaimSession(agentID, cwd, watchedFilePath)
-					watchedFilePath = ""
-					continue
+				if !readWatched() {
+					silentTicks++
 				}
 
 				// Mid-session re-bind for /new and /resume.
@@ -132,6 +155,9 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 								lastFileSize = 0
 								lastCheck = time.Now()
 								silentTicks = 0
+								if notifyCh != nil {
+									notifier.Watch(watchedFilePath)
+								}
 							}
 						}
 					}

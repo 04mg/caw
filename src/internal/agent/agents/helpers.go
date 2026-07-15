@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // FindLatestFile finds the most recently modified file whose name contains ext
@@ -216,6 +218,174 @@ func UnclaimSession(agentID, cwd, key string) {
 			delete(claims, group)
 		}
 	}
+}
+
+// ----- fsnotify-based file change notifier ---------------------------------
+//
+// FileChangeNotifier wraps an fsnotify.Watcher to deliver immediate,
+// debounced notifications when a target file is written to. It is used by the
+// agent status watchers to react to transcript/log changes in ~tens of
+// milliseconds instead of waiting for the next 2s fallback poll.
+//
+// Key behaviors:
+//   - If the target file already exists, it watches the file directly.
+//   - If the file does not exist yet (e.g. Claude creates its project dir
+//     lazily on first message), it watches the nearest existing ancestor
+//     directory and fires on Create/Write events whose name matches the
+//     target basename. Once the file appears, the notifier transparently
+//     switches to watching the file itself for more granular events.
+//   - Notifications are debounced with a 50ms coalescing window so that a
+//     burst of writes (agents often append several JSONL lines in rapid
+//     succession) results in a single notification.
+//   - The notifier is safe to retarget: call Watch with a new path to move
+//     the notifier to a different file (used during mid-session re-bind).
+//     Calling Watch("") stops notifications until a new path is set.
+type FileChangeNotifier struct {
+	watcher  *fsnotify.Watcher
+	notify   chan struct{}
+	done     chan struct{}
+	mu       sync.Mutex
+	curPath  string
+	curDir   string
+	watching bool
+}
+
+const fileChangeDebounce = 50 * time.Millisecond
+
+// NewFileChangeNotifier creates a notifier. The returned notify channel
+// receives a value every time the watched file is modified (debounced).
+// The notifier starts idle; call Watch to begin watching a file.
+// The caller MUST call Close to release the inotify fd and goroutine.
+func NewFileChangeNotifier() (*FileChangeNotifier, error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	n := &FileChangeNotifier{
+		watcher: w,
+		notify:  make(chan struct{}, 1),
+		done:    make(chan struct{}),
+	}
+	go n.loop()
+	return n, nil
+}
+
+// Notify returns the channel that receives debounced change signals.
+func (n *FileChangeNotifier) Notify() <-chan struct{} { return n.notify }
+
+// Watch retargets the notifier to the given file path. If path is "", the
+// notifier stops watching anything. It is safe to call repeatedly: each call
+// removes the previous watch(es) and sets up new ones for the given path.
+func (n *FileChangeNotifier) Watch(path string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	// Remove old watches.
+	if n.curPath != "" {
+		_ = n.watcher.Remove(n.curPath)
+	}
+	if n.curDir != "" {
+		_ = n.watcher.Remove(n.curDir)
+		n.curDir = ""
+	}
+	n.curPath = ""
+	n.watching = false
+	if path == "" {
+		return
+	}
+	// Try to watch the file directly.
+	if err := n.watcher.Add(path); err == nil {
+		n.curPath = path
+		n.watching = true
+		return
+	}
+	// File doesn't exist (yet): watch the nearest existing ancestor dir and
+	// filter events by basename so we catch the Create when it appears.
+	dir := filepath.Dir(path)
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	if err := n.watcher.Add(dir); err == nil {
+		n.curDir = dir
+		n.curPath = path
+		// Not yet watching the file itself; the loop will promote to a
+		// direct file watch once the file is created.
+	}
+}
+
+// Close releases the notifier resources. After Close, Notify channel is
+// drained/closed and the notifier must not be used.
+func (n *FileChangeNotifier) Close() {
+	_ = n.watcher.Close()
+	close(n.done)
+}
+
+func (n *FileChangeNotifier) loop() {
+	var debounceTimer *time.Timer
+	for {
+		select {
+		case <-n.done:
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			return
+		case ev, ok := <-n.watcher.Events:
+			if !ok {
+				return
+			}
+			n.mu.Lock()
+			target := n.curPath
+			isDirWatch := n.curDir != "" && !n.watching
+			n.mu.Unlock()
+
+			relevant := false
+			if isDirWatch {
+				// Watching an ancestor dir because the file didn't exist.
+				// Promote to a direct file watch on Create/Write of target.
+				if (ev.Has(fsnotify.Create) || ev.Has(fsnotify.Write)) && ev.Name == target {
+					if _, err := os.Stat(target); err == nil {
+						n.mu.Lock()
+						if n.curDir != "" {
+							_ = n.watcher.Remove(n.curDir)
+							n.curDir = ""
+						}
+						if err := n.watcher.Add(target); err == nil {
+							n.watching = true
+						}
+						n.mu.Unlock()
+					}
+					relevant = true
+				}
+			} else if ev.Has(fsnotify.Write) || ev.Has(fsnotify.Create) {
+				relevant = true
+			}
+			if relevant {
+				n.fire(&debounceTimer)
+			}
+		case <-n.watcher.Errors:
+			// Ignore errors; the fallback ticker covers missed events.
+		}
+	}
+}
+
+func (n *FileChangeNotifier) fire(timer **time.Timer) {
+	if *timer != nil {
+		(*timer).Reset(fileChangeDebounce)
+		return
+	}
+	t := time.AfterFunc(fileChangeDebounce, func() {
+		select {
+		case n.notify <- struct{}{}:
+		default:
+		}
+	})
+	*timer = t
 }
 
 // ReadNewLines reads bytes appended to a file since the given byte offset and
