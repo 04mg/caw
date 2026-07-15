@@ -91,9 +91,10 @@ test.describe('Pane keyboard navigation', () => {
   test('Alt+ArrowLeft/Right do nothing on a single pane', async ({ page }) => {
     await waitForAppReady(page)
     await launchTerminal(page)
-    await expect(page.locator('[data-testid^="terminal-panel-"]').first()).toBeVisible({ timeout: 15_000 })
-
     const pane = page.locator('[data-pane-id]').first()
+    await expect(pane).toBeVisible({ timeout: 15_000 })
+    await pane.click()
+
     await expect(pane).toHaveAttribute('data-active', 'true')
 
     await page.keyboard.press('Alt+ArrowLeft')
@@ -101,6 +102,32 @@ test.describe('Pane keyboard navigation', () => {
 
     await page.keyboard.press('Alt+ArrowRight')
     await expect(pane).toHaveAttribute('data-active', 'true')
+  })
+
+  test('Alt+ArrowLeft/Right cycles across tabs', async ({ page }) => {
+    await waitForAppReady(page)
+    await launchTerminal(page)
+    await expect(page.locator('[data-testid^="terminal-panel-"]').first()).toBeVisible({ timeout: 15_000 })
+
+    // Remember the first tab's pane ID
+    const firstPane = page.locator('[data-pane-id]').first()
+    const firstPaneId = await firstPane.getAttribute('data-pane-id')
+    expect(firstPaneId).toBeTruthy()
+
+    // Create a second tab — it becomes active
+    await page.keyboard.press('Alt+T')
+    await expect(page.locator('[data-pane-id]')).toHaveCount(1, { timeout: 10_000 })
+    const secondTabPane = page.locator('[data-pane-id]').first()
+    const secondPaneId = await secondTabPane.getAttribute('data-pane-id')
+    expect(secondPaneId).not.toBe(firstPaneId)
+
+    // Alt+ArrowLeft wraps back to the first tab's pane
+    await page.keyboard.press('Alt+ArrowLeft')
+    await expect(page.locator(`[data-pane-id="${firstPaneId}"]`)).toHaveAttribute('data-active', 'true')
+
+    // Alt+ArrowRight wraps forward to the second tab's pane
+    await page.keyboard.press('Alt+ArrowRight')
+    await expect(page.locator(`[data-pane-id="${secondPaneId}"]`)).toHaveAttribute('data-active', 'true')
   })
 
   test('Alt+W closes the active pane', async ({ page }) => {
