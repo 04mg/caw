@@ -41,7 +41,7 @@ type openCodeMessage struct {
 }
 
 func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
@@ -68,64 +68,85 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	// Re-bind bookkeeping for /new and /resume detection.
 	var silentTicks int
 
+	// fsnotify-based immediate change notifier on the SQLite DB and WAL
+	// files. Reacts to writes in ~tens of ms; the 2s ticker acts as a
+	// fallback for missed events and drives heartbeat/re-bind.
+	var notifyCh <-chan struct{}
+	notifier, nerr := NewFileChangeNotifier()
+	if nerr == nil {
+		defer notifier.Close()
+		notifyCh = notifier.Notify()
+		// Watch the DB file; if it doesn't exist yet, the notifier will
+		// watch the nearest existing ancestor dir and promote on create.
+		notifier.Watch(dbPath)
+	}
+
 	defer func() {
 		if openCodeSessionID != "" {
 			UnclaimSession(agentID, cwd, openCodeSessionID)
 		}
 	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			heartbeat()
-			changed := false
-
-			if info, err := os.Stat(dbPath); err == nil {
-				if info.ModTime() != lastDBMod {
-					changed = true
-					lastDBMod = info.ModTime()
-				}
+	dbChanged := func() bool {
+		changed := false
+		if info, err := os.Stat(dbPath); err == nil {
+			if info.ModTime() != lastDBMod {
+				changed = true
+				lastDBMod = info.ModTime()
 			}
-			if walInfo, err := os.Stat(walPath); err == nil {
-				if walInfo.ModTime() != lastWALMod {
-					changed = true
-					lastWALMod = walInfo.ModTime()
-				}
+		}
+		if walInfo, err := os.Stat(walPath); err == nil {
+			if walInfo.ModTime() != lastWALMod {
+				changed = true
+				lastWALMod = walInfo.ModTime()
 			}
+		}
+		return changed
+	}
 
-			if openCodeSessionID == "" {
-				if changed {
-					openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
-					if openCodeSessionID != "" {
-						silentTicks = 0
-					}
-				}
-			}
-
-			// Always re-parse while waiting for user input even if the DB
-			// hasn't changed. This keeps lastActivity alive in the watchdog
-			// so the idle-timeout never fires while a question is pending.
-			if changed || lastReportedStatus == "waiting_input" {
+	processState := func(changed bool) {
+		if openCodeSessionID == "" {
+			if changed {
+				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 				if openCodeSessionID != "" {
-					before := lastReportedStatus
-					wrappedCallback := func(status, tool, details, title string) {
-						lastReportedStatus = status
-						callback(status, tool, details, title)
-					}
-					w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
-					if before != lastReportedStatus || changed {
-						silentTicks = 0
-					} else {
-						silentTicks++
-					}
+					silentTicks = 0
+				}
+			}
+		}
+
+		// Always re-parse while waiting for user input even if the DB
+		// hasn't changed. This keeps lastActivity alive in the watchdog
+		// so the idle-timeout never fires while a question is pending.
+		if changed || lastReportedStatus == "waiting_input" {
+			if openCodeSessionID != "" {
+				before := lastReportedStatus
+				wrappedCallback := func(status, tool, details, title string) {
+					lastReportedStatus = status
+					callback(status, tool, details, title)
+				}
+				w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
+				if before != lastReportedStatus || changed {
+					silentTicks = 0
 				} else {
 					silentTicks++
 				}
 			} else {
 				silentTicks++
 			}
+		} else {
+			silentTicks++
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-notifyCh:
+			processState(dbChanged())
+		case <-ticker.C:
+			heartbeat()
+			processState(dbChanged())
 
 			// Mid-session re-bind for /new and /resume.
 			if openCodeSessionID != "" && silentTicks >= rebindSilenceTicks {
