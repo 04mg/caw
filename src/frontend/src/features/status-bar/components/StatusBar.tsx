@@ -87,9 +87,10 @@ interface StatusBarProps {
 	onToggleAgentBoard?: () => void
 	onOpenSettings: (section?: string) => void
 	hideControlCenter?: boolean
+	controlCenterButtonRef?: React.Ref<HTMLButtonElement>
 }
 
-export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
 	const [isLoading, setIsLoading] = useState(false)
@@ -304,10 +305,11 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 				<>
 					<Tooltip delayDuration={0}>
 						<TooltipTrigger asChild>
-						<button
-							onClick={onToggleAgentBoard}
-							data-testid="status-bar-control-center"
-							className={cn(
+					<button
+						ref={controlCenterButtonRef}
+						onClick={onToggleAgentBoard}
+						data-testid="status-bar-control-center"
+						className={cn(
 								"shrink-0 transition-colors cursor-pointer",
 								agentBoardOpen ? "text-primary" : isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground"
 							)}
