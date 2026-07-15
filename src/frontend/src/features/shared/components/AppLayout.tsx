@@ -43,6 +43,7 @@ import { MobileControlBar } from '@/features/terminal/components/MobileControlBa
 import { NewTabMenu } from '@/features/workspaces/components/NewTabMenu'
 
 import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStore'
+import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { Shortcut } from './Shortcut'
@@ -272,6 +273,26 @@ export function AppLayout() {
   useEffect(() => {
     fetchGitStatus()
   }, [fetchGitStatus])
+
+  // Subscribe to the "git" WebSocket channel so the file explorer's git
+  // status badges update automatically whenever the working tree changes
+  // (file edits, git add/commit, branch switch, etc.) — independent of the
+  // FolderSidebar being mounted.
+  useEffect(() => {
+    if (!currentWorkspacePath) {
+      setGitStatuses({})
+      setGitIgnored({})
+      return
+    }
+    const handle = (event: GitStatusEvent) => {
+      // Only apply snapshots for the repo we currently have open.
+      if (event.path !== currentWorkspacePath) return
+      setGitStatuses(event.statuses || {})
+      setGitIgnored(event.ignored || {})
+    }
+    const unsub = subscribeToGitStatus(currentWorkspacePath, handle)
+    return unsub
+  }, [currentWorkspacePath])
 
 
   const toggleFolderSidebar = useCallback(() => {
