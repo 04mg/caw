@@ -51,6 +51,8 @@ export function TerminalGrid({
         className={`relative h-full overflow-hidden ${isActive ? 'ring-1 ring-inset ring-border' : ''}`}
         onClick={() => onFocus(node.id)}
         onPointerDown={() => onFocus(node.id)}
+        data-pane-id={node.id}
+        data-active={isActive ? 'true' : 'false'}
       >
         {isEditor ? (
           <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} />

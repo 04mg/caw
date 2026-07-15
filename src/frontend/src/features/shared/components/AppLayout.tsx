@@ -17,6 +17,7 @@ import {
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
+  focusAdjacentLeaf,
 } from '@/features/shared/utils/layout'
 import {
   loadState,
@@ -1248,11 +1249,20 @@ export function AppLayout() {
   }, [])
 
   useHotkeys({
-    'Alt+W': () => setPickerOpen(true),
+    'Alt+W': () => { if (activePaneId) handleClosePane(activePaneId) },
+    'Alt+ArrowLeft': () => {
+      if (!activeTab || !activePaneId) return
+      const next = focusAdjacentLeaf(activeTab.layout, activePaneId, 'left')
+      if (next) setActivePane(next)
+    },
+    'Alt+ArrowRight': () => {
+      if (!activeTab || !activePaneId) return
+      const next = focusAdjacentLeaf(activeTab.layout, activePaneId, 'right')
+      if (next) setActivePane(next)
+    },
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
-    'Alt+C': () => { if (activePaneId) handleClosePane(activePaneId) },
     'Alt+P': () => setCommandPaletteOpen(true),
   })
 
@@ -1288,9 +1298,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+⇄" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
@@ -1304,9 +1314,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+⇄" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
@@ -1320,9 +1330,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+⇄" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
