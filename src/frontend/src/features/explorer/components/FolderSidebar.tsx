@@ -11,6 +11,7 @@ import { SmartContextMenu } from './SmartContextMenu'
 
 
 import { DeleteDialog } from './DeleteDialog'
+import { RenameConflictDialog } from './RenameConflictDialog'
 import { LazyFileNode } from './LazyFileNode'
 
 interface FolderSidebarProps {
@@ -48,6 +49,9 @@ export function FolderSidebar({
   const [deleteTarget, setDeleteTarget] = useState<{
     path: string; name: string; isDir: boolean
   } | null>(null)
+  const [renameConflictTarget, setRenameConflictTarget] = useState<{
+    oldPath: string; newName: string; newPath: string
+  } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [refreshCounter, setRefreshCounter] = useState(0)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -74,11 +78,8 @@ export function FolderSidebar({
     setLoading(false)
   }
 
-  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+  const executeRename = useCallback(async (oldPath: string, newPath: string) => {
     setBusy(true)
-    const sep = oldPath.includes('\\') ? '\\' : '/'
-    const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
-    const newPath = parentDir + sep + newName
     try {
       const res = await fetch('/api/workspaces/files', {
         method: 'PATCH',
@@ -87,12 +88,36 @@ export function FolderSidebar({
       })
       if (res.ok) {
         setEditingPath(null)
+        setRenameConflictTarget(null)
         triggerRefresh()
         onRefresh()
       }
     } catch { /* ignore */ }
     setBusy(false)
   }, [triggerRefresh, onRefresh])
+
+  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+    const sep = oldPath.includes('\\') ? '\\' : '/'
+    const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
+    const newPath = parentDir + sep + newName
+
+    // Check if newPath already exists by calling file existence checks or checking the UI or files API.
+    // If it exists, show a destructive confirmation modal.
+    // Let's call /api/workspaces/files?path=<newPath> first.
+    setBusy(true)
+    try {
+      const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(newPath)}`)
+      if (checkRes.ok) {
+        // file already exists! Show modal.
+        setRenameConflictTarget({ oldPath, newName, newPath })
+        setBusy(false)
+        return
+      }
+    } catch { /* ignore */ }
+    setBusy(false)
+
+    await executeRename(oldPath, newPath)
+  }, [executeRename])
 
   const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
     setBusy(true)
@@ -375,6 +400,19 @@ export function FolderSidebar({
         target={deleteTarget}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <RenameConflictDialog
+        target={renameConflictTarget}
+        onConfirm={() => {
+          if (renameConflictTarget) {
+            executeRename(renameConflictTarget.oldPath, renameConflictTarget.newPath)
+          }
+        }}
+        onCancel={() => {
+          setRenameConflictTarget(null)
+          setEditingPath(null)
+        }}
       />
     </div>
   )
