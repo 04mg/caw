@@ -17,7 +17,7 @@ import {
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
-  focusAdjacentLeaf,
+  cyclePane,
 } from '@/features/shared/utils/layout'
 import {
   loadState,
@@ -1251,14 +1251,18 @@ export function AppLayout() {
   useHotkeys({
     'Alt+W': () => { if (activePaneId) handleClosePane(activePaneId) },
     'Alt+ArrowLeft': () => {
-      if (!activeTab || !activePaneId) return
-      const next = focusAdjacentLeaf(activeTab.layout, activePaneId, 'left')
-      if (next) setActivePane(next)
+      if (!activeWorkspace || !activeTab || !activePaneId) return
+      const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'left')
+      if (!next) return
+      if (next.tabId !== activeTab.id) switchTab(next.tabId)
+      setActivePane(next.paneId)
     },
     'Alt+ArrowRight': () => {
-      if (!activeTab || !activePaneId) return
-      const next = focusAdjacentLeaf(activeTab.layout, activePaneId, 'right')
-      if (next) setActivePane(next)
+      if (!activeWorkspace || !activeTab || !activePaneId) return
+      const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'right')
+      if (!next) return
+      if (next.tabId !== activeTab.id) switchTab(next.tabId)
+      setActivePane(next.paneId)
     },
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
@@ -1298,7 +1302,7 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+⇄" label="Switch pane" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
           <Shortcut keys="Alt+W" label="Close pane" />
         </div>
@@ -1314,7 +1318,7 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+⇄" label="Switch pane" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
           <Shortcut keys="Alt+W" label="Close pane" />
         </div>
@@ -1330,7 +1334,7 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+⇄" label="Switch pane" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
           <Shortcut keys="Alt+W" label="Close pane" />
         </div>
