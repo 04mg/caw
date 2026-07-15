@@ -1,16 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ZoomIn, ZoomOut, RotateCcw, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/button'
+import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
+import { pathsEqual } from '@/features/shared/utils/path'
 
 interface ImagePreviewViewProps {
   filePath: string
+  cwd?: string
 }
 
-export function ImagePreviewView({ filePath }: ImagePreviewViewProps) {
+export function ImagePreviewView({ filePath, cwd }: ImagePreviewViewProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [refreshCounter, setRefreshCounter] = useState(0)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     let active = true
@@ -47,7 +52,27 @@ export function ImagePreviewView({ filePath }: ImagePreviewViewProps) {
         URL.revokeObjectURL(activeBlobUrl)
       }
     }
-  }, [filePath])
+  }, [filePath, refreshCounter])
+
+  useEffect(() => {
+    if (!filePath || !cwd) return
+
+    const handleEvent = (event: FileTreeEvent) => {
+      if (event.type !== 'file-modified' || event.isDir) return
+      if (!pathsEqual(event.path, filePath)) return
+
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = setTimeout(() => {
+        setRefreshCounter((c) => c + 1)
+      }, 300)
+    }
+
+    const unsub = subscribeToFileTree(cwd, handleEvent)
+    return () => {
+      unsub()
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    }
+  }, [filePath, cwd])
 
   if (loading) {
     return (
