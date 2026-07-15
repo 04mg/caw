@@ -437,15 +437,27 @@ html, body, #root {
 
 /* Force sonner slide/fade animations even when the user has
    prefers-reduced-motion: reduce set at the OS level.
-   Without these overrides, sonner CSS resets transitions to
-   "none" inside the reduced-motion media query, making toasts
-   appear/disappear instantly with no animation. */
+   We intentionally ignore the OS reduced-motion preference for toasts and
+   always animate them, restoring the exact values sonner uses outside of
+   the reduced-motion media query (see sonner's styles.css). Without these
+   overrides, sonner sets `transition: none` and `animation: none` inside the
+   reduced-motion media query, making toasts appear/disappear instantly. */
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toaster] {
     transition: transform 400ms ease !important;
   }
   [data-sonner-toast] {
     transition: transform 400ms, opacity 400ms, height 400ms, box-shadow 200ms !important;
-    animation: unset !important;
+    animation: none !important;
+  }
+  /* sonner neutralizes child transitions under reduced-motion; restore the
+     default `opacity 400ms` transition it applies to direct children. */
+  [data-sonner-toast] > * {
+    transition: opacity 400ms !important;
+  }
+  /* The loading spinner relies on the `sonner-spin` keyframe animation;
+     `animation: none !important` from sonner kills it, so restore it. */
+  .sonner-loading-bar {
+    animation: sonner-spin 1.2s linear infinite !important;
   }
 }
