@@ -5,6 +5,8 @@ import { Button } from '@/components/button'
 import { getFileCategory, isBinaryContent } from '../utils/fileType'
 import { BinaryFileView } from './BinaryFileView'
 import { ImagePreviewView } from './ImagePreviewView'
+import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
+import { pathsEqual } from '@/features/shared/utils/path'
 
 
 function defineCawDarkTheme(monaco: Monaco) {
@@ -64,6 +66,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [forceOpenBinary, setForceOpenBinary] = useState(false)
   const [isBinaryRuntime, setIsBinaryRuntime] = useState(false)
+  const [diskConflict, setDiskConflict] = useState(false)
 
   // Reset binary override when file changes
   useEffect(() => {
@@ -73,6 +76,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
 
   const originalContentRef = useRef('')
   const editorRef = useRef<any>(null)
+  const lastSavedAtRef = useRef(0)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Determine file language based on extension
   const getLanguage = (path?: string) => {
@@ -192,6 +197,39 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     loadFile()
   }, [loadFile])
 
+  useEffect(() => {
+    if (!filePath || !cwd) return
+    setDiskConflict(false)
+
+    const handleEvent = (event: FileTreeEvent) => {
+      if (event.type !== 'file-modified' || event.isDir) return
+      if (!pathsEqual(event.path, filePath)) return
+      if (Date.now() - lastSavedAtRef.current < 500) return
+
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = setTimeout(() => {
+        const dirty = !isDiff && editedContent !== originalContentRef.current
+        if (dirty) {
+          setDiskConflict(true)
+        } else {
+          setDiskConflict(false)
+          loadFile()
+        }
+      }, 300)
+    }
+
+    const unsub = subscribeToFileTree(cwd, handleEvent)
+    return () => {
+      unsub()
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    }
+  }, [filePath, cwd, isDiff, loadFile, editedContent])
+
+  const handleReloadFromDisk = useCallback(() => {
+    setDiskConflict(false)
+    loadFile()
+  }, [loadFile])
+
   const handleSave = useCallback(async () => {
     if (!filePath || isDiff || saving) return
     setSaving(true)
@@ -210,6 +248,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         originalContentRef.current = editedContent
         setContent(editedContent)
         setSaveStatus('success')
+        lastSavedAtRef.current = Date.now()
         if (onSaveSuccess) onSaveSuccess()
         setTimeout(() => setSaveStatus('idle'), 2000)
       } else {
@@ -245,7 +284,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const fileCategory = filePath ? getFileCategory(filePath) : 'text'
 
   if (!isDiff && filePath && fileCategory === 'image') {
-    return <ImagePreviewView filePath={filePath} />
+    return <ImagePreviewView filePath={filePath} cwd={cwd} />
   }
 
   if (!isDiff && filePath && !forceOpenBinary && (fileCategory === 'binary-likely' || isBinaryRuntime)) {
@@ -315,6 +354,34 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
             >
               <Save className="h-3.5 w-3.5 mr-1" />
               {saving ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {diskConflict && !isDiff && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-amber-500/40 bg-amber-500/10 shrink-0">
+          <span className="text-[11px] text-amber-400 flex items-center gap-1.5">
+            <AlertCircle className="h-3.5 w-3.5" />
+            File changed on disk
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={handleReloadFromDisk}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Reload
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => setDiskConflict(false)}
+            >
+              Keep mine
             </Button>
           </div>
         </div>
