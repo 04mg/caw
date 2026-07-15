@@ -28,6 +28,7 @@ export interface LazyNodeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
+  refreshCounter?: number
   onShowContextMenu?: (path: string, name: string, x: number, y: number) => void
   createTargetPath?: string | null
   onCreateFolder?: (parentPath: string, name: string) => void
@@ -46,6 +47,7 @@ export function LazyNode({
   selected,
   onSelect,
   focusPath,
+  refreshCounter,
   onShowContextMenu,
   createTargetPath,
   onCreateFolder,
@@ -65,8 +67,8 @@ export function LazyNode({
   const createInputRef = useRef<HTMLInputElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async () => {
-    if (loaded || loading) return
+  const load = useCallback(async (force = false) => {
+    if (!force && (loaded || loading)) return
     setLoading(true)
     const kids = await listDir(path)
     setChildren(kids)
@@ -77,6 +79,22 @@ export function LazyNode({
   useEffect(() => {
     if (startExpanded) load()
   }, [startExpanded, load])
+
+  // Re-fetch children in place when refreshCounter changes, preserving
+  // expand/scroll state. Only expanded nodes reload; collapsed nodes
+  // drop their cache so the next expand fetches fresh data.
+  const refreshRef = useRef(refreshCounter)
+  useEffect(() => {
+    if (refreshRef.current === refreshCounter) return
+    refreshRef.current = refreshCounter
+    if (expanded) {
+      load(true)
+    } else {
+      setLoaded(false)
+      setChildren([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshCounter])
 
   useEffect(() => {
     if (!focusPath) return
@@ -93,10 +111,10 @@ export function LazyNode({
 
   // Scroll into view when this node becomes the selected/focused one.
   useEffect(() => {
-    if (selected && samePath(selected, path) && buttonRef.current) {
+    if (focusPath && samePath(focusPath, path) && buttonRef.current) {
       buttonRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
-  }, [selected, path])
+  }, [focusPath, path])
 
   const isCreating = createTargetPath === path
 
@@ -217,6 +235,7 @@ export function LazyNode({
               selected={selected}
               onSelect={onSelect}
               focusPath={focusPath}
+              refreshCounter={refreshCounter}
               onShowContextMenu={onShowContextMenu}
               createTargetPath={createTargetPath}
               onCreateFolder={onCreateFolder}
