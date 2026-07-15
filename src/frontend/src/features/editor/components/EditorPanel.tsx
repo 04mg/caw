@@ -197,6 +197,35 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     loadFile()
   }, [loadFile])
 
+  const silentReload = useCallback(async () => {
+    if (!filePath) return
+    try {
+      if (isDiff) {
+        const [resOrig, resCurr] = await Promise.all([
+          fetch(`/api/git/originals?path=${encodeURIComponent(filePath)}`),
+          fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`),
+        ])
+        const origText = resOrig.ok ? (await resOrig.json())?.data?.content ?? '' : ''
+        const currText = resCurr.ok ? (await resCurr.json())?.data?.content ?? '' : ''
+        setOriginalContent(origText)
+        setEditedContent(currText)
+      } else {
+        const res = await fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`)
+        if (!res.ok) return
+        const text = (await res.json())?.data?.content ?? ''
+        setContent(text)
+        setEditedContent(text)
+        originalContentRef.current = text
+        if (editorRef.current) editorRef.current.setValue(text)
+      }
+    } catch { /* ignore */ }
+  }, [filePath, isDiff])
+
+  const handleReloadFromDisk = useCallback(() => {
+    setDiskConflict(false)
+    silentReload()
+  }, [silentReload])
+
   useEffect(() => {
     if (!filePath || !cwd) return
     setDiskConflict(false)
@@ -213,7 +242,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           setDiskConflict(true)
         } else {
           setDiskConflict(false)
-          loadFile()
+          silentReload()
         }
       }, 300)
     }
@@ -223,12 +252,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       unsub()
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [filePath, cwd, isDiff, loadFile, editedContent])
-
-  const handleReloadFromDisk = useCallback(() => {
-    setDiskConflict(false)
-    loadFile()
-  }, [loadFile])
+  }, [filePath, cwd, isDiff, silentReload, editedContent])
 
   const handleSave = useCallback(async () => {
     if (!filePath || isDiff || saving) return
