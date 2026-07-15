@@ -91,6 +91,10 @@ export function AppLayout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
+  // Ref to the StatusBar control-center button so we can blur it when the
+  // board closes (otherwise it retains focus and keyboard focus is stuck on
+  // the toolbar instead of returning to the terminal the user was editing).
+  const controlCenterBtnRef = useRef<HTMLButtonElement | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dragMousePos, setDragMousePos] = useState<{ x: number; y: number } | null>(null)
 
@@ -417,6 +421,19 @@ export function AppLayout() {
     },
     [patchWorkspace, setActiveWorkspaceId],
   )
+
+  // Closing the Command Center should return keyboard focus to the terminal
+  // pane the user was working in, not leave it parked on the toolbar button.
+  // We blur the control-center button (so it doesn't keep an active focus
+  // ring) and dispatch a focus request for the last active terminal pane,
+  // which TerminalPanel listens for and forwards to its xterm instance.
+  const closeAgentBoard = useCallback(() => {
+    setAgentBoardOpen(false)
+    controlCenterBtnRef.current?.blur()
+    if (activePaneId) {
+      window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: activePaneId } }))
+    }
+  }, [activePaneId])
 
   // ─── Agent Status Notifications ──────────────────────────────────────────
   // Keep a ref to the latest workspaces so the notification callback can
@@ -1777,7 +1794,7 @@ export function AppLayout() {
                   workspaces={workspaces}
                   onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
                     navigateToAgent(workspaceId, tabIndex, paneId)
-                    setAgentBoardOpen(false)
+                    closeAgentBoard()
                   }}
                 />
               </div>
@@ -1788,11 +1805,15 @@ export function AppLayout() {
             workspaceName={activeWorkspace?.name}
             worktreeBranch={activeWorktreeBranch}
             agentBoardOpen={agentBoardOpen}
-            onToggleAgentBoard={() => setAgentBoardOpen((v) => !v)}
+            onToggleAgentBoard={() => {
+              if (agentBoardOpen) closeAgentBoard()
+              else setAgentBoardOpen(true)
+            }}
             onOpenSettings={(section) => {
               setSettingsSection(section)
               setSettingsOpen(true)
             }}
+            controlCenterButtonRef={controlCenterBtnRef}
           />
         </>
       )}
