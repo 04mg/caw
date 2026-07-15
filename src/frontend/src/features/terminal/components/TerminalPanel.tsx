@@ -153,6 +153,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     }
   }, [isActive, terminalId])
 
+  // Listen for app-level focus requests (e.g. when the Command Center closes
+  // and focus should return to the last active terminal pane).
+  useEffect(() => {
+    const onFocusRequest = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (!detail || detail.paneId !== terminalId) return
+      const inst = getTerminal(terminalId)
+      if (inst) {
+        inst.term.focus()
+      }
+    }
+    window.addEventListener('caw:focus-terminal', onFocusRequest as EventListener)
+    return () => window.removeEventListener('caw:focus-terminal', onFocusRequest as EventListener)
+  }, [terminalId])
+
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
