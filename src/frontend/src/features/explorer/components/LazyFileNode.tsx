@@ -232,7 +232,7 @@ export function LazyFileNode({
   const isDragOver = dragOverPath === path && isDir
 
   return (
-    <div className="w-full">
+    <div className="min-w-full">
       <div
         className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
         onContextMenu={handleContextMenu}
@@ -302,7 +302,7 @@ export function LazyFileNode({
       </div>
 
       {isDir && expanded && loaded && (
-        <div className="w-full">
+    <div className="min-w-full">
           {children.map((child) => (
             <LazyFileNode
               key={child.path}
