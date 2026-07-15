@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { Search, Folder, Check, ArrowLeft, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Input } from '@/components/input'
@@ -32,6 +31,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   const [searching, setSearching] = useState(false)
   const [browseRoot, setBrowseRoot] = useState('/')
   const treeScrollRef = useRef<HTMLDivElement>(null)
+  const treeContainerRef = useRef<HTMLDivElement>(null)
   const [treeVersion, setTreeVersion] = useState(0)
   const [createFolderParent, setCreateFolderParent] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null)
@@ -210,7 +210,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
               />
             </form>
 
-            <div className="relative h-[50vh] shrink-0 border border-border rounded-md overflow-hidden">
+            <div ref={treeContainerRef} className="relative h-[50vh] shrink-0 border border-border rounded-md overflow-visible">
               <div ref={treeScrollRef} className="h-full overflow-auto">
                 <LazyTree
                   key={treeVersion}
@@ -218,7 +218,11 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                   selected={selected}
                   onSelect={handleSelect}
                   focusPath={focusPath}
-                  onShowContextMenu={(path, name, x, y) => setContextMenu({ path, name, x, y })}
+                  onShowContextMenu={(path, name, x, y) => {
+                    const rect = treeContainerRef.current?.getBoundingClientRect()
+                    if (!rect) return
+                    setContextMenu({ path, name, x: x - rect.left, y: y - rect.top })
+                  }}
                   createTargetPath={createFolderParent}
                   onCreateFolder={createFolder}
                   onCreateCancel={() => setCreateFolderParent(null)}
@@ -229,8 +233,14 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                 />
               </div>
 
-              {contextMenu && createPortal(
-                <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
+              {contextMenu && (
+                <SmartContextMenu
+                  x={contextMenu.x}
+                  y={contextMenu.y}
+                  ref={contextMenuRef}
+                  position="absolute"
+                  bounds={{ width: treeContainerRef.current?.clientWidth ?? 0, height: treeContainerRef.current?.clientHeight ?? 0 }}
+                >
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -269,8 +279,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                       </button>
                     </>
                   )}
-                </SmartContextMenu>,
-                document.body,
+                </SmartContextMenu>
               )}
 
               {showDropdown && (
