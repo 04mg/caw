@@ -173,6 +173,14 @@ func broadcastEvent(ev Event) {
 }
 
 func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {
+	// Strip markdown formatting from user-visible text so the Kanban card
+	// Info line renders as clean plain text regardless of which agent
+	// produced it. Titles are already cleaned by CleanPrompt upstream, but
+	// details (assistant text excerpts) can contain **bold**, `code`, [links],
+	// # headings, etc.
+	details = StripMarkdown(details)
+	title = StripMarkdown(title)
+
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
 	now := time.Now()
