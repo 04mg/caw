@@ -8,6 +8,14 @@ import { ImagePreviewView } from './ImagePreviewView'
 
 
 function defineCawDarkTheme(monaco: Monaco) {
+  monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: true,
+  })
+  monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: true,
+  })
   monaco.editor.defineTheme('caw-dark', {
     base: 'vs-dark',
     inherit: true,
