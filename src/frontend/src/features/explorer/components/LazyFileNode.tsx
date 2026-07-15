@@ -239,6 +239,12 @@ export function LazyFileNode({
         className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => onHoverPath?.(path)}
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation()
+          e.dataTransfer.setData('application/x-caw-path', path)
+          e.dataTransfer.effectAllowed = 'move'
+        }}
         onDragOver={(e) => { if (isDir) onDragOver(e, path) }}
         onDragLeave={onDragLeave}
         onDrop={(e) => { if (isDir) onDropFiles(e, path) }}
