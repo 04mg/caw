@@ -29,5 +29,6 @@ export interface AgentType {
   id: string
   label: string
   cmd: string[]
+  env?: [string, string][] // [key, value] pairs injected into the PTY environment
   icon: any
 }

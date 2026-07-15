@@ -33,7 +33,7 @@ interface CommandPaletteProps {
   workspacePath: string
   onOpenFile: (path: string) => void
   onAddTerminal: () => void
-  onAddAgent: (cmd: string[], agentId: string, label: string) => void
+  onAddAgent: (cmd: string[], agentId: string, label: string, env?: [string, string][]) => void
   onOpenWorkspacePicker: () => void
 }
 
@@ -136,7 +136,7 @@ export function CommandPalette({
         label: `Launch ${agent.label}`,
         type: 'command',
         icon: <IconComponent className="h-4 w-4" />,
-        action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label); onOpenChange(false) },
+        action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label, agentMeta?.env); onOpenChange(false) },
       })
     }
 

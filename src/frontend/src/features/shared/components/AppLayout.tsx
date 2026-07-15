@@ -726,7 +726,7 @@ export function AppLayout() {
   )
 
   const addTab = useCallback(
-    async (cmd?: string[], agentId?: string, label?: string, groupId?: string) => {
+    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
       if (!activeWorkspace) return
       let cwd = activeWorkspace.path || ''
       let agentBranch: string | undefined = undefined
@@ -765,6 +765,7 @@ export function AppLayout() {
           id: leafId,
           cwd,
           cmd,
+          env,
           agentId,
           agentBranch,
           baseBranch,
@@ -1175,7 +1176,8 @@ export function AppLayout() {
       const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'terminal'
       const agent = agentTypes[defaultAgentId]
       const cmd = agent && agent.id !== 'terminal' ? agent.cmd : undefined
-      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined)
+      const env = agent && agent.id !== 'terminal' ? agent.env : undefined
+      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined, env)
       const ws: Workspace = {
         id: crypto.randomUUID(),
         path: absPath,
@@ -1517,7 +1519,7 @@ export function AppLayout() {
                     })}
                     {/* Add button reusing the desktop dropdown menu */}
                     <NewTabMenu
-                      onAdd={addTab}
+                      onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                       enableWorktrees={activeWorkspace.enableWorktrees}
                       onToggleWorktrees={toggleWorktrees}
                       triggerClassName="h-[36px] px-2 border-r-0"
@@ -1532,7 +1534,7 @@ export function AppLayout() {
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
                       <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} />
                     ) : (
-                      <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
+                      <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
                   ) : activeWorkspace ? (
                     <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
@@ -1546,7 +1548,7 @@ export function AppLayout() {
                         </span>
                       </div>
                       <NewTabMenu
-                        onAdd={addTab}
+                        onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                         enableWorktrees={activeWorkspace?.enableWorktrees}
                         onToggleWorktrees={toggleWorktrees}
                         align="center"
@@ -1695,7 +1697,7 @@ export function AppLayout() {
                       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
                         <div className="flex flex-1 h-full">
                           <NewTabMenu
-                            onAdd={addTab}
+                            onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
                             triggerClassName="h-[33px] px-2 border-r border-border"
@@ -1803,7 +1805,7 @@ export function AppLayout() {
         workspacePath={activeWorkspace?.path || ''}
         onOpenFile={openFile}
         onAddTerminal={addTab}
-        onAddAgent={(cmd, agentId, label) => addTab(cmd, agentId, label)}
+        onAddAgent={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
       />
 
