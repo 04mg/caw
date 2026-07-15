@@ -32,7 +32,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   const [browseRoot, setBrowseRoot] = useState('/')
   const treeScrollRef = useRef<HTMLDivElement>(null)
   const treeContainerRef = useRef<HTMLDivElement>(null)
-  const [treeVersion, setTreeVersion] = useState(0)
+  const [refreshCounter, setRefreshCounter] = useState(0)
   const [createFolderParent, setCreateFolderParent] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -147,21 +147,28 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, type: 'dir' }),
       })
-      if (res.ok) setTreeVersion((version) => version + 1)
+      if (res.ok) {
+        setFocusPath(path)
+        setRefreshCounter((c) => c + 1)
+      }
     } catch { /* ignore */ }
   }, [])
 
   const renameFolder = useCallback(async (oldPath: string, name: string) => {
     const sep = oldPath.includes('\\') ? '\\' : '/'
     const parentPath = oldPath.substring(0, oldPath.lastIndexOf(sep)) || sep
+    const newPath = parentPath + (parentPath.endsWith(sep) ? '' : sep) + name
     setEditingPath(null)
     try {
       const res = await fetch('/api/workspaces/files', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldPath, newPath: parentPath + (parentPath.endsWith(sep) ? '' : sep) + name }),
+        body: JSON.stringify({ oldPath, newPath }),
       })
-      if (res.ok) setTreeVersion((version) => version + 1)
+      if (res.ok) {
+        setFocusPath(newPath)
+        setRefreshCounter((c) => c + 1)
+      }
     } catch { /* ignore */ }
   }, [])
 
@@ -177,7 +184,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
       })
       if (res.ok) {
         if (selected === target.path) setSelected(null)
-        setTreeVersion((version) => version + 1)
+        setRefreshCounter((c) => c + 1)
       }
     } catch { /* ignore */ }
   }, [deleteTarget, selected])
@@ -213,11 +220,11 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
             <div ref={treeContainerRef} className="relative h-[50vh] shrink-0 border border-border rounded-md overflow-visible">
               <div ref={treeScrollRef} className="h-full overflow-auto">
                 <LazyTree
-                  key={treeVersion}
                   rootPath="/"
                   selected={selected}
                   onSelect={handleSelect}
                   focusPath={focusPath}
+                  refreshCounter={refreshCounter}
                   onShowContextMenu={(path, name, x, y) => {
                     const rect = treeContainerRef.current?.getBoundingClientRect()
                     if (!rect) return

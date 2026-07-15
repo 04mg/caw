@@ -5,6 +5,7 @@ interface LazyTreeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
+  refreshCounter?: number
   onShowContextMenu?: (path: string, name: string, x: number, y: number) => void
   createTargetPath?: string | null
   onCreateFolder?: (parentPath: string, name: string) => void
@@ -20,6 +21,7 @@ export function LazyTree({
   selected,
   onSelect,
   focusPath,
+  refreshCounter,
   onShowContextMenu,
   createTargetPath,
   onCreateFolder,
@@ -39,6 +41,7 @@ export function LazyTree({
         selected={selected}
         onSelect={onSelect}
         focusPath={focusPath}
+        refreshCounter={refreshCounter}
         onShowContextMenu={onShowContextMenu}
         createTargetPath={createTargetPath}
         onCreateFolder={onCreateFolder}
