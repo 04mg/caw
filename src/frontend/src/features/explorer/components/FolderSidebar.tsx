@@ -11,6 +11,7 @@ import { SmartContextMenu } from './SmartContextMenu'
 
 
 import { DeleteDialog } from './DeleteDialog'
+import { ConflictDialog, type ConflictTarget } from './ConflictDialog'
 import { LazyFileNode } from './LazyFileNode'
 
 interface FolderSidebarProps {
@@ -48,6 +49,15 @@ export function FolderSidebar({
   const [deleteTarget, setDeleteTarget] = useState<{
     path: string; name: string; isDir: boolean
   } | null>(null)
+  type ConflictState =
+    | { operation: 'rename'; name: string; oldPath: string; newPath: string }
+    | { operation: 'create'; name: string; parentPath: string; type: 'file' | 'dir' }
+    | { operation: 'paste'; name: string; sourcePath: string; targetDir: string }
+  const [conflictState, setConflictState] = useState<ConflictState | null>(null)
+
+  const conflictTarget: ConflictTarget | null = conflictState
+    ? { name: conflictState.name, operation: conflictState.operation }
+    : null
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [refreshCounter, setRefreshCounter] = useState(0)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -74,11 +84,8 @@ export function FolderSidebar({
     setLoading(false)
   }
 
-  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+  const executeRename = useCallback(async (oldPath: string, newPath: string) => {
     setBusy(true)
-    const sep = oldPath.includes('\\') ? '\\' : '/'
-    const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
-    const newPath = parentDir + sep + newName
     try {
       const res = await fetch('/api/workspaces/files', {
         method: 'PATCH',
@@ -87,6 +94,7 @@ export function FolderSidebar({
       })
       if (res.ok) {
         setEditingPath(null)
+        setConflictState(null)
         triggerRefresh()
         onRefresh()
       }
@@ -94,10 +102,43 @@ export function FolderSidebar({
     setBusy(false)
   }, [triggerRefresh, onRefresh])
 
-  const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
+  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
+    const sep = oldPath.includes('\\') ? '\\' : '/'
+    const parentDir = oldPath.substring(0, oldPath.lastIndexOf(sep))
+    const newPath = parentDir + sep + newName
+
+    // Check if newPath already exists by calling file existence checks or checking the UI or files API.
+    // If it exists, show a destructive confirmation modal.
+    // Let's call /api/workspaces/files?path=<newPath> first.
     setBusy(true)
+    try {
+      const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(newPath)}`)
+      if (checkRes.ok) {
+        setConflictState({ operation: 'rename', name: newName, oldPath, newPath })
+        setBusy(false)
+        return
+      }
+    } catch { /* ignore */ }
+    setBusy(false)
+
+    await executeRename(oldPath, newPath)
+  }, [executeRename])
+
+  const handleCreateSubmit = useCallback(async (parentPath: string, name: string, type: 'file' | 'dir') => {
     const sep = parentPath.includes('\\') ? '\\' : '/'
     const newPath = parentPath + sep + name
+
+    setBusy(true)
+    try {
+      const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(newPath)}`)
+      if (checkRes.ok) {
+        setConflictState({ operation: 'create', name, parentPath, type })
+        setCreateTarget(null)
+        setBusy(false)
+        return
+      }
+    } catch { /* ignore */ }
+
     setCreateTarget(null)
     try {
       await fetch('/api/workspaces/files', {
@@ -137,7 +178,21 @@ export function FolderSidebar({
     const src = clipboard?.path
     if (!src) return
     setContextMenu(null)
+
+    const sep = src.includes('\\') ? '\\' : '/'
+    const srcName = src.substring(src.lastIndexOf(sep) + 1)
+    const destPath = targetDir + sep + srcName
+
     setBusy(true)
+    try {
+      const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(destPath)}`)
+      if (checkRes.ok) {
+        setConflictState({ operation: 'paste', name: srcName, sourcePath: src, targetDir })
+        setBusy(false)
+        return
+      }
+    } catch { /* ignore */ }
+
     try {
       await fetch('/api/workspaces/files', {
         method: 'POST',
@@ -241,6 +296,7 @@ export function FolderSidebar({
 
       <ScrollArea
         className="relative flex-1"
+        horizontal
         onContextMenu={(e) => {
           if (!workspacePath) return
           e.preventDefault()
@@ -375,6 +431,46 @@ export function FolderSidebar({
         target={deleteTarget}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConflictDialog
+        target={conflictTarget}
+        onConfirm={() => {
+          if (!conflictState) return
+          if (conflictState.operation === 'rename') {
+            executeRename(conflictState.oldPath, conflictState.newPath)
+          } else if (conflictState.operation === 'create') {
+            const sep = conflictState.parentPath.includes('\\') ? '\\' : '/'
+            const newPath = conflictState.parentPath + sep + conflictState.name
+            setConflictState(null)
+            setCreateTarget(null)
+            fetch('/api/workspaces/files', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: newPath, type: conflictState.type }),
+            }).catch(() => {}).finally(() => {
+              triggerRefresh()
+              onRefresh()
+              setBusy(false)
+            })
+          } else if (conflictState.operation === 'paste') {
+            setConflictState(null)
+            fetch('/api/workspaces/files', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sourcePath: conflictState.sourcePath, targetDir: conflictState.targetDir }),
+            }).catch(() => {}).finally(() => {
+              triggerRefresh()
+              onRefresh()
+              setBusy(false)
+            })
+          }
+        }}
+        onCancel={() => {
+          setConflictState(null)
+          setCreateTarget(null)
+          setEditingPath(null)
+        }}
       />
     </div>
   )

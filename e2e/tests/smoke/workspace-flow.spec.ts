@@ -21,9 +21,11 @@ test.describe('Workspace flow', () => {
     await expect(page.getByText(dirName, { exact: false }).first()).toBeVisible({ timeout: 10_000 })
   })
 
-  test('open workspace picker with Alt+W', async ({ page }) => {
+  test('Alt+W no longer opens workspace picker', async ({ page }) => {
     await waitForAppReady(page)
     await page.keyboard.press('Alt+W')
     await page.waitForTimeout(500)
+    // Alt+W now closes panes, not opens the workspace picker dialog
+    await expect(page.getByText('Create workspace')).toBeHidden({ timeout: 5_000 })
   })
 })

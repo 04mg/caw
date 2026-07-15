@@ -17,6 +17,7 @@ import {
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
+  cyclePane,
 } from '@/features/shared/utils/layout'
 import {
   loadState,
@@ -871,7 +872,7 @@ export function AppLayout() {
   )
 
   const openFile = useCallback(
-    (filePath: string) => {
+    (filePath: string, cwd?: string) => {
       if (!activeWorkspace) return
       const name = filePath.split(/[\\/]/).pop() || filePath
 
@@ -889,7 +890,7 @@ export function AppLayout() {
         layout: {
           type: 'leaf' as const,
           id: crypto.randomUUID(),
-          cwd: activeWorkspace.path || '',
+          cwd: cwd || activeWorkspace.path || '',
           filePath,
         },
       }
@@ -1248,11 +1249,24 @@ export function AppLayout() {
   }, [])
 
   useHotkeys({
-    'Alt+W': () => setPickerOpen(true),
+    'Alt+W': () => { if (activePaneId) handleClosePane(activePaneId) },
+    'Alt+ArrowLeft': () => {
+      if (!activeWorkspace || !activeTab || !activePaneId) return
+      const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'left')
+      if (!next) return
+      if (next.tabId !== activeTab.id) switchTab(next.tabId)
+      setActivePane(next.paneId)
+    },
+    'Alt+ArrowRight': () => {
+      if (!activeWorkspace || !activeTab || !activePaneId) return
+      const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'right')
+      if (!next) return
+      if (next.tabId !== activeTab.id) switchTab(next.tabId)
+      setActivePane(next.paneId)
+    },
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
-    'Alt+C': () => { if (activePaneId) handleClosePane(activePaneId) },
     'Alt+P': () => setCommandPaletteOpen(true),
   })
 
@@ -1288,9 +1302,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
@@ -1304,9 +1318,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
@@ -1320,9 +1334,9 @@ export function AppLayout() {
       <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+W" label="New workspace" />
+          <Shortcut keys="Alt+→" label="Switch pane" />
           <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+C" label="Close pane" />
+          <Shortcut keys="Alt+W" label="Close pane" />
         </div>
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+H" label="Horizontal split" />
@@ -1447,7 +1461,7 @@ export function AppLayout() {
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
                 onOpenFile={(path) => {
-                  openFile(path)
+                  openFile(path, currentWorkspacePath)
                   setExplorerDrawerOpen(false)
                   setMobileView('terminals')
                 }}
@@ -1744,7 +1758,7 @@ export function AppLayout() {
                       <FolderSidebar
                         workspacePath={currentWorkspacePath}
                         mainWorkspacePath={activeWorkspace.path || ''}
-                        onOpenFile={openFile}
+                        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
                         gitStatuses={gitStatuses}
                         gitIgnored={gitIgnored}
                         onRefresh={fetchGitStatus}
