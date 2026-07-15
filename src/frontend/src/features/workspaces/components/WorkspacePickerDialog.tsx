@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Search, Folder, Check, ArrowLeft } from 'lucide-react'
+import { Search, Folder, Check, ArrowLeft, FolderPlus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Input } from '@/components/input'
 
 import { LazyTree } from '@/features/explorer/components/LazyTree'
+import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 import { type FileNode } from '@/features/explorer/types'
 import { EmojiPicker } from 'frimousse'
 
@@ -29,6 +30,20 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   const [searching, setSearching] = useState(false)
   const [browseRoot, setBrowseRoot] = useState('/')
   const treeScrollRef = useRef<HTMLDivElement>(null)
+  const [treeVersion, setTreeVersion] = useState(0)
+  const [createFolderParent, setCreateFolderParent] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const onDown = (event: MouseEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) return
+      setContextMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [contextMenu])
 
   const [wsName, setWsName] = useState('')
   const [emoji, setEmoji] = useState('')
@@ -63,6 +78,8 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
       setBrowseRoot('/')
       setWsName('')
       setEmoji('')
+      setCreateFolderParent(null)
+      setContextMenu(null)
     }
   }, [open])
 
@@ -101,6 +118,20 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
     if (selected && wsName) onChoose(selected, wsName, emoji)
   }
 
+  const createFolder = useCallback(async (parentPath: string, name: string) => {
+    const sep = parentPath.includes('\\') ? '\\' : '/'
+    const path = parentPath.endsWith(sep) ? parentPath + name : parentPath + sep + name
+    setCreateFolderParent(null)
+    try {
+      const res = await fetch('/api/workspaces/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, type: 'dir' }),
+      })
+      if (res.ok) setTreeVersion((version) => version + 1)
+    } catch { /* ignore */ }
+  }, [])
+
   const showDropdown = query.trim().length > 0 && (searching || results.length > 0)
 
   return (
@@ -132,12 +163,33 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
             <div className="relative h-[50vh] shrink-0 border border-border rounded-md overflow-hidden">
               <div ref={treeScrollRef} className="h-full overflow-auto">
                 <LazyTree
+                  key={treeVersion}
                   rootPath="/"
                   selected={selected}
                   onSelect={handleSelect}
                   focusPath={focusPath}
+                  onShowContextMenu={(path, _name, x, y) => setContextMenu({ path, x, y })}
+                  createTargetPath={createFolderParent}
+                  onCreateFolder={createFolder}
+                  onCreateCancel={() => setCreateFolderParent(null)}
                 />
               </div>
+
+              {contextMenu && (
+                <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setContextMenu(null)
+                      setCreateFolderParent(contextMenu.path)
+                    }}
+                    className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    New Folder
+                  </button>
+                </SmartContextMenu>
+              )}
 
               {showDropdown && (
                 <div className="absolute inset-0 z-10 bg-background overflow-auto py-1">

@@ -28,14 +28,32 @@ export interface LazyNodeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
+  onShowContextMenu?: (path: string, name: string, x: number, y: number) => void
+  createTargetPath?: string | null
+  onCreateFolder?: (parentPath: string, name: string) => void
+  onCreateCancel?: () => void
 }
 
-export function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusPath }: LazyNodeProps) {
+export function LazyNode({
+  name,
+  path,
+  depth,
+  startExpanded,
+  selected,
+  onSelect,
+  focusPath,
+  onShowContextMenu,
+  createTargetPath,
+  onCreateFolder,
+  onCreateCancel,
+}: LazyNodeProps) {
   const [expanded, setExpanded] = useState(!!startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
+  const [createValue, setCreateValue] = useState('')
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const createInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (loaded || loading) return
@@ -70,6 +88,35 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
     }
   }, [selected, path])
 
+  const isCreating = createTargetPath === path
+
+  useEffect(() => {
+    if (isCreating) {
+      setExpanded(true)
+      if (!loaded) load()
+      createInputRef.current?.focus()
+    } else {
+      setCreateValue('')
+    }
+  }, [isCreating, expanded, loaded, load])
+
+  const submitCreate = () => {
+    const value = createValue.trim()
+    if (!value || !onCreateFolder) return
+    onCreateFolder(path, value)
+    setCreateValue('')
+  }
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      submitCreate()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onCreateCancel?.()
+    }
+  }
+
   const toggle = () => {
     setExpanded((e) => {
       const next = !e
@@ -84,6 +131,11 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
     <div>
       <button
         ref={buttonRef}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onShowContextMenu?.(path, name, e.clientX, e.clientY)
+        }}
         onClick={() => {
           onSelect(path)
           toggle()
@@ -117,9 +169,30 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
               selected={selected}
               onSelect={onSelect}
               focusPath={focusPath}
+              onShowContextMenu={onShowContextMenu}
+              createTargetPath={createTargetPath}
+              onCreateFolder={onCreateFolder}
+              onCreateCancel={onCreateCancel}
             />
           ))}
-          {children.length === 0 && (
+          {isCreating && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                ref={createInputRef}
+                value={createValue}
+                onChange={(e) => setCreateValue(e.target.value)}
+                onKeyDown={handleCreateKeyDown}
+                onBlur={() => {
+                  if (createValue.trim()) submitCreate()
+                  else onCreateCancel?.()
+                }}
+                placeholder="folder name"
+                className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0 text-xs outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+          )}
+          {children.length === 0 && !isCreating && (
             <p className="text-xs text-muted-foreground px-2 py-1 italic" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
               empty
             </p>

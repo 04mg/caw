@@ -5,9 +5,22 @@ interface LazyTreeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
+  onShowContextMenu?: (path: string, name: string, x: number, y: number) => void
+  createTargetPath?: string | null
+  onCreateFolder?: (parentPath: string, name: string) => void
+  onCreateCancel?: () => void
 }
 
-export function LazyTree({ rootPath, selected, onSelect, focusPath }: LazyTreeProps) {
+export function LazyTree({
+  rootPath,
+  selected,
+  onSelect,
+  focusPath,
+  onShowContextMenu,
+  createTargetPath,
+  onCreateFolder,
+  onCreateCancel,
+}: LazyTreeProps) {
   return (
     <div className="py-1">
       <LazyNode
@@ -18,6 +31,10 @@ export function LazyTree({ rootPath, selected, onSelect, focusPath }: LazyTreePr
         selected={selected}
         onSelect={onSelect}
         focusPath={focusPath}
+        onShowContextMenu={onShowContextMenu}
+        createTargetPath={createTargetPath}
+        onCreateFolder={onCreateFolder}
+        onCreateCancel={onCreateCancel}
       />
     </div>
   )
