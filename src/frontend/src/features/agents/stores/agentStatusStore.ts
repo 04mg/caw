@@ -48,6 +48,14 @@ function ensureMux() {
   })
 }
 
+// Start the background WS subscription as soon as this module is imported so
+// the store stays live for the whole app lifetime, regardless of whether the
+// Command Center is open. The multiplexer's onSubscribe handler sends the
+// full current status snapshot, which replaces the need for a REST fetch
+// when the Kanban board mounts. This keeps the Command Center instant to
+// open because it just reads from the already-populated store.
+ensureMux()
+
 function notify() {
   const current = { ...activeStatuses }
   for (const l of listeners) l(current)

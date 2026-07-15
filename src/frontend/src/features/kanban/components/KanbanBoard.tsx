@@ -11,7 +11,7 @@ import {
 import { type Workspace } from '@/features/workspaces/types'
 import { collectLeafIds, getLeaf } from '@/features/shared/utils/layout'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { subscribeAgentStatuses, loadInitialStatuses } from '@/features/agents/stores/agentStatusStore'
+import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStore'
 import { type AgentStatus } from '@/features/agents/types'
 
 
@@ -74,9 +74,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Fetch initial statuses and subscribe to real-time updates
+  // Subscribe to the background WS status store. The store is kept live for
+  // the whole app lifetime (the multiplexer onSubscribe dumps the current
+  // snapshot), so opening the Command Center is instant — no REST fetch.
   useEffect(() => {
-    loadInitialStatuses()
     return subscribeAgentStatuses((nextStatuses) => {
       setStatuses(nextStatuses)
     })
