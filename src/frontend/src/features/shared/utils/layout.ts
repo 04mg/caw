@@ -206,6 +206,43 @@ export function focusAdjacentLeaf(
   return leafIds[(index + 1) % leafIds.length]
 }
 
+export interface PaneCycleEntry {
+  tabId: string
+  paneId: string
+}
+
+export function buildPaneCycle(
+  tabs: { id: string; layout: LayoutNode }[],
+): PaneCycleEntry[] {
+  const entries: PaneCycleEntry[] = []
+  for (const tab of tabs) {
+    for (const paneId of collectLeafIds(tab.layout)) {
+      entries.push({ tabId: tab.id, paneId })
+    }
+  }
+  return entries
+}
+
+export function cyclePane(
+  tabs: { id: string; layout: LayoutNode }[],
+  activeTabId: string,
+  activePaneId: string,
+  direction: 'left' | 'right',
+): PaneCycleEntry | null {
+  const cycle = buildPaneCycle(tabs)
+  if (cycle.length === 0) return null
+
+  const index = cycle.findIndex(
+    (e) => e.tabId === activeTabId && e.paneId === activePaneId,
+  )
+  if (index < 0) return cycle[0] ?? null
+
+  if (direction === 'left') {
+    return cycle[(index - 1 + cycle.length) % cycle.length]
+  }
+  return cycle[(index + 1) % cycle.length]
+}
+
 export function findAgentId(node: LayoutNode): string | undefined {
   if (node.type === 'leaf') return node.agentId
   if (node.type === 'split') {
