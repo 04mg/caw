@@ -189,6 +189,23 @@ export function getLeafCwd(root: LayoutNode, id: string): string | null {
   return null
 }
 
+export function focusAdjacentLeaf(
+  root: LayoutNode,
+  activeId: string,
+  direction: 'left' | 'right',
+): string | null {
+  const leafIds = collectLeafIds(root)
+  if (leafIds.length <= 1) return null
+
+  const index = leafIds.indexOf(activeId)
+  if (index < 0) return leafIds[0] ?? null
+
+  if (direction === 'left') {
+    return leafIds[(index - 1 + leafIds.length) % leafIds.length]
+  }
+  return leafIds[(index + 1) % leafIds.length]
+}
+
 export function findAgentId(node: LayoutNode): string | undefined {
   if (node.type === 'leaf') return node.agentId
   if (node.type === 'split') {
