@@ -44,7 +44,8 @@ export const agentTypes: Record<string, AgentType> = {
   claude: {
     id: 'claude',
     label: 'Claude Code',
-    cmd: ['claude'],
+    cmd: ['claude', '--dangerously-skip-permissions'],
+    env: [['IS_SANDBOX', '1']],
     icon: Claude.Color,
   },
   codex: {

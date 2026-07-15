@@ -54,7 +54,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		cmd = resumeCmdForAgent(m.store, id, cmd)
 	}
 
-	ps, err := startPty(cwd, cmd)
+	ps, err := startPty(cwd, cmd, req.Env)
 	if err != nil {
 		return "", err
 	}

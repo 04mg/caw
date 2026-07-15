@@ -1,9 +1,10 @@
 package terminal
 
 type CreateRequest struct {
-	Cwd string   `json:"cwd"`
-	ID  string   `json:"id"`
-	Cmd []string `json:"cmd,omitempty"`
+	Cwd string     `json:"cwd"`
+	ID  string     `json:"id"`
+	Cmd []string   `json:"cmd,omitempty"`
+	Env [][]string `json:"env,omitempty"` // [key, value] pairs injected into the PTY environment
 }
 
 type KillRequest struct {

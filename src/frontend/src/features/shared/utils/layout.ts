@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -17,6 +17,7 @@ export function normalizeLayout(node: unknown): LayoutNode {
       id: typeof n.id === 'string' ? n.id : crypto.randomUUID(),
       cwd: typeof n.cwd === 'string' ? n.cwd : '',
       cmd: Array.isArray(n.cmd) ? (n.cmd as string[]) : undefined,
+      env: Array.isArray(n.env) ? (n.env as [string, string][]) : undefined,
       agentId: typeof n.agentId === 'string' ? n.agentId : undefined,
       filePath: typeof n.filePath === 'string' ? n.filePath : undefined,
       isDiff: typeof n.isDiff === 'boolean' ? n.isDiff : undefined,
@@ -44,8 +45,8 @@ export function normalizeLayout(node: unknown): LayoutNode {
   return createEmpty()
 }
 
-export function createLeaf(cwd: string, cmd?: string[], agentId?: string): LayoutNode {
-  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, agentId }
+export function createLeaf(cwd: string, cmd?: string[], agentId?: string, env?: [string, string][]): LayoutNode {
+  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, env, agentId }
 }
 
 export function splitLeaf(

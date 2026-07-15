@@ -49,15 +49,17 @@ function notify() {
   for (const s of subscribers) s()
 }
 
-async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promise<string> {
+async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: [string, string][]): Promise<string> {
   if (!cmd || cmd.length === 0) {
     const customShell = localStorage.getItem('caw:defaultShell')
     if (customShell) cmd = [customShell]
   }
+  const body: Record<string, unknown> = { id: leafId, cwd: cwd || '', cmd }
+  if (env && env.length > 0) body.env = env
   const res = await fetch('/api/terminals', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: leafId, cwd: cwd || '', cmd }),
+    body: JSON.stringify(body),
   })
   const { id } = (await res.json())?.data ?? {}
   return id
@@ -501,6 +503,7 @@ export async function attachTerminal(
   el: HTMLElement,
   cwd: string,
   cmd?: string[],
+  env?: [string, string][],
 ): Promise<TerminalInstance> {
   const existing = registry.get(leafId)
   if (existing) {
@@ -573,7 +576,7 @@ export async function attachTerminal(
   wireInput(inst)
 
   try {
-    const backendId = await ensureBackend(leafId, cwd, cmd)
+    const backendId = await ensureBackend(leafId, cwd, cmd, env)
     inst.backendId = backendId
     connectWs(inst, backendId)
   } catch (err) {
