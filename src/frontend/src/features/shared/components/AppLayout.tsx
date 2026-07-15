@@ -29,7 +29,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -522,12 +522,25 @@ export function AppLayout() {
               toast.dismiss(t)
             }}
             style={{ fontFamily: 'inherit' }}
-            className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
+            className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground relative ${
               type === 'needs_input'
                 ? 'border-amber-500/30 hover:border-amber-500/50'
                 : 'border-emerald-500/20 hover:border-emerald-500/40'
             }`}
           >
+            {/* Close button — top-right aligned */}
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={(e) => {
+                e.stopPropagation()
+                toast.dismiss(t)
+              }}
+              className="absolute top-1.5 right-1.5 flex items-center justify-center w-5 h-5 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-foreground/10 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+
             {/* Large agent icon */}
             <div className="shrink-0 flex items-center justify-center w-12 h-12 pointer-events-none">
               {AgentIcon
