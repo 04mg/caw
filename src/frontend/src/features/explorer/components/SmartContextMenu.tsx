@@ -35,6 +35,7 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
       ref={ref as React.Ref<HTMLDivElement>}
       className="fixed z-50 w-44 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
       style={{ left: pos.left, top: pos.top }}
+      onPointerDownCapture={(event) => event.stopPropagation()}
     >
       {children}
     </div>
