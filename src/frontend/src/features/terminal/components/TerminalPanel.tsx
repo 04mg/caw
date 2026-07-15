@@ -196,9 +196,9 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     const el = elRef.current
     if (!el) return
 
-    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.005')
-    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.80')
-    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.025')
+    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.02')
+    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.85')
+    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05')
     const SCROLL_GRACE_MS = parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10)
 
     let lastY = 0
@@ -208,12 +208,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let active = false
     let rafId = 0
     let graceTimer: ReturnType<typeof setTimeout> | null = null
+    let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
       const target = el.querySelector('.xterm-viewport') || el
       if (!target) return
+      accumDelta += deltaY
+      const wholeLines = Math.trunc(accumDelta)
+      if (wholeLines === 0) return
+      accumDelta -= wholeLines
       target.dispatchEvent(new WheelEvent('wheel', {
-        deltaY: deltaY,
+        deltaY: wholeLines,
         deltaMode: WheelEvent.DOM_DELTA_LINE,
         bubbles: true,
         cancelable: true,
@@ -258,6 +263,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       lastX = t.clientX
       lastTime = Date.now()
       velocity = 0
+      accumDelta = 0
       active = true
       setTerminalUserScrolling(terminalId, true)
     }
