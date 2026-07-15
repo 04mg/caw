@@ -557,7 +557,7 @@ export function AppLayout() {
                 e.stopPropagation()
                 toast.dismiss(t)
               }}
-              className="absolute top-1.5 right-1.5 flex items-center justify-center w-5 h-5 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-foreground/10 transition-colors"
+              className="absolute top-1.5 right-1.5 flex items-center justify-center w-5 h-5 rounded-md text-muted-foreground/60 hover:text-foreground cursor-pointer transition-colors"
             >
               <X className="w-3.5 h-3.5" />
             </button>
