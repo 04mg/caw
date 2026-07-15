@@ -871,7 +871,7 @@ export function AppLayout() {
   )
 
   const openFile = useCallback(
-    (filePath: string) => {
+    (filePath: string, cwd?: string) => {
       if (!activeWorkspace) return
       const name = filePath.split(/[\\/]/).pop() || filePath
 
@@ -889,7 +889,7 @@ export function AppLayout() {
         layout: {
           type: 'leaf' as const,
           id: crypto.randomUUID(),
-          cwd: activeWorkspace.path || '',
+          cwd: cwd || activeWorkspace.path || '',
           filePath,
         },
       }
@@ -1447,7 +1447,7 @@ export function AppLayout() {
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
                 onOpenFile={(path) => {
-                  openFile(path)
+                  openFile(path, currentWorkspacePath)
                   setExplorerDrawerOpen(false)
                   setMobileView('terminals')
                 }}
@@ -1744,7 +1744,7 @@ export function AppLayout() {
                       <FolderSidebar
                         workspacePath={currentWorkspacePath}
                         mainWorkspacePath={activeWorkspace.path || ''}
-                        onOpenFile={openFile}
+                        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
                         gitStatuses={gitStatuses}
                         gitIgnored={gitIgnored}
                         onRefresh={fetchGitStatus}
