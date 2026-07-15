@@ -7,6 +7,7 @@ interface TerminalPanelProps {
   terminalId: string
   cwd: string
   cmd?: string[]
+  env?: [string, string][]
   isActive?: boolean
 }
 
@@ -40,7 +41,7 @@ function fallbackCopyToClipboard(text: string): boolean {
   }
 }
 
-export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
+export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
@@ -113,7 +114,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     window.addEventListener('focus', onVisibility)
 
     ;(async () => {
-      inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd)
+      inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd, env)
       if (cancelled) return
 
       if (isActiveRef.current) {

@@ -13,7 +13,7 @@ export function BinaryFileView({ filePath, onOpenAnyway }: BinaryFileViewProps) 
       <div className="p-4 rounded-full bg-amber-500/10 border border-amber-500/20">
         <AlertTriangle className="h-8 w-8 text-amber-500" />
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col items-center gap-1">
         <p className="text-sm font-semibold text-foreground">{filename}</p>
         <p className="text-xs text-muted-foreground max-w-sm">
           This file appears to be a binary file. Opening it in a text editor may display
