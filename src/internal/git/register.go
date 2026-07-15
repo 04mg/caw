@@ -75,7 +75,18 @@ func (h *Handler) Ignored(c *gin.Context) {
 }
 
 func Register(rg *gin.RouterGroup) {
-	h := NewHandler(NewService())
+	svc := NewService()
+	h := NewHandler(svc)
+	rg.GET("/git/statuses", h.Status)
+	rg.GET("/git/diffs", h.Diff)
+	rg.GET("/git/originals", h.Original)
+	rg.GET("/git/ignored", h.Ignored)
+}
+
+// RegisterWithService is like Register but reuses a shared *Service so the
+// HTTP handlers and the "git" WebSocket channel share the same status cache.
+func RegisterWithService(rg *gin.RouterGroup, svc *Service) {
+	h := NewHandler(svc)
 	rg.GET("/git/statuses", h.Status)
 	rg.GET("/git/diffs", h.Diff)
 	rg.GET("/git/originals", h.Original)
