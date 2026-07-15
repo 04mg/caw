@@ -169,6 +169,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 // watcherStart) and returns the id of the earliest one (oldest first) that is
 // not already claimed by another watcher of the same agent type+cwd.
 //
+// Subagent sessions (those with a non-empty parent_id) are always excluded:
+// subagents run internally inside the parent's PTY and have their own message
+// stream. If a parent watcher followed a subagent session, it would report the
+// subagent's terminal "stop" message as "idle" — emitting a spurious finished
+// notification — and then re-bind back to the parent once the parent resumes,
+// producing the "idle for a second then working again" flicker.
+//
 // When multiple watchers compete for the same pool of sessions (because
 // OpenCode creates sessions lazily on first user message, not at PTY start),
 // PTY activity correlation is used to disambiguate: a watcher only claims a
@@ -192,7 +199,7 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 
 	if cwd != "" {
 		rows, qerr := db.Query(
-			`SELECT id, time_created, time_updated FROM session WHERE directory = ? ORDER BY time_created ASC`,
+			`SELECT id, time_created, time_updated FROM session WHERE directory = ? AND (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
 			cwd,
 		)
 		if qerr == nil {
@@ -206,7 +213,7 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 	}
 	if len(candidates) == 0 {
 		rows, qerr := db.Query(
-			`SELECT id, time_created, time_updated FROM session ORDER BY time_created ASC`,
+			`SELECT id, time_created, time_updated FROM session WHERE (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
 		)
 		if qerr == nil {
 			for rows.Next() {
@@ -241,6 +248,14 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 // returned session; the caller is responsible for calling ClaimSession.
 // Gates on PTY activity to ensure only the watcher whose PTY is producing
 // output switches to the new session.
+//
+// Subagent sessions (parent_id != '') are excluded: a subagent launched by the
+// current agent (e.g. via the "task" tool) shares the same directory and, while
+// it runs, has a more recent time_updated than the blocked parent. Without this
+// guard the parent watcher would re-bind to the subagent, report its terminal
+// "stop" as "idle" (firing a false finished notification), then re-bind back to
+// the parent once it resumes — the "idle for a second then working again"
+// flicker. /new and /resume always create top-level sessions with no parent_id.
 func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, currentID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
@@ -256,7 +271,7 @@ func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, curren
 
 	if cwd != "" {
 		rows, qerr := db.Query(
-			`SELECT id, time_updated FROM session WHERE directory = ? ORDER BY time_updated DESC`,
+			`SELECT id, time_updated FROM session WHERE directory = ? AND (parent_id IS NULL OR parent_id = '') ORDER BY time_updated DESC`,
 			cwd,
 		)
 		if qerr == nil {
