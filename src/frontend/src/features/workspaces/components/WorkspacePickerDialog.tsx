@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Search, Folder, Check, ArrowLeft, FolderPlus, Pencil, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Input } from '@/components/input'
@@ -228,7 +229,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                 />
               </div>
 
-              {contextMenu && (
+              {contextMenu && createPortal(
                 <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
                   <button
                     onClick={(e) => {
@@ -268,7 +269,8 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                       </button>
                     </>
                   )}
-                </SmartContextMenu>
+                </SmartContextMenu>,
+                document.body,
               )}
 
               {showDropdown && (
