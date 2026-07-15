@@ -22,6 +22,15 @@ export interface TerminalInstance {
   /** @internal rAF id for the scheduled output flush, 0 when idle */
   _rafId: number
   /**
+   * @internal True while the xterm.js instance is detached from the DOM
+   * (e.g. the user switched to another tab). The WebSocket is kept alive so
+   * that re-attaching replays the local ring buffer instead of reconnecting
+   * and reloading scrollback from the backend. While detached, incoming WS
+   * output is accumulated into the buffer only — never written to the
+   * disposed terminal.
+   */
+  _detached: boolean
+  /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
    * Tracked from the live WS stream so a re-attached xterm.js instance can
@@ -346,6 +355,15 @@ function safeScrollToBottom(inst: TerminalInstance) {
 // one write per frame (~16ms) keeps the terminal responsive under high
 // output (compiles, log tailing, find /) and eliminates visible jank.
 function scheduleFlush(inst: TerminalInstance) {
+  if (inst._detached) {
+    // Terminal is detached (another tab is visible). Keep buffering WS
+    // output into the ring buffer but do NOT schedule a render flush —
+    // there is no live xterm.js instance to write to. On re-attach the
+    // buffer is replayed in one shot.
+    for (const ch of inst._pendingOutput) inst.buffer.push(ch)
+    inst._pendingOutput = []
+    return
+  }
   if (inst._rafId !== 0) return
   inst._rafId = requestAnimationFrame(() => {
     inst._rafId = 0
@@ -371,8 +389,10 @@ function cancelFlush(inst: TerminalInstance) {
     const chunks = inst._pendingOutput
     inst._pendingOutput = []
     if (chunks.length > 0) {
-      const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
-      try { inst.term.write(combined) } catch { /* ignore */ }
+      if (!inst._detached) {
+        const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+        try { inst.term.write(combined) } catch { /* ignore */ }
+      }
       for (const ch of chunks) inst.buffer.push(ch)
     }
   }
@@ -419,7 +439,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
-        if (cols > 0 && rows > 0) {
+        if (cols > 0 && rows > 0 && !inst._detached) {
           inst.term.resize(cols, rows)
         }
       } else if (msg.type === 'exit') {
@@ -513,6 +533,9 @@ export async function attachTerminal(
     const { term, fit } = makeTerminal()
     existing.term = term
     existing.fit = fit
+    // The terminal is being re-attached to the DOM, so live output can
+    // once again be rendered directly to xterm.js.
+    existing._detached = false
     // Wait for the container to have real dimensions before opening
     // xterm.js, so fit.fit() computes correct cols/rows and the terminal
     // doesn't render garbled output that requires a manual resize.
@@ -571,7 +594,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -618,8 +641,14 @@ export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
-  try { inst.ws?.close() } catch { /* ignore */ }
-  inst.ws = null
+  // Mark the terminal as detached from the DOM so the live WS output
+  // handler keeps buffering into the ring buffer WITHOUT writing to the
+  // disposed xterm.js instance. The WebSocket is intentionally left open
+  // so that switching back to this tab replays the local ring buffer
+  // instantly instead of reconnecting and reloading scrollback from the
+  // backend. Closing the WS here is what caused the "reload on every tab
+  // switch" regression the ring buffer was meant to prevent.
+  inst._detached = true
   try { inst.term.dispose() } catch { /* ignore */ }
 }
 
