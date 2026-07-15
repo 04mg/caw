@@ -70,6 +70,13 @@ type FileEventHub struct {
 	extEvents  chan pendingEvent
 	done       chan struct{}
 	droppedEvents int64
+
+	// onEventListeners holds callbacks invoked (synchronously) with each
+	// FileEvent that is broadcast to subscribers. This lets other packages
+	// (e.g. git status) react to file changes without coupling to the hub's
+	// broadcast internals. Listeners must not block.
+	eventMu       sync.RWMutex
+	onEventListeners []func(rootPath string, event FileEvent)
 }
 
 var defaultHub *FileEventHub
@@ -88,6 +95,11 @@ func getHub() *FileEventHub {
 	})
 	return defaultHub
 }
+
+// GetHub returns the process-wide FileEventHub, creating it on first use.
+// Other packages can use it to register event listeners (see OnEvent)
+// without importing the hub's broadcast internals.
+func GetHub() *FileEventHub { return getHub() }
 
 func (h *FileEventHub) run() {
 	debounceTimers := make(map[string]*time.Timer)
@@ -347,6 +359,23 @@ func (h *FileEventHub) handleFSEvent(rootPath string, event fsnotify.Event, w *f
 	h.trySend(pendingEvent{rootPath: rootPath, event: ev, fromFS: true})
 }
 
+// OnEvent registers a callback invoked whenever a FileEvent is broadcast
+// to subscribers. The returned function removes the listener. Callers must
+// not block in the callback; the hub dispatches it under a read lock.
+func (h *FileEventHub) OnEvent(fn func(rootPath string, event FileEvent)) func() {
+	h.eventMu.Lock()
+	defer h.eventMu.Unlock()
+	h.onEventListeners = append(h.onEventListeners, fn)
+	idx := len(h.onEventListeners) - 1
+	return func() {
+		h.eventMu.Lock()
+		defer h.eventMu.Unlock()
+		if idx < len(h.onEventListeners) {
+			h.onEventListeners[idx] = nil
+		}
+	}
+}
+
 func (h *FileEventHub) broadcast(rootPath string, event FileEvent) {
 	msg, err := json.Marshal(event)
 	if err != nil {
@@ -363,4 +392,14 @@ func (h *FileEventHub) broadcast(rootPath string, event FileEvent) {
 	for _, sub := range subs {
 		sub.WriteMessage(websocket.TextMessage, msg)
 	}
+
+	// Notify out-of-band listeners (e.g. git status recompute) without
+	// holding the subscriber lock. Listeners must be non-blocking.
+	h.eventMu.RLock()
+	for _, fn := range h.onEventListeners {
+		if fn != nil {
+			fn(rootPath, event)
+		}
+	}
+	h.eventMu.RUnlock()
 }

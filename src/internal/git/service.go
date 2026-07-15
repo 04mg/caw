@@ -21,6 +21,33 @@ func NewService() *Service {
 	return &Service{statusCacheTTL: 2 * time.Second}
 }
 
+// InvalidateStatusCache clears the cached git status so the next Status call
+// re-runs git. Used when file-change events signal that the working tree may
+// have changed since the cached snapshot was taken.
+func (s *Service) InvalidateStatusCache() {
+	s.statusCacheMu.Lock()
+	s.statusCache = nil
+	s.statusCacheRepo = ""
+	s.statusCacheTime = time.Time{}
+	s.statusCacheMu.Unlock()
+}
+
+// StatusAndIgnored returns both the porcelain status map and the ignored map
+// for the repo at path, recomputing them in a single call. The status portion
+// is cached per repo with a short TTL; callers that need a guaranteed-fresh
+// snapshot should call InvalidateStatusCache first.
+func (s *Service) StatusAndIgnored(path string) (map[string]string, map[string]bool, error) {
+	statuses, err := s.Status(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	ignored, err := s.Ignored(path)
+	if err != nil {
+		return statuses, nil, err
+	}
+	return statuses, ignored, nil
+}
+
 func (s *Service) Status(path string) (map[string]string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
