@@ -63,13 +63,22 @@ func (w *connWriter) Close() error {
 // etc.) emit each mode as its own sequence.
 var modeRe = regexp.MustCompile("\x1b\\[\\?(\\d+)([hl])")
 
+// viewer tracks the last-reported terminal dimensions of a single
+// connected WebSocket client. The Session adopts the smallest cols and
+// rows across all viewers (tmux "smallest" mode) so every client can see
+// the full PTY output without truncation.
+type viewer struct {
+	cols int
+	rows int
+}
+
 type Session struct {
 	ID           string
 	Pty          *Pty
 	Cwd          string
 	DeleteBranch bool
 	mu           sync.Mutex
-	conns        map[*connWriter]bool
+	conns        map[*connWriter]*viewer
 	cols         int
 	rows         int
 	scrollback   []byte
@@ -80,21 +89,37 @@ type Session struct {
 	onExit       func()
 }
 
-// resizePTY resizes the single PTY to cols/rows and notifies every
-// connected client of the new dimensions so each client can fit its
-// local xterm.js to match. A single PTY has only one size; keeping all
-// viewers at that size is what makes the terminal consistent across
-// clients. Must be called with s.mu held.
-func (s *Session) resizePTY(cols, rows int) {
-	if cols <= 0 || rows <= 0 {
+// recomputeResize adopts the smallest cols and rows across all connected
+// viewers (tmux "smallest" mode), resizing the single PTY to that minimum
+// and notifying every client of the new dimensions. A single PTY has only
+// one size; using the smallest ensures every viewer can see the full
+// output. When the smallest viewer disconnects, the PTY grows to the next
+// smallest size. Must be called with s.mu held.
+func (s *Session) recomputeResize() {
+	if len(s.conns) == 0 {
 		return
 	}
-	if s.cols == cols && s.rows == rows && len(s.conns) > 0 {
+	minCols, minRows := -1, -1
+	for _, v := range s.conns {
+		if v.cols <= 0 || v.rows <= 0 {
+			continue
+		}
+		if minCols < 0 || v.cols < minCols {
+			minCols = v.cols
+		}
+		if minRows < 0 || v.rows < minRows {
+			minRows = v.rows
+		}
+	}
+	if minCols <= 0 || minRows <= 0 {
 		return
 	}
-	s.cols = cols
-	s.rows = rows
-	_ = s.Pty.ptmx.Resize(cols, rows)
+	if s.cols == minCols && s.rows == minRows {
+		return
+	}
+	s.cols = minCols
+	s.rows = minRows
+	_ = s.Pty.ptmx.Resize(minCols, minRows)
 	s.broadcastResize()
 }
 

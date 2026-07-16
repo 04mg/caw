@@ -80,9 +80,16 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer stopPing()
 
+	// lastReported holds the most recent cols/rows the client sent via a
+	// "resize" message before it is registered in sess.conns (which happens
+	// in sendScrollback). Once registered, the viewer struct carries the
+	// dimensions and lastReported is no longer used.
+	var lastReportedCols, lastReportedRows int
+
 	defer func() {
 		sess.mu.Lock()
 		delete(sess.conns, wc)
+		sess.recomputeResize()
 		sess.mu.Unlock()
 		wc.Close()
 	}()
@@ -135,9 +142,12 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 
 		// Register the client only after scrollback is fully written so
 		// that live output from ReadLoop doesn't interleave with the
-		// replay.
+		// replay. Seed the viewer with the dimensions the client already
+		// reported (if any) and recompute the PTY size so the new viewer
+		// participates in the "smallest" calculation immediately.
 		sess.mu.Lock()
-		sess.conns[wc] = true
+		sess.conns[wc] = &viewer{cols: lastReportedCols, rows: lastReportedRows}
+		sess.recomputeResize()
 		sess.mu.Unlock()
 	}
 
@@ -182,7 +192,19 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 				continue
 			}
 			sess.mu.Lock()
-			sess.resizePTY(cols, rows)
+			if v, ok := sess.conns[wc]; ok {
+				// Viewer is already registered — update its size and
+				// recompute the PTY to the new smallest.
+				v.cols = cols
+				v.rows = rows
+				sess.recomputeResize()
+			} else {
+				// Viewer is not yet registered (sendScrollback hasn't
+				// run). Stash the reported size so it can be seeded into
+				// the viewer struct at registration time.
+				lastReportedCols = cols
+				lastReportedRows = rows
+			}
 			sess.mu.Unlock()
 			// Signal the first resize so sendScrollback runs with the
 			// client's actual dimensions.
