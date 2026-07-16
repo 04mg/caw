@@ -179,6 +179,20 @@ export function AppLayout() {
     return '25%'
   })()
 
+  // Derived sizes so that the visible panels in the top-level Group always
+  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
+  // error when the sum of Panel defaultSizes does not equal 100%, which can
+  // happen when the left sidebar and/or right folder sidebar are
+  // conditionally mounted/unmounted on collapse.
+  const folderSidebarDefaultSize = '20%'
+  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
+  const visibleFolderSidebarSize =
+    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
+  const mainPanelDefaultSize = Math.max(
+    0,
+    100 - visibleSidebarSize - visibleFolderSidebarSize,
+  )
+
   useEffect(() => {
     let done = false
     loadState().then((s) => {
@@ -1714,7 +1728,7 @@ export function AppLayout() {
                 )}
 
                 {/* Main Terminals / Editors Content */}
-                <Panel>
+                <Panel defaultSize={`${mainPanelDefaultSize}%`}>
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
