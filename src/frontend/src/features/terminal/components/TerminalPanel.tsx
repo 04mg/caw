@@ -377,7 +377,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
   return (
     <div
-      className="relative h-full w-full overflow-hidden custom-context-menu"
+      className="relative h-full w-full overflow-hidden custom-context-menu p-2 sm:p-4 lg:p-6 xl:p-8"
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
