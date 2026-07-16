@@ -179,20 +179,6 @@ export function AppLayout() {
     return '25%'
   })()
 
-  // Derived sizes so that the visible panels in the top-level Group always
-  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
-  // error when the sum of Panel defaultSizes does not equal 100%, which can
-  // happen when the left sidebar and/or right folder sidebar are
-  // conditionally mounted/unmounted on collapse.
-  const folderSidebarDefaultSize = '20%'
-  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
-  const visibleFolderSidebarSize =
-    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
-  const mainPanelDefaultSize = Math.max(
-    0,
-    100 - visibleSidebarSize - visibleFolderSidebarSize,
-  )
-
   useEffect(() => {
     let done = false
     loadState().then((s) => {
@@ -248,6 +234,21 @@ export function AppLayout() {
   }, [])
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
+
+  // Derived sizes so that the visible panels in the top-level Group always
+  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
+  // error when the sum of Panel defaultSizes does not equal 100%, which can
+  // happen when the left sidebar and/or right folder sidebar are
+  // conditionally mounted/unmounted on collapse.
+  const folderSidebarDefaultSize = '20%'
+  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
+  const visibleFolderSidebarSize =
+    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
+  const mainPanelDefaultSize = Math.max(
+    0,
+    100 - visibleSidebarSize - visibleFolderSidebarSize,
+  )
+
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
