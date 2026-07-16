@@ -148,6 +148,10 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
         body: JSON.stringify({ path, type: 'dir' }),
       })
       if (res.ok) {
+        // Also select the newly created folder so it becomes the chosen
+        // workspace path, matching the behaviour of clicking a directory.
+        setSelected(path)
+        setBrowseRoot(path)
         setFocusPath(path)
         setRefreshCounter((c) => c + 1)
       }
