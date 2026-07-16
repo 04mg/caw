@@ -7,6 +7,10 @@ type AgentStatusListener = (statuses: Record<string, AgentStatus>) => void
 let activeStatuses: Record<string, AgentStatus> = {}
 const listeners = new Set<AgentStatusListener>()
 let unsubMux: (() => void) | null = null
+// True once the store has received its first data snapshot from either the
+// REST seed fetch or the WS subscription. Until then, consumers should treat
+// an empty `activeStatuses` as "loading" rather than "no agents".
+let hydrated = false
 
 function ensureMux() {
   if (unsubMux) return
@@ -17,6 +21,7 @@ function ensureMux() {
 
       if (ev.event === 'agent_stopped') {
         delete activeStatuses[ev.sessionId]
+        hydrated = true
       } else if (ev.event === 'agent_started') {
         activeStatuses[ev.sessionId] = {
           sessionId: ev.sessionId,
@@ -41,6 +46,7 @@ function ensureMux() {
         }
       }
 
+      hydrated = true
       notify()
     } catch (err) {
       console.error('Error handling agent status message:', err)
@@ -76,6 +82,20 @@ export function subscribeAgentStatuses(cb: AgentStatusListener): () => void {
   }
 }
 
+// Synchronous snapshot of the current agent statuses. Use this to seed
+// component initial state so the first render already reflects the latest
+// store data instead of an empty object that flashes "No agents" placeholders
+// before the subscribe effect fires.
+export function getAgentStatuses(): Record<string, AgentStatus> {
+  return { ...activeStatuses }
+}
+
+// True once the store has received its first snapshot (REST or WS). Consumers
+// can use this to distinguish "still loading" from "genuinely no agents".
+export function isAgentStatusesHydrated(): boolean {
+  return hydrated
+}
+
 export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>> {
   try {
     const res = await fetch('/api/agents/statuses')
@@ -94,6 +114,7 @@ export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>
       if (!activeStatuses[id]) merged[id] = next[id]
     }
     activeStatuses = { ...activeStatuses, ...merged }
+    hydrated = true
     notify()
     return activeStatuses
   } catch (err) {

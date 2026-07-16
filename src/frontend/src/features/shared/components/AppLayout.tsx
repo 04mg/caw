@@ -92,6 +92,7 @@ export function AppLayout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
+  const [kanbanClosing, setKanbanClosing] = useState(false)
   // Ref to the StatusBar control-center button so we can blur it when the
   // board closes (otherwise it retains focus and keyboard focus is stuck on
   // the toolbar instead of returning to the terminal the user was editing).
@@ -448,12 +449,21 @@ export function AppLayout() {
   // We blur the control-center button (so it doesn't keep an active focus
   // ring) and dispatch a focus request for the last active terminal pane,
   // which TerminalPanel listens for and forwards to its xterm instance.
+  // The Kanban overlay plays a fade-out animation before unmounting; we keep
+  // it mounted with a `closing` flag for the duration of that animation.
+  const kanbanCloseTimer = useRef<number | null>(null)
   const closeAgentBoard = useCallback(() => {
+    if (kanbanCloseTimer.current) window.clearTimeout(kanbanCloseTimer.current)
+    setKanbanClosing(true)
     setAgentBoardOpen(false)
     controlCenterBtnRef.current?.blur()
     if (activePaneId) {
       window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: activePaneId } }))
     }
+    kanbanCloseTimer.current = window.setTimeout(() => {
+      setKanbanClosing(false)
+      kanbanCloseTimer.current = null
+    }, 170)
   }, [activePaneId])
 
   // ─── Agent Status Notifications ──────────────────────────────────────────
@@ -1822,8 +1832,12 @@ export function AppLayout() {
                 )}
               </Group>
             </div>
-            {agentBoardOpen && (
-              <div className="absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150">
+            {(agentBoardOpen || kanbanClosing) && (
+              <div
+                className={`absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150 ${
+                  kanbanClosing ? 'kanban-fade-out' : 'kanban-fade-in'
+                }`}
+              >
                 <KanbanBoard
                   workspaces={workspaces}
                   onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {

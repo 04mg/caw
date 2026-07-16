@@ -470,3 +470,21 @@ html, body, #root {
     animation: sonner-spin 1.2s linear infinite !important;
   }
 }
+
+/* ==========================================================================
+   Kanban Board — Fade In / Fade Out
+   ========================================================================== */
+@keyframes kanban-fade-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes kanban-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.98); }
+}
+.kanban-fade-in {
+  animation: kanban-fade-in 180ms ease-out forwards;
+}
+.kanban-fade-out {
+  animation: kanban-fade-out 160ms ease-in forwards;
+}
