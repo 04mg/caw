@@ -80,7 +80,6 @@ export function AppLayout() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarRef = usePanelRef()
-  const folderSidebarRef = usePanelRef()
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
@@ -303,26 +302,6 @@ export function AppLayout() {
       return next
     })
   }, [])
-
-  // Drive the resizable Panels' collapsed state through the imperative API
-  // instead of conditionally mounting/unmounting them. react-resizable-panels
-  // throws "Invalid N panel layout" from its ResizeObserver when the panel
-  // count changes mid-layout (the cached layout has a different arity than the
-  // current panel constraints), so we keep the panel set constant and toggle
-  // each sidebar between its expanded size and its `collapsedSize`.
-  useEffect(() => {
-    const ref = sidebarRef.current
-    if (!ref) return
-    if (sidebarCollapsed) ref.collapse()
-    else ref.expand()
-  }, [sidebarCollapsed, sidebarRef])
-
-  useEffect(() => {
-    const ref = folderSidebarRef.current
-    if (!ref) return
-    if (folderSidebarCollapsed || !activeWorkspace) ref.collapse()
-    else ref.expand()
-  }, [folderSidebarCollapsed, activeWorkspace, folderSidebarRef])
 
   useEffect(() => {
     if (activeWorkspace) {
@@ -1675,23 +1654,8 @@ export function AppLayout() {
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
               <Group orientation="horizontal" className="flex-1">
-                {/* Left Workspace Panel — always mounted; collapse/expand via
-                    the imperative ref to keep the panel count constant (see
-                    comment near the collapse/expand effects above). */}
-                <Panel
-                  id="sidebar"
-                  panelRef={sidebarRef}
-                  defaultSize={sidebarCollapsed ? '44px' : sidebarDefaultSize}
-                  minSize="15%"
-                  maxSize="50%"
-                  collapsible
-                  collapsedSize="44px"
-                  onResize={(size) => {
-                    if (size.asPercentage >= 15) {
-                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                    }
-                  }}
-                >
+                {/* Left Workspace Panel */}
+                {sidebarCollapsed ? (
                   <WorkspacePanel
                     workspaces={workspaces}
                     activeWorkspaceId={activeWorkspaceId}
@@ -1700,19 +1664,47 @@ export function AppLayout() {
                     onDeleteWorkspace={handleDeleteWorkspace}
                     onEditWorkspace={handleEditWorkspace}
                     onReorderWorkspaces={handleReorderWorkspaces}
-                    collapsed={sidebarCollapsed}
+                    collapsed={true}
                     onToggle={toggleSidebar}
                     pickerOpen={pickerOpen}
                     onPickerOpenChange={setPickerOpen}
                     onOpenSettings={() => setSettingsOpen(true)}
                   />
-                </Panel>
-                {!sidebarCollapsed && (
-                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                ) : (
+                  <>
+                    <Panel
+                      id="sidebar"
+                      panelRef={sidebarRef}
+                      defaultSize={sidebarDefaultSize}
+                      minSize="15%"
+                      maxSize="50%"
+                      onResize={(size) => {
+                        if (size.asPercentage >= 15) {
+                          localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
+                        }
+                      }}
+                    >
+                      <WorkspacePanel
+                        workspaces={workspaces}
+                        activeWorkspaceId={activeWorkspaceId}
+                        onSelectWorkspace={setActiveWorkspaceId}
+                        onAddWorkspace={handleAddWorkspace}
+                        onDeleteWorkspace={handleDeleteWorkspace}
+                        onEditWorkspace={handleEditWorkspace}
+                        onReorderWorkspaces={handleReorderWorkspaces}
+                        collapsed={false}
+                        onToggle={toggleSidebar}
+                        pickerOpen={pickerOpen}
+                        onPickerOpenChange={setPickerOpen}
+                        onOpenSettings={() => setSettingsOpen(true)}
+                      />
+                    </Panel>
+                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                  </>
                 )}
 
                 {/* Main Terminals / Editors Content */}
-                <Panel id="main">
+                <Panel>
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1806,33 +1798,28 @@ export function AppLayout() {
                   )}
                 </Panel>
 
-                {/* Right Folder Explorer Panel — always mounted; collapsed to 0%
-                    via the imperative ref when closed or when no workspace is
-                    active, so the panel count stays constant. */}
+                {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
                 {activeWorkspace && !folderSidebarCollapsed && (
-                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                  <>
+                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
+                    <Panel
+                      id="folder-sidebar"
+                      defaultSize="20%"
+                      minSize="15%"
+                      maxSize="50%"
+                    >
+                      <FolderSidebar
+                        workspacePath={currentWorkspacePath}
+                        mainWorkspacePath={activeWorkspace.path || ''}
+                        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                        gitStatuses={gitStatuses}
+                        gitIgnored={gitIgnored}
+                        onRefresh={fetchGitStatus}
+                        onClose={() => setFolderSidebarCollapsed(true)}
+                      />
+                    </Panel>
+                  </>
                 )}
-                <Panel
-                  id="folder-sidebar"
-                  panelRef={folderSidebarRef}
-                  defaultSize="20%"
-                  minSize="15%"
-                  maxSize="50%"
-                  collapsible
-                  collapsedSize="0%"
-                >
-                  {activeWorkspace && !folderSidebarCollapsed ? (
-                    <FolderSidebar
-                      workspacePath={currentWorkspacePath}
-                      mainWorkspacePath={activeWorkspace.path || ''}
-                      onOpenFile={(path) => openFile(path, currentWorkspacePath)}
-                      gitStatuses={gitStatuses}
-                      gitIgnored={gitIgnored}
-                      onRefresh={fetchGitStatus}
-                      onClose={() => setFolderSidebarCollapsed(true)}
-                    />
-                  ) : null}
-                </Panel>
               </Group>
             </div>
             {agentBoardOpen && (
