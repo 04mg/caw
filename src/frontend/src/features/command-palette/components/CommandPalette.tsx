@@ -83,8 +83,11 @@ export function CommandPalette({
     }
   }, [open])
 
+  const commandMode = query.startsWith('>')
+  const commandQuery = commandMode ? query.slice(1).trim() : query
+
   useEffect(() => {
-    if (!open || !workspacePath || !query.trim()) {
+    if (!open || !workspacePath || !query.trim() || commandMode) {
       setFileResults([])
       setSearching(false)
       return
@@ -113,7 +116,7 @@ export function CommandPalette({
 
     result.push({
       id: 'new-terminal',
-      label: 'New Terminal',
+      label: '> New Terminal',
       type: 'command',
       icon: <Terminal className="h-4 w-4" />,
       action: () => { onAddTerminal(); onOpenChange(false) },
@@ -121,7 +124,7 @@ export function CommandPalette({
 
     result.push({
       id: 'new-workspace',
-      label: 'New Workspace',
+      label: '> New Workspace',
       type: 'command',
       icon: <FolderPlus className="h-4 w-4" />,
       action: () => { onOpenWorkspacePicker(); onOpenChange(false) },
@@ -133,7 +136,7 @@ export function CommandPalette({
       const IconComponent = agentMeta?.icon || Bot
       result.push({
         id: `agent-${agent.id}`,
-        label: `Launch ${agent.label}`,
+        label: `> New ${agent.label}`,
         type: 'command',
         icon: <IconComponent className="h-4 w-4" />,
         action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label, agentMeta?.env); onOpenChange(false) },
@@ -157,13 +160,15 @@ export function CommandPalette({
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items
-    const q = query.toLowerCase()
+    const q = (commandMode ? commandQuery : query).toLowerCase()
+    if (!q) return commandMode ? items.filter((item) => item.type === 'command') : items
     return items.filter((item) => {
+      if (commandMode && item.type !== 'command') return false
       if (item.label.toLowerCase().includes(q)) return true
       if (item.description?.toLowerCase().includes(q)) return true
       return false
     })
-  }, [items, query])
+  }, [items, query, commandMode, commandQuery])
 
   const commandItems = filtered.filter((item) => item.type === 'command')
   const fileItems = filtered.filter((item) => item.type === 'file')
@@ -204,7 +209,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0) }}
             onKeyDown={handleKeyDown}
-            placeholder="Type to search..."
+            placeholder={commandMode ? "Type to filter commands..." : "Type to search... (prefix with > for commands only)"}
             className="border-0 shadow-none focus-visible:ring-0 pl-2"
             data-testid="command-palette-input"
           />
