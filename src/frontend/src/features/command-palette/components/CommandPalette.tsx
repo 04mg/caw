@@ -109,7 +109,7 @@ export function CommandPalette({
       setSearching(false)
     }, 200)
     return () => clearTimeout(searchTimerRef.current)
-  }, [query, open, workspacePath])
+  }, [query, open, workspacePath, commandMode])
 
   const items: PaletteItem[] = useMemo(() => {
     const result: PaletteItem[] = []
