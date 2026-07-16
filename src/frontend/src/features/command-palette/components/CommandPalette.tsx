@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Search, Terminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
+import { Search, SquareTerminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/dialog'
 import { Input } from '@/components/input'
 
@@ -118,7 +118,7 @@ export function CommandPalette({
       id: 'new-terminal',
       label: '> New Terminal',
       type: 'command',
-      icon: <Terminal className="h-4 w-4" />,
+      icon: <SquareTerminal className="h-4 w-4" />,
       action: () => { onAddTerminal(); onOpenChange(false) },
     })
 
@@ -209,7 +209,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0) }}
             onKeyDown={handleKeyDown}
-            placeholder={commandMode ? "Type to filter commands..." : "Type to search... (prefix with > for commands only)"}
+            placeholder={commandMode ? "Type to filter commands..." : "Type to search..."}
             className="border-0 shadow-none focus-visible:ring-0 pl-2"
             data-testid="command-palette-input"
           />
@@ -242,7 +242,12 @@ export function CommandPalette({
                     )}
                   >
                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
-                    <span className="truncate">{item.label}</span>
+                    <span className="truncate flex items-center">
+                      {item.label.startsWith('> ') && (
+                        <span className="text-xs text-muted-foreground mr-0.5 shrink-0">&gt;</span>
+                      )}
+                      {item.label.startsWith('> ') ? item.label.slice(2) : item.label}
+                    </span>
                   </button>
                 )
               })}
