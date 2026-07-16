@@ -39,6 +39,19 @@ export interface TerminalInstance {
    */
   _modes: Map<number, boolean>
   /**
+   * @internal Cell-based horizontal padding (cols) the server asked this
+   * viewer to apply so the terminal grid is centered within a panel that
+   * is wider than the PTY. The FitAddon still reports the full panel
+   * dimensions; the padding is applied as CSS margins on the xterm.js
+   * element after fit runs, so only the inner minCols×minRows grid is
+   * rendered.
+   */
+  _padCols: number
+  /**
+   * @internal Cell-based vertical padding (rows) for centering. See _padCols.
+   */
+  _padRows: number
+  /**
    * @internal Set to true while the user is actively scrolling (touch drag
    * or momentum). When true, safeScrollToBottom is suppressed so incoming
    * output does not yank the view back to the bottom.
@@ -199,6 +212,40 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   })
 
   return { term, fit }
+}
+
+// applyPadding centers the xterm.js grid within its container by setting
+// CSS margins sized in pixels. The server sends cell-based padding
+// (padCols/padRows) computed from (viewer dimensions − PTY dimensions);
+// we multiply by the current cell pixel dimensions to get exact pixel
+// margins. The odd cell goes to the right/bottom so the content sits
+// slightly left/up, matching typical reading layout.
+//
+// Margins are applied to the .xterm element itself, not its parent, so
+// the FitAddon's proposeDimensions (which reads the parent's CSS width)
+// is unaffected — no feedback loop between padding and fitting.
+function applyPadding(inst: TerminalInstance) {
+  const el = inst.term.element
+  if (!el) return
+  if (inst._padCols <= 0 && inst._padRows <= 0) {
+    el.style.marginLeft = ''
+    el.style.marginRight = ''
+    el.style.marginTop = ''
+    el.style.marginBottom = ''
+    return
+  }
+  const cell = (inst.term as any)._core?._renderService?.dimensions?.css?.cell
+  const cellW = cell?.width ?? 0
+  const cellH = cell?.height ?? 0
+  if (cellW <= 0 || cellH <= 0) return
+  const left = Math.floor(inst._padCols / 2) * cellW
+  const right = Math.ceil(inst._padCols / 2) * cellW
+  const top = Math.floor(inst._padRows / 2) * cellH
+  const bottom = Math.ceil(inst._padRows / 2) * cellH
+  el.style.marginLeft = `${left}px`
+  el.style.marginRight = `${right}px`
+  el.style.marginTop = `${top}px`
+  el.style.marginBottom = `${bottom}px`
 }
 
 export const stickyModifiers = {
@@ -442,6 +489,9 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         if (cols > 0 && rows > 0 && !inst._detached) {
           inst.term.resize(cols, rows)
         }
+        inst._padCols = Number(msg.padCols) || 0
+        inst._padRows = Number(msg.padRows) || 0
+        applyPadding(inst)
       } else if (msg.type === 'exit') {
         inst.exited = true
         onTerminalExit?.(inst.leafId)
@@ -594,7 +644,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -613,6 +663,10 @@ export async function attachTerminal(
 export function setAllTerminalFontSizes(size: number) {
   for (const inst of registry.values()) {
     inst.term.options.fontSize = size
+    // Cell pixel dimensions change with the font size, so re-apply the
+    // pixel-based padding margins on the next frame after xterm.js
+    // updates its renderer dimensions.
+    requestAnimationFrame(() => applyPadding(inst))
   }
 }
 
