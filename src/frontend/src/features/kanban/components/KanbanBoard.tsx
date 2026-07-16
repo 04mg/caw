@@ -50,14 +50,14 @@ const COLUMNS: Column[] = [
   {
     id: 'working',
     title: 'Working',
-    icon: Tally3,
+    icon: Tally2,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
   },
   {
     id: 'needs_input',
     title: 'Needs Input',
-    icon: Tally2,
+    icon: Tally3,
     colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
     glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
@@ -312,7 +312,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
           {/* Active Tool / Details */}
           {(agent.tool || agent.details) && (
-            <div className="flex flex-col gap-1 mt-1 text-[11px] font-mono text-muted-foreground/90">
+            <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted-foreground/90">
               {agent.tool && (
                 <div className="flex items-center gap-1">
                   <span className="text-primary/70 shrink-0 font-sans text-[10px] uppercase tracking-wider">Tool:</span>
@@ -345,7 +345,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   <span className="text-border select-none">·</span>
                   <span className="flex items-center gap-1 text-foreground/70 shrink-0">
                     <Workflow className="w-3 h-3 text-violet-400" />
-                    <span className="font-mono text-[10px] truncate max-w-[120px]">{wsDetails.agentBranch}</span>
+                    <span className="text-[10px] truncate max-w-[120px]">{wsDetails.agentBranch}</span>
                   </span>
                 </>
               )}
@@ -380,14 +380,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     {
       id: 'working',
       title: 'Working',
-      icon: Tally3,
+      icon: Tally2,
       colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
       glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
     },
     {
       id: 'needs_input',
       title: 'Needs Input',
-      icon: Tally2,
+      icon: Tally3,
       colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
       glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
     },
