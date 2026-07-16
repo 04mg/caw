@@ -1674,21 +1674,7 @@ export function AppLayout() {
         <>
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
-              <Group orientation="horizontal" className="flex-1" onLayoutChanged={() => {
-                const sRef = sidebarRef.current
-                if (sRef && sRef.isCollapsed() !== sidebarCollapsed) {
-                  const nowCollapsed = sRef.isCollapsed()
-                  setSidebarCollapsed(nowCollapsed)
-                  localStorage.setItem('caw:sidebarCollapsed', nowCollapsed ? '1' : '0')
-                }
-
-                const fRef = folderSidebarRef.current
-                if (fRef && fRef.isCollapsed() !== folderSidebarCollapsed) {
-                  const nowCollapsed = fRef.isCollapsed()
-                  setFolderSidebarCollapsed(nowCollapsed)
-                  localStorage.setItem('caw:folderSidebarCollapsed', nowCollapsed ? '0' : '1')
-                }
-              }}>
+              <Group orientation="horizontal" className="flex-1">
                 {/* Left Workspace Panel — always mounted; collapse/expand via
                     the imperative ref to keep the panel count constant (see
                     comment near the collapse/expand effects above). */}
@@ -1843,7 +1829,7 @@ export function AppLayout() {
                       gitStatuses={gitStatuses}
                       gitIgnored={gitIgnored}
                       onRefresh={fetchGitStatus}
-                      onClose={toggleFolderSidebar}
+                      onClose={() => setFolderSidebarCollapsed(true)}
                     />
                   ) : null}
                 </Panel>
