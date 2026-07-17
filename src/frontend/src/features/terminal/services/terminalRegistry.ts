@@ -22,6 +22,15 @@ export interface TerminalInstance {
   /** @internal rAF id for the scheduled output flush, 0 when idle */
   _rafId: number
   /**
+   * @internal True while the xterm.js instance is detached from the DOM
+   * (e.g. the user switched to another tab). The WebSocket is kept alive so
+   * that re-attaching replays the local ring buffer instead of reconnecting
+   * and reloading scrollback from the backend. While detached, incoming WS
+   * output is accumulated into the buffer only — never written to the
+   * disposed terminal.
+   */
+  _detached: boolean
+  /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
    * Tracked from the live WS stream so a re-attached xterm.js instance can
@@ -29,6 +38,19 @@ export interface TerminalInstance {
    * buffer cap evicted the original mode-set sequence.
    */
   _modes: Map<number, boolean>
+  /**
+   * @internal Cell-based horizontal padding (cols) the server asked this
+   * viewer to apply so the terminal grid is centered within a panel that
+   * is wider than the PTY. The FitAddon still reports the full panel
+   * dimensions; the padding is applied as CSS margins on the xterm.js
+   * element after fit runs, so only the inner minCols×minRows grid is
+   * rendered.
+   */
+  _padCols: number
+  /**
+   * @internal Cell-based vertical padding (rows) for centering. See _padCols.
+   */
+  _padRows: number
   /**
    * @internal Set to true while the user is actively scrolling (touch drag
    * or momentum). When true, safeScrollToBottom is suppressed so incoming
@@ -49,15 +71,17 @@ function notify() {
   for (const s of subscribers) s()
 }
 
-async function ensureBackend(leafId: string, cwd: string, cmd?: string[]): Promise<string> {
+async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: [string, string][]): Promise<string> {
   if (!cmd || cmd.length === 0) {
     const customShell = localStorage.getItem('caw:defaultShell')
     if (customShell) cmd = [customShell]
   }
+  const body: Record<string, unknown> = { id: leafId, cwd: cwd || '', cmd }
+  if (env && env.length > 0) body.env = env
   const res = await fetch('/api/terminals', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: leafId, cwd: cwd || '', cmd }),
+    body: JSON.stringify(body),
   })
   const { id } = (await res.json())?.data ?? {}
   return id
@@ -188,6 +212,40 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   })
 
   return { term, fit }
+}
+
+// applyPadding centers the xterm.js grid within its container by setting
+// CSS margins sized in pixels. The server sends cell-based padding
+// (padCols/padRows) computed from (viewer dimensions − PTY dimensions);
+// we multiply by the current cell pixel dimensions to get exact pixel
+// margins. The odd cell goes to the right/bottom so the content sits
+// slightly left/up, matching typical reading layout.
+//
+// Margins are applied to the .xterm element itself, not its parent, so
+// the FitAddon's proposeDimensions (which reads the parent's CSS width)
+// is unaffected — no feedback loop between padding and fitting.
+function applyPadding(inst: TerminalInstance) {
+  const el = inst.term.element
+  if (!el) return
+  if (inst._padCols <= 0 && inst._padRows <= 0) {
+    el.style.marginLeft = ''
+    el.style.marginRight = ''
+    el.style.marginTop = ''
+    el.style.marginBottom = ''
+    return
+  }
+  const cell = (inst.term as any)._core?._renderService?.dimensions?.css?.cell
+  const cellW = cell?.width ?? 0
+  const cellH = cell?.height ?? 0
+  if (cellW <= 0 || cellH <= 0) return
+  const left = Math.floor(inst._padCols / 2) * cellW
+  const right = Math.ceil(inst._padCols / 2) * cellW
+  const top = Math.floor(inst._padRows / 2) * cellH
+  const bottom = Math.ceil(inst._padRows / 2) * cellH
+  el.style.marginLeft = `${left}px`
+  el.style.marginRight = `${right}px`
+  el.style.marginTop = `${top}px`
+  el.style.marginBottom = `${bottom}px`
 }
 
 export const stickyModifiers = {
@@ -344,6 +402,15 @@ function safeScrollToBottom(inst: TerminalInstance) {
 // one write per frame (~16ms) keeps the terminal responsive under high
 // output (compiles, log tailing, find /) and eliminates visible jank.
 function scheduleFlush(inst: TerminalInstance) {
+  if (inst._detached) {
+    // Terminal is detached (another tab is visible). Keep buffering WS
+    // output into the ring buffer but do NOT schedule a render flush —
+    // there is no live xterm.js instance to write to. On re-attach the
+    // buffer is replayed in one shot.
+    for (const ch of inst._pendingOutput) inst.buffer.push(ch)
+    inst._pendingOutput = []
+    return
+  }
   if (inst._rafId !== 0) return
   inst._rafId = requestAnimationFrame(() => {
     inst._rafId = 0
@@ -369,8 +436,10 @@ function cancelFlush(inst: TerminalInstance) {
     const chunks = inst._pendingOutput
     inst._pendingOutput = []
     if (chunks.length > 0) {
-      const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
-      try { inst.term.write(combined) } catch { /* ignore */ }
+      if (!inst._detached) {
+        const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
+        try { inst.term.write(combined) } catch { /* ignore */ }
+      }
       for (const ch of chunks) inst.buffer.push(ch)
     }
   }
@@ -417,9 +486,12 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
-        if (cols > 0 && rows > 0) {
+        if (cols > 0 && rows > 0 && !inst._detached) {
           inst.term.resize(cols, rows)
         }
+        inst._padCols = Number(msg.padCols) || 0
+        inst._padRows = Number(msg.padRows) || 0
+        applyPadding(inst)
       } else if (msg.type === 'exit') {
         inst.exited = true
         onTerminalExit?.(inst.leafId)
@@ -501,6 +573,7 @@ export async function attachTerminal(
   el: HTMLElement,
   cwd: string,
   cmd?: string[],
+  env?: [string, string][],
 ): Promise<TerminalInstance> {
   const existing = registry.get(leafId)
   if (existing) {
@@ -510,6 +583,9 @@ export async function attachTerminal(
     const { term, fit } = makeTerminal()
     existing.term = term
     existing.fit = fit
+    // The terminal is being re-attached to the DOM, so live output can
+    // once again be rendered directly to xterm.js.
+    existing._detached = false
     // Wait for the container to have real dimensions before opening
     // xterm.js, so fit.fit() computes correct cols/rows and the terminal
     // doesn't render garbled output that requires a manual resize.
@@ -568,12 +644,12 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
   try {
-    const backendId = await ensureBackend(leafId, cwd, cmd)
+    const backendId = await ensureBackend(leafId, cwd, cmd, env)
     inst.backendId = backendId
     connectWs(inst, backendId)
   } catch (err) {
@@ -587,6 +663,10 @@ export async function attachTerminal(
 export function setAllTerminalFontSizes(size: number) {
   for (const inst of registry.values()) {
     inst.term.options.fontSize = size
+    // Cell pixel dimensions change with the font size, so re-apply the
+    // pixel-based padding margins on the next frame after xterm.js
+    // updates its renderer dimensions.
+    requestAnimationFrame(() => applyPadding(inst))
   }
 }
 
@@ -615,8 +695,14 @@ export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
-  try { inst.ws?.close() } catch { /* ignore */ }
-  inst.ws = null
+  // Mark the terminal as detached from the DOM so the live WS output
+  // handler keeps buffering into the ring buffer WITHOUT writing to the
+  // disposed xterm.js instance. The WebSocket is intentionally left open
+  // so that switching back to this tab replays the local ring buffer
+  // instantly instead of reconnecting and reloading scrollback from the
+  // backend. Closing the WS here is what caused the "reload on every tab
+  // switch" regression the ring buffer was meant to prevent.
+  inst._detached = true
   try { inst.term.dispose() } catch { /* ignore */ }
 }
 

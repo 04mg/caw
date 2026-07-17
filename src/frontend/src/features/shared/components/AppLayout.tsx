@@ -29,7 +29,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -43,6 +43,7 @@ import { MobileControlBar } from '@/features/terminal/components/MobileControlBa
 import { NewTabMenu } from '@/features/workspaces/components/NewTabMenu'
 
 import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStore'
+import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { Shortcut } from './Shortcut'
@@ -91,6 +92,11 @@ export function AppLayout() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
+  const [kanbanClosing, setKanbanClosing] = useState(false)
+  // Ref to the StatusBar control-center button so we can blur it when the
+  // board closes (otherwise it retains focus and keyboard focus is stuck on
+  // the toolbar instead of returning to the terminal the user was editing).
+  const controlCenterBtnRef = useRef<HTMLButtonElement | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dragMousePos, setDragMousePos] = useState<{ x: number; y: number } | null>(null)
 
@@ -228,6 +234,21 @@ export function AppLayout() {
   }, [])
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
+
+  // Derived sizes so that the visible panels in the top-level Group always
+  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
+  // error when the sum of Panel defaultSizes does not equal 100%, which can
+  // happen when the left sidebar and/or right folder sidebar are
+  // conditionally mounted/unmounted on collapse.
+  const folderSidebarDefaultSize = '20%'
+  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
+  const visibleFolderSidebarSize =
+    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
+  const mainPanelDefaultSize = Math.max(
+    0,
+    100 - visibleSidebarSize - visibleFolderSidebarSize,
+  )
+
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
   const activePaneId = activeWorkspace?.activePaneId ?? ''
@@ -268,6 +289,26 @@ export function AppLayout() {
   useEffect(() => {
     fetchGitStatus()
   }, [fetchGitStatus])
+
+  // Subscribe to the "git" WebSocket channel so the file explorer's git
+  // status badges update automatically whenever the working tree changes
+  // (file edits, git add/commit, branch switch, etc.) — independent of the
+  // FolderSidebar being mounted.
+  useEffect(() => {
+    if (!currentWorkspacePath) {
+      setGitStatuses({})
+      setGitIgnored({})
+      return
+    }
+    const handle = (event: GitStatusEvent) => {
+      // Only apply snapshots for the repo we currently have open.
+      if (event.path !== currentWorkspacePath) return
+      setGitStatuses(event.statuses || {})
+      setGitIgnored(event.ignored || {})
+    }
+    const unsub = subscribeToGitStatus(currentWorkspacePath, handle)
+    return unsub
+  }, [currentWorkspacePath])
 
 
   const toggleFolderSidebar = useCallback(() => {
@@ -418,6 +459,28 @@ export function AppLayout() {
     [patchWorkspace, setActiveWorkspaceId],
   )
 
+  // Closing the Command Center should return keyboard focus to the terminal
+  // pane the user was working in, not leave it parked on the toolbar button.
+  // We blur the control-center button (so it doesn't keep an active focus
+  // ring) and dispatch a focus request for the last active terminal pane,
+  // which TerminalPanel listens for and forwards to its xterm instance.
+  // The Kanban overlay plays a fade-out animation before unmounting; we keep
+  // it mounted with a `closing` flag for the duration of that animation.
+  const kanbanCloseTimer = useRef<number | null>(null)
+  const closeAgentBoard = useCallback(() => {
+    if (kanbanCloseTimer.current) window.clearTimeout(kanbanCloseTimer.current)
+    setKanbanClosing(true)
+    setAgentBoardOpen(false)
+    controlCenterBtnRef.current?.blur()
+    if (activePaneId) {
+      window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: activePaneId } }))
+    }
+    kanbanCloseTimer.current = window.setTimeout(() => {
+      setKanbanClosing(false)
+      kanbanCloseTimer.current = null
+    }, 170)
+  }, [activePaneId])
+
   // ─── Agent Status Notifications ──────────────────────────────────────────
   // Keep a ref to the latest workspaces so the notification callback can
   // look up workspace/worktree data without capturing stale closure state.
@@ -505,12 +568,25 @@ export function AppLayout() {
               toast.dismiss(t)
             }}
             style={{ fontFamily: 'inherit' }}
-            className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground ${
+            className={`flex items-center gap-3 p-3 rounded-xl border bg-background/95 backdrop-blur-md shadow-lg shadow-black/20 cursor-pointer transition-all duration-200 select-none w-[340px] text-foreground relative ${
               type === 'needs_input'
                 ? 'border-amber-500/30 hover:border-amber-500/50'
                 : 'border-emerald-500/20 hover:border-emerald-500/40'
             }`}
           >
+            {/* Close button — top-right aligned */}
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={(e) => {
+                e.stopPropagation()
+                toast.dismiss(t)
+              }}
+              className="absolute top-1.5 right-1.5 flex items-center justify-center w-5 h-5 rounded-md text-muted-foreground/60 hover:text-foreground cursor-pointer transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+
             {/* Large agent icon */}
             <div className="shrink-0 flex items-center justify-center w-12 h-12 pointer-events-none">
               {AgentIcon
@@ -726,7 +802,7 @@ export function AppLayout() {
   )
 
   const addTab = useCallback(
-    async (cmd?: string[], agentId?: string, label?: string, groupId?: string) => {
+    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
       if (!activeWorkspace) return
       let cwd = activeWorkspace.path || ''
       let agentBranch: string | undefined = undefined
@@ -765,6 +841,7 @@ export function AppLayout() {
           id: leafId,
           cwd,
           cmd,
+          env,
           agentId,
           agentBranch,
           baseBranch,
@@ -1175,7 +1252,8 @@ export function AppLayout() {
       const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'terminal'
       const agent = agentTypes[defaultAgentId]
       const cmd = agent && agent.id !== 'terminal' ? agent.cmd : undefined
-      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined)
+      const env = agent && agent.id !== 'terminal' ? agent.env : undefined
+      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined, env)
       const ws: Workspace = {
         id: crypto.randomUUID(),
         path: absPath,
@@ -1517,7 +1595,7 @@ export function AppLayout() {
                     })}
                     {/* Add button reusing the desktop dropdown menu */}
                     <NewTabMenu
-                      onAdd={addTab}
+                      onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                       enableWorktrees={activeWorkspace.enableWorktrees}
                       onToggleWorktrees={toggleWorktrees}
                       triggerClassName="h-[36px] px-2 border-r-0"
@@ -1532,7 +1610,7 @@ export function AppLayout() {
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
                       <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} />
                     ) : (
-                      <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} isActive={true} />
+                      <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
                   ) : activeWorkspace ? (
                     <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
@@ -1546,7 +1624,7 @@ export function AppLayout() {
                         </span>
                       </div>
                       <NewTabMenu
-                        onAdd={addTab}
+                        onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                         enableWorktrees={activeWorkspace?.enableWorktrees}
                         onToggleWorktrees={toggleWorktrees}
                         align="center"
@@ -1651,7 +1729,7 @@ export function AppLayout() {
                 )}
 
                 {/* Main Terminals / Editors Content */}
-                <Panel>
+                <Panel defaultSize={`${mainPanelDefaultSize}%`}>
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1695,7 +1773,7 @@ export function AppLayout() {
                       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
                         <div className="flex flex-1 h-full">
                           <NewTabMenu
-                            onAdd={addTab}
+                            onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
                             triggerClassName="h-[33px] px-2 border-r border-border"
@@ -1769,13 +1847,17 @@ export function AppLayout() {
                 )}
               </Group>
             </div>
-            {agentBoardOpen && (
-              <div className="absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150">
+            {(agentBoardOpen || kanbanClosing) && (
+              <div
+                className={`absolute inset-0 z-40 bg-background/80 backdrop-blur-md backdrop-saturate-150 ${
+                  kanbanClosing ? 'kanban-fade-out' : 'kanban-fade-in'
+                }`}
+              >
                 <KanbanBoard
                   workspaces={workspaces}
                   onNavigateToWorkspace={(workspaceId, tabIndex, paneId) => {
                     navigateToAgent(workspaceId, tabIndex, paneId)
-                    setAgentBoardOpen(false)
+                    closeAgentBoard()
                   }}
                 />
               </div>
@@ -1786,11 +1868,15 @@ export function AppLayout() {
             workspaceName={activeWorkspace?.name}
             worktreeBranch={activeWorktreeBranch}
             agentBoardOpen={agentBoardOpen}
-            onToggleAgentBoard={() => setAgentBoardOpen((v) => !v)}
+            onToggleAgentBoard={() => {
+              if (agentBoardOpen) closeAgentBoard()
+              else setAgentBoardOpen(true)
+            }}
             onOpenSettings={(section) => {
               setSettingsSection(section)
               setSettingsOpen(true)
             }}
+            controlCenterButtonRef={controlCenterBtnRef}
           />
         </>
       )}
@@ -1803,7 +1889,7 @@ export function AppLayout() {
         workspacePath={activeWorkspace?.path || ''}
         onOpenFile={openFile}
         onAddTerminal={addTab}
-        onAddAgent={(cmd, agentId, label) => addTab(cmd, agentId, label)}
+        onAddAgent={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
       />
 

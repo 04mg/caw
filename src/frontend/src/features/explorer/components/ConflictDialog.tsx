@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Button } from '@/components/button'
 
-export type ConflictOperation = 'create' | 'paste' | 'rename'
+export type ConflictOperation = 'create' | 'paste' | 'rename' | 'move'
 
 export interface ConflictTarget {
   name: string
@@ -18,12 +18,14 @@ const titles: Record<ConflictOperation, string> = {
   create: 'File Already Exists',
   paste: 'Paste Conflict',
   rename: 'Rename Conflict',
+  move: 'Move Conflict',
 }
 
 const descriptions: Record<ConflictOperation, string> = {
   create: 'already exists. Creating this file will overwrite it.',
   paste: 'already exists in this location. Pasting will overwrite it.',
   rename: 'already exists. Renaming will overwrite it.',
+  move: 'already exists in the destination folder. Moving will overwrite it.',
 }
 
 export function ConflictDialog({

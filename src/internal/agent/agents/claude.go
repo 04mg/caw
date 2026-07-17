@@ -56,7 +56,7 @@ func parseClaudeContent(raw json.RawMessage) ([]ClaudeBlock, string) {
 }
 
 func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	home, _ := os.UserHomeDir()
@@ -88,16 +88,60 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	var lastActivity time.Time
 	var silentTicks int
 
+	// fsnotify-based immediate change notifier. Reacts to writes on the
+	// watched transcript file in ~tens of ms; the 2s ticker acts as a
+	// fallback for missed events and drives heartbeat/claim/re-bind.
+	var notifyCh <-chan struct{}
+	notifier, nerr := NewFileChangeNotifier()
+	if nerr == nil {
+		defer notifier.Close()
+		notifyCh = notifier.Notify()
+	}
+
 	defer func() {
 		if watchedFilePath != "" {
 			UnclaimSession(agentID, cwd, watchedFilePath)
 		}
 	}()
 
+	// readWatched reads new bytes from the watched file and updates status.
+	// Returns true if new data was processed.
+	readWatched := func() bool {
+		if watchedFilePath == "" {
+			return false
+		}
+		info, err := os.Stat(watchedFilePath)
+		if err != nil {
+			// File disappeared — release claim and search again next tick.
+			UnclaimSession(agentID, cwd, watchedFilePath)
+			watchedFilePath = ""
+			if notifyCh != nil {
+				notifier.Watch("")
+			}
+			return false
+		}
+		if info.Size() <= lastFileSize {
+			return false
+		}
+		wrappedCallback := func(status, tool, details, title string) {
+			if title != "" {
+				sessionTitle = title
+			}
+			callback(status, tool, details, sessionTitle)
+		}
+		w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
+		lastFileSize = info.Size()
+		lastActivity = info.ModTime()
+		silentTicks = 0
+		return true
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-notifyCh:
+			readWatched()
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
@@ -105,43 +149,27 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				// subdirectory may not exist when Watch() first starts
 				// (Claude creates it lazily on first message).
 				searchDir = claudeProjectDir(baseDir, cwd)
-			candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
-			if err != nil {
-				continue
-			}
-			for _, c := range candidates {
-				if ClaimSession(agentID, cwd, c.Path) {
+				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
+				if err != nil {
+					continue
+				}
+				for _, c := range candidates {
+					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
 						lastActivity = c.ModTime
 						silentTicks = 0
+						if notifyCh != nil {
+							notifier.Watch(watchedFilePath)
+						}
 						break
 					}
 				}
 			}
 			if watchedFilePath != "" {
-				info, err := os.Stat(watchedFilePath)
-				if err == nil {
-					if info.Size() > lastFileSize {
-						wrappedCallback := func(status, tool, details, title string) {
-							if title != "" {
-								sessionTitle = title
-							}
-							callback(status, tool, details, sessionTitle)
-						}
-						w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
-						lastFileSize = info.Size()
-						lastActivity = info.ModTime()
-						silentTicks = 0
-					} else {
-						silentTicks++
-					}
-				} else {
-					// File disappeared — release claim and search again next tick.
-					UnclaimSession(agentID, cwd, watchedFilePath)
-					watchedFilePath = ""
-					continue
+				if !readWatched() {
+					silentTicks++
 				}
 
 				// Mid-session re-bind: detect /new and /resume issued inside
@@ -164,6 +192,9 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 							lastFileSize = 0
 							lastCheck = time.Now()
 							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
 						}
 					}
 				}

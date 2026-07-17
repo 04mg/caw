@@ -20,7 +20,7 @@ interface TabGroupViewProps {
   onSwitchTab: (tabId: string, groupId: string) => void
   onCloseTab: (tabId: string) => void
   onReorderTabs: (tabId: string, groupId: string, toIndex: number) => void
-  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string) => void
+  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => void
   onSplitGroup: (
     targetGroupId: string,
     draggedTabId: string,
@@ -136,7 +136,7 @@ export function TabGroupView({
             onSwitch={(idx) => onSwitchTab(group.tabs[idx], group.id)}
             onClose={(idx) => onCloseTab(group.tabs[idx])}
             onReorder={(fromIdx, toIdx) => onReorderTabs(group.tabs[fromIdx], group.id, toIdx)}
-            onAdd={(cmd, agentId, label) => onAddTab(cmd, agentId, label, group.id)}
+            onAdd={(cmd, agentId, label, env) => onAddTab(cmd, agentId, label, group.id, env)}
             enableWorktrees={workspace.enableWorktrees}
             onToggleWorktrees={onToggleWorktrees}
             onDragStart={onDragStart}

@@ -17,7 +17,7 @@ func NewService() *Service { return &Service{} }
 
 func (s *Service) ListAgents() []Info {
 	agentsList := []Info{
-		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude"}},
+		{ID: "claude", Label: "Claude Code", Cmd: []string{"claude", "--dangerously-skip-permissions"}, Env: [][]string{{"IS_SANDBOX", "1"}}},
 		{ID: "codex", Label: "Codex CLI", Cmd: []string{"codex", "--sandbox", "workspace-write", "--ask-for-approval", "never"}},
 		{ID: "copilot", Label: "GitHub Copilot", Cmd: []string{"copilot", "--allow-all-tools", "--allow-all-paths"}},
 		{ID: "agy", Label: "Antigravity", Cmd: []string{"agy", "--dangerously-skip-permissions"}},

@@ -7,6 +7,10 @@ type AgentStatusListener = (statuses: Record<string, AgentStatus>) => void
 let activeStatuses: Record<string, AgentStatus> = {}
 const listeners = new Set<AgentStatusListener>()
 let unsubMux: (() => void) | null = null
+// True once the store has received its first data snapshot from either the
+// REST seed fetch or the WS subscription. Until then, consumers should treat
+// an empty `activeStatuses` as "loading" rather than "no agents".
+let hydrated = false
 
 function ensureMux() {
   if (unsubMux) return
@@ -17,6 +21,7 @@ function ensureMux() {
 
       if (ev.event === 'agent_stopped') {
         delete activeStatuses[ev.sessionId]
+        hydrated = true
       } else if (ev.event === 'agent_started') {
         activeStatuses[ev.sessionId] = {
           sessionId: ev.sessionId,
@@ -41,12 +46,26 @@ function ensureMux() {
         }
       }
 
+      hydrated = true
       notify()
     } catch (err) {
       console.error('Error handling agent status message:', err)
     }
   })
 }
+
+// Start the background WS subscription as soon as this module is imported so
+// the store stays live for the whole app lifetime, regardless of whether the
+// Command Center is open. The multiplexer's onSubscribe handler sends the
+// full current status snapshot once the WebSocket handshake completes.
+//
+// On a cold page load (or after a WS reconnect), the handshake + subscribe +
+// server snapshot round-trip takes time, during which the store is empty and
+// the Command Center would render "No agents" until the snapshot lands. We
+// seed the store with a synchronous REST fetch first so cards render
+// instantly; the WS subscription then keeps it live and reconciles deltas.
+loadInitialStatuses()
+ensureMux()
 
 function notify() {
   const current = { ...activeStatuses }
@@ -63,6 +82,20 @@ export function subscribeAgentStatuses(cb: AgentStatusListener): () => void {
   }
 }
 
+// Synchronous snapshot of the current agent statuses. Use this to seed
+// component initial state so the first render already reflects the latest
+// store data instead of an empty object that flashes "No agents" placeholders
+// before the subscribe effect fires.
+export function getAgentStatuses(): Record<string, AgentStatus> {
+  return { ...activeStatuses }
+}
+
+// True once the store has received its first snapshot (REST or WS). Consumers
+// can use this to distinguish "still loading" from "genuinely no agents".
+export function isAgentStatusesHydrated(): boolean {
+  return hydrated
+}
+
 export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>> {
   try {
     const res = await fetch('/api/agents/statuses')
@@ -72,9 +105,18 @@ export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>
     for (const s of list) {
       next[s.sessionId] = s
     }
-    activeStatuses = next
+    // Merge REST results underneath any live WS data so we never clobber
+    // updates the WebSocket may have pushed between this fetch being
+    // dispatched and completing, and never resurrect sessions the WS has
+    // already removed.
+    const merged: Record<string, AgentStatus> = {}
+    for (const id of Object.keys(next)) {
+      if (!activeStatuses[id]) merged[id] = next[id]
+    }
+    activeStatuses = { ...activeStatuses, ...merged }
+    hydrated = true
     notify()
-    return next
+    return activeStatuses
   } catch (err) {
     console.error('Failed to load initial agent statuses:', err)
     return {}

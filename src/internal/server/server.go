@@ -28,6 +28,7 @@ type Server struct {
 	frontendFS fs.FS
 	hub        *ws.Hub
 	mux        *ws.Multiplexer
+	gitSvc     *git.Service
 }
 
 func New() *Server {
@@ -49,9 +50,12 @@ func New() *Server {
 	state.RegisterMuxChannel(mux, s.store)
 	agent.RegisterMuxChannel(mux)
 	workspace.RegisterMuxChannel(mux)
+	gitSvc := git.NewService()
+	git.RegisterMuxChannel(mux, gitSvc)
 	push.EnsureVAPIDKeys(s.store)
 	agent.SetPushStore(s.store)
 	agent.SetStatusMux(mux)
+	s.gitSvc = gitSvc
 	return s
 }
 
@@ -64,7 +68,7 @@ func (s *Server) Engine() *gin.Engine {
 		terminal.Register(api, s.store, &ws.TerminalUpgrader)
 		state.RegisterHTTP(api, s.store, s.mux)
 		workspace.Register(api)
-		git.Register(api)
+		git.RegisterWithService(api, s.gitSvc)
 		agent.Register(api)
 		quota.Register(api, s.store)
 		push.Register(api, s.store)

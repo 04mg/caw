@@ -437,15 +437,54 @@ html, body, #root {
 
 /* Force sonner slide/fade animations even when the user has
    prefers-reduced-motion: reduce set at the OS level.
-   Without these overrides, sonner CSS resets transitions to
-   "none" inside the reduced-motion media query, making toasts
-   appear/disappear instantly with no animation. */
+   We intentionally ignore the OS reduced-motion preference for toasts and
+   always animate them, restoring the exact values sonner uses outside of
+   the reduced-motion media query (see sonner's styles.css). Without these
+   overrides, sonner sets `transition: none` and `animation: none` inside the
+   reduced-motion media query, making toasts appear/disappear instantly.
+
+   IMPORTANT: sonner injects its own CSS at runtime via a <style> tag appended
+   to <head> *after* this stylesheet is loaded (see __insertCSS in its dist
+   index.js). Its reduced-motion rule uses selector [data-sonner-toast] with
+   !important, same specificity as a plain attribute selector here. With equal
+   specificity and both !important, source order decides — and sonner loads
+   last, so it would win. We therefore bump specificity on every override
+   (e.g. [data-sonner-toaster] [data-sonner-toast]) so our rules win regardless
+   of injection order. */
 @media (prefers-reduced-motion: reduce) {
-  [data-sonner-toaster] {
+  [data-sonner-toaster][data-sonner-toaster] {
     transition: transform 400ms ease !important;
   }
-  [data-sonner-toast] {
+  [data-sonner-toaster] [data-sonner-toast] {
     transition: transform 400ms, opacity 400ms, height 400ms, box-shadow 200ms !important;
-    animation: unset !important;
+    animation: none !important;
   }
+  /* sonner neutralizes child transitions under reduced-motion; restore the
+     default `opacity 400ms` transition it applies to direct children. */
+  [data-sonner-toaster] [data-sonner-toast] > * {
+    transition: opacity 400ms !important;
+  }
+  /* The loading spinner relies on the `sonner-spin` keyframe animation;
+     `animation: none !important` from sonner kills it, so restore it. */
+  [data-sonner-toaster] .sonner-loading-bar {
+    animation: sonner-spin 1.2s linear infinite !important;
+  }
+}
+
+/* ==========================================================================
+   Kanban Board — Fade In / Fade Out
+   ========================================================================== */
+@keyframes kanban-fade-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes kanban-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.98); }
+}
+.kanban-fade-in {
+  animation: kanban-fade-in 180ms ease-out forwards;
+}
+.kanban-fade-out {
+  animation: kanban-fade-out 160ms ease-in forwards;
 }

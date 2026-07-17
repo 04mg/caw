@@ -23,6 +23,7 @@ export interface LazyFileNodeProps {
   onDragOver: (e: React.DragEvent, path: string) => void
   onDragLeave: () => void
   onDropFiles: (e: React.DragEvent, targetDir: string) => void
+  onHoverPath?: (path: string) => void
 }
 
 export function LazyFileNode({
@@ -46,6 +47,7 @@ export function LazyFileNode({
   onDragOver,
   onDragLeave,
   onDropFiles,
+  onHoverPath,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -236,6 +238,13 @@ export function LazyFileNode({
       <div
         className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
         onContextMenu={handleContextMenu}
+        onMouseEnter={() => onHoverPath?.(path)}
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation()
+          e.dataTransfer.setData('application/x-caw-path', path)
+          e.dataTransfer.effectAllowed = 'move'
+        }}
         onDragOver={(e) => { if (isDir) onDragOver(e, path) }}
         onDragLeave={onDragLeave}
         onDrop={(e) => { if (isDir) onDropFiles(e, path) }}
@@ -291,7 +300,8 @@ export function LazyFileNode({
           <button
             onClick={(e) => {
               e.stopPropagation()
-              onShowContextMenu(path, name, isDir, e.currentTarget.getBoundingClientRect().right - 140, e.currentTarget.getBoundingClientRect().bottom + 2)
+              const rect = e.currentTarget.getBoundingClientRect()
+              onShowContextMenu(path, name, isDir, rect.right, rect.bottom + 2)
             }}
             className="h-5 w-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
             title="More"
@@ -325,6 +335,7 @@ export function LazyFileNode({
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
               onDropFiles={onDropFiles}
+              onHoverPath={onHoverPath}
             />
           ))}
 

@@ -2,10 +2,17 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { ErrorBoundary } from '@/features/shared/errors/ErrorBoundary'
+import { installGlobalErrorHandler } from '@/features/shared/errors/errorReporter'
+
+// Install before React mounts so we capture errors during initial render.
+installGlobalErrorHandler()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary name="root">
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )
 

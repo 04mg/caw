@@ -63,13 +63,30 @@ func (w *connWriter) Close() error {
 // etc.) emit each mode as its own sequence.
 var modeRe = regexp.MustCompile("\x1b\\[\\?(\\d+)([hl])")
 
+// viewer tracks the last-reported terminal dimensions of a single
+// connected WebSocket client. The Session adopts the smallest cols and
+// rows across all viewers (tmux "smallest" mode) so every client can see
+// the full PTY output without truncation.
+//
+// padCols/padRows are the cell-based padding the server computes so a
+// viewer that is larger than the PTY size can center its xterm.js grid
+// and leave the surrounding area as clean background. The difference
+// (viewer dimensions − PTY dimensions) is split floor/ceil so each side
+// is off by at most one cell.
+type viewer struct {
+	cols    int
+	rows    int
+	padCols int
+	padRows int
+}
+
 type Session struct {
 	ID           string
 	Pty          *Pty
 	Cwd          string
 	DeleteBranch bool
 	mu           sync.Mutex
-	conns        map[*connWriter]bool
+	conns        map[*connWriter]*viewer
 	cols         int
 	rows         int
 	scrollback   []byte
@@ -80,37 +97,79 @@ type Session struct {
 	onExit       func()
 }
 
-// resizePTY resizes the single PTY to cols/rows and notifies every
-// connected client of the new dimensions so each client can fit its
-// local xterm.js to match. A single PTY has only one size; keeping all
-// viewers at that size is what makes the terminal consistent across
-// clients. Must be called with s.mu held.
-func (s *Session) resizePTY(cols, rows int) {
-	if cols <= 0 || rows <= 0 {
+// recomputeResize adopts the smallest cols and rows across all connected
+// viewers (tmux "smallest" mode), resizing the single PTY to that minimum
+// and notifying every client of the new dimensions. A single PTY has only
+// one size; using the smallest ensures every viewer can see the full
+// output. When the smallest viewer disconnects, the PTY grows to the next
+// smallest size.
+//
+// broadcastResize is invoked on every call (even when the PTY size is
+// unchanged) so each viewer always receives a fresh padCols/padRows for
+// its current dimensions — e.g. when a viewer changes size but the
+// minimum is unaffected, its padding still needs to update. Must be
+// called with s.mu held.
+func (s *Session) recomputeResize() {
+	if len(s.conns) == 0 {
 		return
 	}
-	if s.cols == cols && s.rows == rows && len(s.conns) > 0 {
+	minCols, minRows := -1, -1
+	for _, v := range s.conns {
+		if v.cols <= 0 || v.rows <= 0 {
+			continue
+		}
+		if minCols < 0 || v.cols < minCols {
+			minCols = v.cols
+		}
+		if minRows < 0 || v.rows < minRows {
+			minRows = v.rows
+		}
+	}
+	if minCols <= 0 || minRows <= 0 {
 		return
 	}
-	s.cols = cols
-	s.rows = rows
-	_ = s.Pty.ptmx.Resize(cols, rows)
+
+	// Compute per-viewer padding before resizing/broadcasting. Every
+	// viewer's padCols/padRows is recomputed on every call, not only when
+	// the PTY size changed.
+	for _, v := range s.conns {
+		v.padCols = 0
+		v.padRows = 0
+		if v.cols > minCols {
+			v.padCols = v.cols - minCols
+		}
+		if v.rows > minRows {
+			v.padRows = v.rows - minRows
+		}
+	}
+
+	if s.cols != minCols || s.rows != minRows {
+		s.cols = minCols
+		s.rows = minRows
+		_ = s.Pty.ptmx.Resize(minCols, minRows)
+	}
 	s.broadcastResize()
 }
 
 // broadcastResize sends the current PTY size to every connected client
-// so each one can fit its local xterm.js to match. Must be called with s.mu held.
+// so each one can fit its local xterm.js to match. Each viewer also
+// receives its padCols/padRows so it can center the terminal grid and
+// leave the surrounding area as clean background. Must be called with
+// s.mu held.
 func (s *Session) broadcastResize() {
 	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
-	msg, _ := json.Marshal(map[string]any{
-		"type": "resize",
-		"cols": s.cols,
-		"rows": s.rows,
-	})
-	for c := range s.conns {
+	for c, v := range s.conns {
+		msg, _ := json.Marshal(map[string]any{
+			"type":    "resize",
+			"cols":    s.cols,
+			"rows":    s.rows,
+			"padCols": v.padCols,
+			"padRows": v.padRows,
+		})
 		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+			// Dead connection — remove it to avoid repeated failures.
 			delete(s.conns, c)
 		}
 	}

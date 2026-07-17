@@ -26,9 +26,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
-  const [scrollSensitivity, setScrollSensitivity] = useState(0.005)
-  const [scrollFriction, setScrollFriction] = useState(0.80)
-  const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.025)
+  const [scrollSensitivity, setScrollSensitivity] = useState(0.02)
+  const [scrollFriction, setScrollFriction] = useState(0.85)
+  const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.05)
   const [scrollGrace, setScrollGrace] = useState(1200)
   const [antigravityKey, setAntigravityKey] = useState('')
   const [opencodeCookie, setOpencodeCookie] = useState('')
@@ -165,9 +165,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       setShellPath(localStorage.getItem('caw:defaultShell') || '')
 
-      setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.005'))
-      setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.80'))
-      setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.025'))
+      setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.02'))
+      setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.85'))
+      setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05'))
       setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
 
       setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
@@ -650,7 +650,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <div className="pt-4 mt-2 border-t border-border">
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-xs font-medium">Touch Scroll</label>
-                    <p className="text-[10px] text-muted-foreground">Tune mobile touch scroll behavior for the terminal. Values apply on the next terminal interaction.</p>
+                    <p className="text-[10px] text-muted-foreground">Tune mobile touch scroll behavior for the terminal. Fractional line deltas accumulate and only fire when a whole line is reached, so small values are safe. Values apply on the next terminal interaction.</p>
                   </div>
 
                   <div className="flex flex-col gap-4">
@@ -658,7 +658,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Scroll Sensitivity</label>
                       <div className="flex items-center gap-3">
                         <Slider
-                          min={0.001}
+                          min={0.005}
                           max={0.1}
                           step={0.001}
                           value={[scrollSensitivity]}
@@ -671,7 +671,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         />
                         <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollSensitivity.toFixed(3)}</span>
                       </div>
-                      <p className="text-[10px] text-muted-foreground">How many terminal lines a pixel of drag travels. Higher is more sensitive.</p>
+                      <p className="text-[10px] text-muted-foreground">Lines scrolled per pixel of drag. 0.02 = 1 line per 50 px. Higher is more sensitive.</p>
                     </div>
 
                     <div className="flex flex-col gap-2">
@@ -698,9 +698,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Velocity Threshold</label>
                       <div className="flex items-center gap-3">
                         <Slider
-                          min={0.005}
-                          max={0.1}
-                          step={0.001}
+                          min={0.01}
+                          max={0.2}
+                          step={0.005}
                           value={[scrollVelocityThreshold]}
                           onValueChange={(val) => {
                             const nextVal = val[0]
@@ -711,7 +711,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         />
                         <span className="text-xs font-mono text-muted-foreground w-12 text-right tabular-nums">{scrollVelocityThreshold.toFixed(3)}</span>
                       </div>
-                      <p className="text-[10px] text-muted-foreground">Minimum velocity to keep momentum scrolling. Lower coasts from smaller flicks.</p>
+                      <p className="text-[10px] text-muted-foreground">Minimum flick velocity (px/ms) to start momentum. Higher ignores tiny touches.</p>
                     </div>
 
                     <div className="flex flex-col gap-2">
@@ -736,9 +736,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
                     <button
                       onClick={() => {
-                        setScrollSensitivity(0.005)
-                        setScrollFriction(0.80)
-                        setScrollVelocityThreshold(0.025)
+                        setScrollSensitivity(0.02)
+                        setScrollFriction(0.85)
+                        setScrollVelocityThreshold(0.05)
                         setScrollGrace(1200)
                         localStorage.removeItem('caw:terminalScrollSensitivity')
                         localStorage.removeItem('caw:terminalScrollFriction')
