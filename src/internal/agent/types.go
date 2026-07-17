@@ -1,9 +1,10 @@
 package agent
 
 type Info struct {
-	ID    string   `json:"id"`
-	Label string   `json:"label"`
-	Cmd   []string `json:"cmd"`
+	ID    string     `json:"id"`
+	Label string     `json:"label"`
+	Cmd   []string   `json:"cmd"`
+	Env   [][]string `json:"env,omitempty"` // [key, value] pairs to inject into the PTY environment
 }
 
 type SetupWorkspaceRequest struct {

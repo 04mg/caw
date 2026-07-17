@@ -28,17 +28,47 @@ export interface LazyNodeProps {
   selected: string | null
   onSelect: (path: string) => void
   focusPath: string | null
+  refreshCounter?: number
+  onShowContextMenu?: (path: string, name: string, x: number, y: number) => void
+  createTargetPath?: string | null
+  onCreateFolder?: (parentPath: string, name: string) => void
+  onCreateCancel?: () => void
+  editingPath?: string | null
+  onRenameFolder?: (path: string, name: string) => void
+  onRenameCancel?: () => void
+  onHoverPath?: (path: string) => void
 }
 
-export function LazyNode({ name, path, depth, startExpanded, selected, onSelect, focusPath }: LazyNodeProps) {
+export function LazyNode({
+  name,
+  path,
+  depth,
+  startExpanded,
+  selected,
+  onSelect,
+  focusPath,
+  refreshCounter,
+  onShowContextMenu,
+  createTargetPath,
+  onCreateFolder,
+  onCreateCancel,
+  editingPath,
+  onRenameFolder,
+  onRenameCancel,
+  onHoverPath,
+}: LazyNodeProps) {
   const [expanded, setExpanded] = useState(!!startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
+  const [createValue, setCreateValue] = useState('')
+  const [renameValue, setRenameValue] = useState(name)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const createInputRef = useRef<HTMLInputElement>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async () => {
-    if (loaded || loading) return
+  const load = useCallback(async (force = false) => {
+    if (!force && (loaded || loading)) return
     setLoading(true)
     const kids = await listDir(path)
     setChildren(kids)
@@ -49,6 +79,22 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
   useEffect(() => {
     if (startExpanded) load()
   }, [startExpanded, load])
+
+  // Re-fetch children in place when refreshCounter changes, preserving
+  // expand/scroll state. Only expanded nodes reload; collapsed nodes
+  // drop their cache so the next expand fetches fresh data.
+  const refreshRef = useRef(refreshCounter)
+  useEffect(() => {
+    if (refreshRef.current === refreshCounter) return
+    refreshRef.current = refreshCounter
+    if (expanded) {
+      load(true)
+    } else {
+      setLoaded(false)
+      setChildren([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshCounter])
 
   useEffect(() => {
     if (!focusPath) return
@@ -65,10 +111,61 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
 
   // Scroll into view when this node becomes the selected/focused one.
   useEffect(() => {
-    if (selected && samePath(selected, path) && buttonRef.current) {
+    if (focusPath && samePath(focusPath, path) && buttonRef.current) {
       buttonRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
-  }, [selected, path])
+  }, [focusPath, path])
+
+  const isCreating = createTargetPath === path
+
+  useEffect(() => {
+    if (isCreating) {
+      setExpanded(true)
+      if (!loaded) load()
+      createInputRef.current?.focus()
+    } else {
+      setCreateValue('')
+    }
+  }, [isCreating, expanded, loaded, load])
+
+  useEffect(() => {
+    if (editingPath === path) {
+      setRenameValue(name)
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }
+  }, [editingPath, path, name])
+
+  const submitCreate = () => {
+    const value = createValue.trim()
+    if (!value || !onCreateFolder) return
+    onCreateFolder(path, value)
+    setCreateValue('')
+  }
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      submitCreate()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onCreateCancel?.()
+    }
+  }
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (renameValue.trim() && renameValue.trim() !== name) {
+        onRenameFolder?.(path, renameValue.trim())
+      } else {
+        onRenameCancel?.()
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onRenameCancel?.()
+    }
+  }
 
   const toggle = () => {
     setExpanded((e) => {
@@ -84,6 +181,12 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
     <div>
       <button
         ref={buttonRef}
+        onMouseEnter={() => onHoverPath?.(path)}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onShowContextMenu?.(path, name, e.clientX, e.clientY)
+        }}
         onClick={() => {
           onSelect(path)
           toggle()
@@ -103,7 +206,22 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
         ) : (
           <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate text-muted-foreground">{name}</span>
+        {editingPath === path ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={() => {
+              if (renameValue.trim() && renameValue.trim() !== name) onRenameFolder?.(path, renameValue.trim())
+              else onRenameCancel?.()
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : (
+          <span className="truncate text-muted-foreground">{name}</span>
+        )}
         {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
       </button>
       {expanded && loaded && (
@@ -117,9 +235,35 @@ export function LazyNode({ name, path, depth, startExpanded, selected, onSelect,
               selected={selected}
               onSelect={onSelect}
               focusPath={focusPath}
+              refreshCounter={refreshCounter}
+              onShowContextMenu={onShowContextMenu}
+              createTargetPath={createTargetPath}
+              onCreateFolder={onCreateFolder}
+              onCreateCancel={onCreateCancel}
+              editingPath={editingPath}
+              onRenameFolder={onRenameFolder}
+              onRenameCancel={onRenameCancel}
+              onHoverPath={onHoverPath}
             />
           ))}
-          {children.length === 0 && (
+          {isCreating && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                ref={createInputRef}
+                value={createValue}
+                onChange={(e) => setCreateValue(e.target.value)}
+                onKeyDown={handleCreateKeyDown}
+                onBlur={() => {
+                  if (createValue.trim()) submitCreate()
+                  else onCreateCancel?.()
+                }}
+                placeholder="folder name"
+                className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0 text-xs outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+          )}
+          {children.length === 0 && !isCreating && (
             <p className="text-xs text-muted-foreground px-2 py-1 italic" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
               empty
             </p>

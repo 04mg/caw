@@ -18,7 +18,7 @@ interface DraggableTabBarProps {
   onSwitch: (index: number) => void
   onClose: (index: number) => void
   onReorder: (from: number, to: number) => void
-  onAdd: (cmd?: string[], agentId?: string, label?: string) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][]) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   onDragStart?: (tabId: string) => void

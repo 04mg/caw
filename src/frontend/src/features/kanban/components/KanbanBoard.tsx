@@ -1,17 +1,15 @@
 import { useLayoutEffect, useRef, useEffect, useState } from 'react'
 import { 
-  Coffee, 
+  CircleSmall,
   Clock, 
   Terminal,
   ChevronRight,
-  Construction,
-  Briefcase,
   Workflow
 } from 'lucide-react'
 import { type Workspace } from '@/features/workspaces/types'
 import { collectLeafIds, getLeaf } from '@/features/shared/utils/layout'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { subscribeAgentStatuses, loadInitialStatuses } from '@/features/agents/stores/agentStatusStore'
+import { subscribeAgentStatuses, getAgentStatuses, isAgentStatusesHydrated } from '@/features/agents/stores/agentStatusStore'
 import { type AgentStatus } from '@/features/agents/types'
 
 
@@ -43,28 +41,32 @@ const COLUMNS: Column[] = [
   {
     id: 'idle',
     title: 'Idle',
-    icon: Coffee,
+    icon: CircleSmall,
     colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
     glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
   },
   {
     id: 'working',
     title: 'Working',
-    icon: Briefcase,
+    icon: CircleSmall,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
   },
   {
     id: 'needs_input',
     title: 'Needs Input',
-    icon: Construction,
+    icon: CircleSmall,
     colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
     glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
 ]
 
 export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardProps) {
-  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
+  // Seed from the synchronous store snapshot so the first render already
+  // reflects live data — otherwise the subscribe effect only fires after
+  // paint, flashing "No agents in ..." placeholders for one frame.
+  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(() => getAgentStatuses())
+  const [hydrated, setHydrated] = useState<boolean>(() => isAgentStatusesHydrated())
   const cardsRef = useRef<Record<string, DOMRect>>({})
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
@@ -74,11 +76,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Fetch initial statuses and subscribe to real-time updates
+  // Subscribe to the background WS status store. The store is kept live for
+  // the whole app lifetime (the multiplexer onSubscribe dumps the current
+  // snapshot), so opening the Command Center is instant — no REST fetch.
   useEffect(() => {
-    loadInitialStatuses()
     return subscribeAgentStatuses((nextStatuses) => {
       setStatuses(nextStatuses)
+      setHydrated(isAgentStatusesHydrated())
     })
   }, [])
 
@@ -306,7 +310,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
           {/* Active Tool / Details */}
           {(agent.tool || agent.details) && (
-            <div className="flex flex-col gap-1 mt-1 text-[11px] font-mono text-muted-foreground/90">
+            <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted-foreground/90">
               {agent.tool && (
                 <div className="flex items-center gap-1">
                   <span className="text-primary/70 shrink-0 font-sans text-[10px] uppercase tracking-wider">Tool:</span>
@@ -339,7 +343,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   <span className="text-border select-none">·</span>
                   <span className="flex items-center gap-1 text-foreground/70 shrink-0">
                     <Workflow className="w-3 h-3 text-violet-400" />
-                    <span className="font-mono text-[10px] truncate max-w-[120px]">{wsDetails.agentBranch}</span>
+                    <span className="text-[10px] truncate max-w-[120px]">{wsDetails.agentBranch}</span>
                   </span>
                 </>
               )}
@@ -367,21 +371,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     {
       id: 'idle',
       title: 'Idle',
-      icon: Coffee,
+      icon: CircleSmall,
       colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
       glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
     },
     {
       id: 'working',
       title: 'Working',
-      icon: Briefcase,
+      icon: CircleSmall,
       colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
       glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
     },
     {
       id: 'needs_input',
       title: 'Needs Input',
-      icon: Construction,
+      icon: CircleSmall,
       colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
       glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
     },
@@ -389,7 +393,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
   if (isMobile) {
     const totalAgents = groupedAgents.idle.length + groupedAgents.working.length + groupedAgents.needs_input.length
-    if (totalAgents === 0) {
+    if (totalAgents === 0 && hydrated) {
       return (
         <div className="flex flex-col h-full w-full items-center justify-center px-6 text-center gap-4 select-none">
           <div className="p-4 rounded-full bg-muted/30 border border-border/30">
@@ -426,14 +430,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               <div className="flex flex-col gap-2">
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : (
+                ) : hydrated ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
                       <ColIcon className="w-3.5 h-3.5 text-foreground" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           )
@@ -473,14 +477,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 scrollbar-thin">
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : (
+                ) : hydrated ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
                     <div className="p-2.5 rounded-full bg-muted/40">
                       <ColIcon className="w-4 h-4 text-foreground" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           )

@@ -24,7 +24,7 @@ func (p *Pty) Kill() error {
 	return nil
 }
 
-func startPty(cwd string, cmdArgs []string) (*Pty, error) {
+func startPty(cwd string, cmdArgs []string, extraEnv [][]string) (*Pty, error) {
 	ptmx, err := pty.New()
 	if err != nil {
 		return nil, err
@@ -42,7 +42,15 @@ func startPty(cwd string, cmdArgs []string) (*Pty, error) {
 		c = ptmx.Command(shell)
 	}
 	c.Dir = cwd
-	c.Env = append(os.Environ(), "TERM=xterm-256color")
+	env := os.Environ()
+	env = append(env, "TERM=xterm-256color")
+	for _, kv := range extraEnv {
+		if len(kv) != 2 || kv[0] == "" {
+			continue
+		}
+		env = append(env, kv[0]+"="+kv[1])
+	}
+	c.Env = env
 
 	if err := c.Start(); err != nil {
 		ptmx.Close()

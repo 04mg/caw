@@ -54,7 +54,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		cmd = resumeCmdForAgent(m.store, id, cmd)
 	}
 
-	ps, err := startPty(cwd, cmd)
+	ps, err := startPty(cwd, cmd, req.Env)
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +63,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		ID:         id,
 		Pty:        ps,
 		Cwd:        cwd,
-		conns:      make(map[*connWriter]bool),
+		conns:      make(map[*connWriter]*viewer),
 		scrollback: []byte{},
 		modes:      make(map[int]bool),
 	}

@@ -43,6 +43,7 @@ export function FolderSidebar({
   } | null>(null)
   const [clipboard, setClipboard] = useState<{ path: string } | null>(null)
   const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [createTarget, setCreateTarget] = useState<{
     parentPath: string; type: 'file' | 'dir'
   } | null>(null)
@@ -53,6 +54,7 @@ export function FolderSidebar({
     | { operation: 'rename'; name: string; oldPath: string; newPath: string }
     | { operation: 'create'; name: string; parentPath: string; type: 'file' | 'dir' }
     | { operation: 'paste'; name: string; sourcePath: string; targetDir: string }
+    | { operation: 'move'; name: string; oldPath: string; newPath: string; targetDir: string }
   const [conflictState, setConflictState] = useState<ConflictState | null>(null)
 
   const conflictTarget: ConflictTarget | null = conflictState
@@ -72,6 +74,17 @@ export function FolderSidebar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'F2' || !hoveredPath || editingPath) return
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      event.preventDefault()
+      setEditingPath(hoveredPath)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [hoveredPath, editingPath])
 
   const triggerRefresh = useCallback(() => {
     setRefreshCounter((c) => c + 1)
@@ -220,6 +233,23 @@ export function FolderSidebar({
     setBusy(false)
   }, [triggerRefresh])
 
+  const executeMove = useCallback(async (oldPath: string, newPath: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/workspaces/files', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPath, newPath }),
+      })
+      if (res.ok) {
+        setConflictState(null)
+        triggerRefresh()
+        onRefresh()
+      }
+    } catch { /* ignore */ }
+    setBusy(false)
+  }, [triggerRefresh, onRefresh])
+
   const handleDragOver = useCallback((e: React.DragEvent, path: string) => {
     e.preventDefault()
     e.stopPropagation()
@@ -236,8 +266,31 @@ export function FolderSidebar({
     setDragOverPath(null)
     if (e.dataTransfer.files.length > 0) {
       handleUpload(targetDir, e.dataTransfer.files)
+      return
     }
-  }, [handleUpload])
+    const srcPath = e.dataTransfer.getData('application/x-caw-path')
+    if (!srcPath) return
+    // Do not allow dropping a path into itself or its descendant
+    const normSrc = srcPath.replace(/\\/g, '/')
+    const normTarget = targetDir.replace(/\\/g, '/')
+    if (normSrc === normTarget) return
+    if (normTarget.startsWith(normSrc + '/')) return
+    const sep = srcPath.includes('\\') ? '\\' : '/'
+    const srcName = srcPath.substring(srcPath.lastIndexOf(sep) + 1)
+    const newPath = targetDir + sep + srcName
+    if (newPath === srcPath) return
+    setBusy(true)
+    fetch(`/api/workspaces/files?path=${encodeURIComponent(newPath)}`)
+      .then((checkRes) => {
+        if (checkRes.ok) {
+          setConflictState({ operation: 'move', name: srcName, oldPath: srcPath, newPath, targetDir })
+          setBusy(false)
+        } else {
+          executeMove(srcPath, newPath)
+        }
+      })
+      .catch(() => executeMove(srcPath, newPath))
+  }, [handleUpload, executeMove])
 
   const showContextMenu = useCallback((path: string, name: string, isDir: boolean, x: number, y: number) => {
     setContextMenu({ x, y, path, name, isDir })
@@ -341,6 +394,7 @@ export function FolderSidebar({
               onCancelRename={() => setEditingPath(null)}
               onCreateSubmit={handleCreateSubmit}
               onCreateCancel={() => setCreateTarget(null)}
+              onHoverPath={setHoveredPath}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDropFiles={handleDrop}
@@ -439,6 +493,8 @@ export function FolderSidebar({
           if (!conflictState) return
           if (conflictState.operation === 'rename') {
             executeRename(conflictState.oldPath, conflictState.newPath)
+          } else if (conflictState.operation === 'move') {
+            executeMove(conflictState.oldPath, conflictState.newPath)
           } else if (conflictState.operation === 'create') {
             const sep = conflictState.parentPath.includes('\\') ? '\\' : '/'
             const newPath = conflictState.parentPath + sep + conflictState.name

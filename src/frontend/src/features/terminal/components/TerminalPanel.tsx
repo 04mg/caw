@@ -7,6 +7,7 @@ interface TerminalPanelProps {
   terminalId: string
   cwd: string
   cmd?: string[]
+  env?: [string, string][]
   isActive?: boolean
 }
 
@@ -40,7 +41,7 @@ function fallbackCopyToClipboard(text: string): boolean {
   }
 }
 
-export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelProps) {
+export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const resizeObsRef = useRef<ResizeObserver | null>(null)
@@ -113,7 +114,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     window.addEventListener('focus', onVisibility)
 
     ;(async () => {
-      inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd)
+      inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd, env)
       if (cancelled) return
 
       if (isActiveRef.current) {
@@ -153,6 +154,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     }
   }, [isActive, terminalId])
 
+  // Listen for app-level focus requests (e.g. when the Command Center closes
+  // and focus should return to the last active terminal pane).
+  useEffect(() => {
+    const onFocusRequest = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (!detail || detail.paneId !== terminalId) return
+      const inst = getTerminal(terminalId)
+      if (inst) {
+        inst.term.focus()
+      }
+    }
+    window.addEventListener('caw:focus-terminal', onFocusRequest as EventListener)
+    return () => window.removeEventListener('caw:focus-terminal', onFocusRequest as EventListener)
+  }, [terminalId])
+
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
@@ -180,9 +196,9 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     const el = elRef.current
     if (!el) return
 
-    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.005')
-    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.80')
-    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.025')
+    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.02')
+    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.85')
+    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05')
     const SCROLL_GRACE_MS = parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10)
 
     let lastY = 0
@@ -192,12 +208,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
     let active = false
     let rafId = 0
     let graceTimer: ReturnType<typeof setTimeout> | null = null
+    let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
       const target = el.querySelector('.xterm-viewport') || el
       if (!target) return
+      accumDelta += deltaY
+      const wholeLines = Math.trunc(accumDelta)
+      if (wholeLines === 0) return
+      accumDelta -= wholeLines
       target.dispatchEvent(new WheelEvent('wheel', {
-        deltaY: deltaY,
+        deltaY: wholeLines,
         deltaMode: WheelEvent.DOM_DELTA_LINE,
         bubbles: true,
         cancelable: true,
@@ -242,6 +263,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, isActive }: TerminalPanelP
       lastX = t.clientX
       lastTime = Date.now()
       velocity = 0
+      accumDelta = 0
       active = true
       setTerminalUserScrolling(terminalId, true)
     }

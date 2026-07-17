@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Search, Terminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
+import { Search, SquareTerminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/dialog'
 import { Input } from '@/components/input'
 
@@ -33,7 +33,7 @@ interface CommandPaletteProps {
   workspacePath: string
   onOpenFile: (path: string) => void
   onAddTerminal: () => void
-  onAddAgent: (cmd: string[], agentId: string, label: string) => void
+  onAddAgent: (cmd: string[], agentId: string, label: string, env?: [string, string][]) => void
   onOpenWorkspacePicker: () => void
 }
 
@@ -83,8 +83,11 @@ export function CommandPalette({
     }
   }, [open])
 
+  const commandMode = query.startsWith('>')
+  const commandQuery = commandMode ? query.slice(1).trim() : query
+
   useEffect(() => {
-    if (!open || !workspacePath || !query.trim()) {
+    if (!open || !workspacePath || !query.trim() || commandMode) {
       setFileResults([])
       setSearching(false)
       return
@@ -106,22 +109,22 @@ export function CommandPalette({
       setSearching(false)
     }, 200)
     return () => clearTimeout(searchTimerRef.current)
-  }, [query, open, workspacePath])
+  }, [query, open, workspacePath, commandMode])
 
   const items: PaletteItem[] = useMemo(() => {
     const result: PaletteItem[] = []
 
     result.push({
       id: 'new-terminal',
-      label: 'New Terminal',
+      label: '> New Terminal',
       type: 'command',
-      icon: <Terminal className="h-4 w-4" />,
+      icon: <SquareTerminal className="h-4 w-4" />,
       action: () => { onAddTerminal(); onOpenChange(false) },
     })
 
     result.push({
       id: 'new-workspace',
-      label: 'New Workspace',
+      label: '> New Workspace',
       type: 'command',
       icon: <FolderPlus className="h-4 w-4" />,
       action: () => { onOpenWorkspacePicker(); onOpenChange(false) },
@@ -133,10 +136,10 @@ export function CommandPalette({
       const IconComponent = agentMeta?.icon || Bot
       result.push({
         id: `agent-${agent.id}`,
-        label: `Launch ${agent.label}`,
+        label: `> New ${agent.label}`,
         type: 'command',
         icon: <IconComponent className="h-4 w-4" />,
-        action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label); onOpenChange(false) },
+        action: () => { onAddAgent(getEffectiveAgentCmd(agent.id, agent.cmd), agent.id, agent.label, agentMeta?.env); onOpenChange(false) },
       })
     }
 
@@ -157,13 +160,15 @@ export function CommandPalette({
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items
-    const q = query.toLowerCase()
+    const q = (commandMode ? commandQuery : query).toLowerCase()
+    if (!q) return commandMode ? items.filter((item) => item.type === 'command') : items
     return items.filter((item) => {
+      if (commandMode && item.type !== 'command') return false
       if (item.label.toLowerCase().includes(q)) return true
       if (item.description?.toLowerCase().includes(q)) return true
       return false
     })
-  }, [items, query])
+  }, [items, query, commandMode, commandQuery])
 
   const commandItems = filtered.filter((item) => item.type === 'command')
   const fileItems = filtered.filter((item) => item.type === 'file')
@@ -204,7 +209,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0) }}
             onKeyDown={handleKeyDown}
-            placeholder="Type to search..."
+            placeholder={commandMode ? "Type to filter commands..." : "Type to search..."}
             className="border-0 shadow-none focus-visible:ring-0 pl-2"
             data-testid="command-palette-input"
           />
@@ -237,7 +242,12 @@ export function CommandPalette({
                     )}
                   >
                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
-                    <span className="truncate">{item.label}</span>
+                    <span className="truncate flex items-center">
+                      {item.label.startsWith('> ') && (
+                        <span className="text-xs text-muted-foreground mr-0.5 shrink-0">&gt;</span>
+                      )}
+                      {item.label.startsWith('> ') ? item.label.slice(2) : item.label}
+                    </span>
                   </button>
                 )
               })}

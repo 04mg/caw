@@ -173,6 +173,14 @@ func broadcastEvent(ev Event) {
 }
 
 func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {
+	// Strip markdown formatting from user-visible text so the Kanban card
+	// Info line renders as clean plain text regardless of which agent
+	// produced it. Titles are already cleaned by CleanPrompt upstream, but
+	// details (assistant text excerpts) can contain **bold**, `code`, [links],
+	// # headings, etc.
+	details = StripMarkdown(details)
+	title = StripMarkdown(title)
+
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
 	now := time.Now()
@@ -223,9 +231,15 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
 			// Suppress the "finished" notification when the agent was running
-			// a background task — the agent is still working, it just completed
-			// a sub-task. A "finished" notification here would mislead the user.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && prev.Tool != "background_task" {
+			// a background task or subagent — the agent is still working, it
+			// just completed a sub-task. A "finished" notification here would
+			// mislead the user.
+			//   - "background_task": Antigravity's background tasks.
+			//   - "task": OpenCode's subagent launcher. When the subagent
+			//     finishes, the parent briefly transitions executing→idle
+			//     before continuing, which would otherwise fire a spurious
+			//     "finished" push notification.
+			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}
@@ -319,6 +333,15 @@ func handleSessionExit(id string) {
 // transcript should be detected sooner than 5 minutes.
 const idleTimeout = 2 * time.Minute
 
+// ptyActivityWindow is the recency window used by the idle-timeout watchdog
+// to decide whether recent PTY output should keep the agent in a "working"
+// state. If the agent's PTY has produced bytes within this window, the
+// watchdog skips the auto-revert to "idle" even when no transcript/DB writes
+// have happened for a while (e.g. a long bash command streaming output).
+// It is intentionally longer than the poll interval so brief output gaps
+// during tool execution don't trigger a premature revert.
+const ptyActivityWindow = 30 * time.Second
+
 func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watchersMu.Lock()
 	watcher, ok := watchers[wCtx.agentId]
@@ -337,6 +360,16 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	// Idle-timeout watchdog: if the agent hasn't emitted a status change in
 	// idleTimeout seconds, or if the watcher itself has stopped calling the
 	// heartbeat callback (indicating a crash), revert to idle.
+	//
+	// PTY activity exemption: a long-running tool call (e.g. a bash command
+	// or a lengthy tool that streams output) may not produce any new
+	// transcript/DB writes for minutes while it runs. The agent is still
+	// actively working — its PTY keeps emitting output — so reverting to
+	// "idle" here would be wrong. When the PTY has produced output within
+	// the last ptyActivityWindow, we skip the revert entirely. This applies
+	// to every agent (the watchdog is shared); the LLM-thinking phase after
+	// a tool finishes does write to the transcript, so the 2-minute idle
+	// timeout still catches genuinely stalled sessions.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -346,6 +379,13 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 				return
 			case <-ticker.C:
 				if time.Since(lastHeartbeat) > 30*time.Second || time.Since(lastActivity) > idleTimeout {
+					// If the PTY has produced output recently, the agent
+					// process is still alive and actively running a tool —
+					// don't revert to idle.
+					lastPtyOut := LastPtyActivity(wCtx.sessionId)
+					if !lastPtyOut.IsZero() && time.Since(lastPtyOut) < ptyActivityWindow {
+						continue
+					}
 					statusesMu.RLock()
 					s, exists := statuses[wCtx.sessionId]
 					statusesMu.RUnlock()
@@ -368,6 +408,18 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}, func() {
 		lastHeartbeat = time.Now()
 	})
+}
+
+// isSubagentTool reports whether the given tool name represents a background
+// task or subagent launcher. When such a tool was the agent's last action,
+// transitioning to "idle" should NOT fire a "finished" push notification —
+// the agent is still working, it just completed a sub-task.
+func isSubagentTool(tool string) bool {
+	switch tool {
+	case "background_task", "task":
+		return true
+	}
+	return false
 }
 
 // isResumeCmd reports whether the agent launch command contains a resume/
