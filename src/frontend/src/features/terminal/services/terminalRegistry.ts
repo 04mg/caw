@@ -682,13 +682,22 @@ export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
-  // Mark the terminal as detached from the DOM so the live WS output
-  // handler keeps buffering into the ring buffer WITHOUT writing to the
-  // disposed terminal instance. The WebSocket is intentionally left open
-  // so that switching back to this tab replays the local ring buffer
-  // instantly instead of reconnecting and reloading scrollback from the
-  // backend. Closing the WS here is what caused the "reload on every tab
-  // switch" regression the ring buffer was meant to prevent.
+
+  // On mobile, fully release the terminal (close WS, remove from registry)
+  // so the backend notifies other viewers to resize into the freed space.
+  // The ring buffer is skipped — there is no point keeping output for a
+  // single-screen mobile layout. Re-attaching will create a fresh connection.
+  if (window.innerWidth < 768) {
+    try { inst.ws?.close() } catch { /* ignore */ }
+    try { inst.term.dispose() } catch { /* ignore */ }
+    tuiClipboards.delete(leafId)
+    registry.delete(leafId)
+    notify()
+    return
+  }
+
+  // Desktop: keep the WebSocket alive and buffer output so switching back
+  // replays the local ring buffer instantly instead of reconnecting.
   inst._detached = true
   try { inst.term.dispose() } catch { /* ignore */ }
 }
