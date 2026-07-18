@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@xterm/xterm/css/xterm.css";
 
 @font-face {
   font-family: 'Host Grotesk';
@@ -132,66 +131,39 @@ html, body, #root {
   overflow: hidden;
 }
 
-.xterm {
+/* ghostty-web terminal container styling */
+.terminal-container {
   height: 100%;
   touch-action: none;
   border-bottom: none !important;
 }
 
-.xterm-keyboard-open .xterm,
-.xterm-keyboard-open .xterm-viewport,
-.xterm-keyboard-open .xterm-screen {
+.terminal-container canvas {
+  display: block;
+  touch-action: none;
+}
+
+.terminal-container textarea {
+  touch-action: none;
+}
+
+.xterm-keyboard-open .terminal-container,
+.xterm-keyboard-open canvas,
+.xterm-keyboard-open textarea {
   touch-action: auto !important;
   overflow: visible !important;
 }
 
-.xterm,
-.xterm-viewport,
-.xterm-screen,
-.xterm-screen canvas,
-.xterm-scrollable-element {
+.terminal-container,
+.terminal-container canvas,
+.terminal-container textarea {
   scrollbar-width: none !important;
 }
-.xterm::-webkit-scrollbar,
-.xterm-viewport::-webkit-scrollbar,
-.xterm-screen::-webkit-scrollbar,
-.xterm-scrollable-element::-webkit-scrollbar {
+.terminal-container::-webkit-scrollbar,
+.terminal-container canvas::-webkit-scrollbar,
+.terminal-container textarea::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
-  display: none !important;
-}
-
-.xterm-viewport {
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
-  background-color: transparent !important;
-  touch-action: none;
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  width: 6px;
-}
-
-.thin-scroll::-webkit-scrollbar {
-  width: 4px;
-}
-.thin-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.thin-scroll::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 2px;
-}
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 3px;
-}
-
-.xterm .xterm-scrollable-element > .scrollbar {
   display: none !important;
 }
 

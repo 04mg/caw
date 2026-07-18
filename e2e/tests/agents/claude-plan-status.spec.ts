@@ -118,7 +118,7 @@ async function launchAndAwait(page: Page, baseURL: string): Promise<AgentStatus>
 
 async function acceptTrustDialog(page: Page): Promise<void> {
   await page.waitForTimeout(5000)
-  const termText = await page.locator('.xterm-rows').textContent().catch(() => '')
+  const termText = await page.locator('canvas').first().textContent().catch(() => '')
   if (!termText) return
   const lower = termText.toLowerCase()
   if (lower.includes('trust this folder') || lower.includes('safety check')) {

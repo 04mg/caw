@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
+import { Terminal, FitAddon } from 'ghostty-web'
 import { RingBuffer } from './ringBuffer'
 
 export interface TerminalInstance {
@@ -22,7 +21,7 @@ export interface TerminalInstance {
   /** @internal rAF id for the scheduled output flush, 0 when idle */
   _rafId: number
   /**
-   * @internal True while the xterm.js instance is detached from the DOM
+   * @internal True while the terminal instance is detached from the DOM
    * (e.g. the user switched to another tab). The WebSocket is kept alive so
    * that re-attaching replays the local ring buffer instead of reconnecting
    * and reloading scrollback from the backend. While detached, incoming WS
@@ -33,7 +32,7 @@ export interface TerminalInstance {
   /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
-   * Tracked from the live WS stream so a re-attached xterm.js instance can
+   * Tracked from the live WS stream so a re-attached terminal instance can
    * re-enter the same mode the running TUI expects, even after the 10k
    * buffer cap evicted the original mode-set sequence.
    */
@@ -42,7 +41,7 @@ export interface TerminalInstance {
    * @internal Cell-based horizontal padding (cols) the server asked this
    * viewer to apply so the terminal grid is centered within a panel that
    * is wider than the PTY. The FitAddon still reports the full panel
-   * dimensions; the padding is applied as CSS margins on the xterm.js
+   * dimensions; the padding is applied as CSS margins on the terminal
    * element after fit runs, so only the inner minCols×minRows grid is
    * rendered.
    */
@@ -62,6 +61,11 @@ export interface TerminalInstance {
 const registry = new Map<string, TerminalInstance>()
 const subscribers = new Set<() => void>()
 let onTerminalExit: ((leafId: string) => void) | null = null
+
+// Module-level store for TUI clipboard content (OSC 52).
+// ghostty-web renders to canvas so there is no DOM node to attach
+// custom properties to; instead we key by leafId.
+const tuiClipboards = new Map<string, string>()
 
 export function setOnTerminalExit(cb: ((leafId: string) => void) | null) {
   onTerminalExit = cb
@@ -137,6 +141,19 @@ function getTerminalTheme(): 'dark' | 'light' {
   return (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
 }
 
+// getCellDimensions computes the current pixel size of a single terminal cell
+// from the ghostty-web canvas element and its terminal dimensions.
+function getCellDimensions(inst: TerminalInstance): { w: number; h: number } {
+  const el = inst.term.element
+  if (!el) return { w: 0, h: 0 }
+  const canvas = el.querySelector('canvas')
+  if (!canvas) return { w: 0, h: 0 }
+  const canvasW = parseInt(canvas.style.width) || canvas.width
+  const canvasH = parseInt(canvas.style.height) || canvas.height
+  if (inst.term.cols <= 0 || inst.term.rows <= 0) return { w: 0, h: 0 }
+  return { w: canvasW / inst.term.cols, h: canvasH / inst.term.rows }
+}
+
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
@@ -150,78 +167,17 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
-  // The FitAddon subtracts a default 14px scrollbar width from the available
-  // terminal width (overviewRuler?.width || 14). Since we hide the VSCode-style
-  // scrollbar via CSS (display: none), that reserved space shows as an
-  // unrendered black strip on the right side of the terminal. Patch
-  // proposeDimensions to use 0 for the scrollbar width so the terminal fills
-  // its container completely.
-  const originalProposeDimensions = fit.proposeDimensions.bind(fit)
-  fit.proposeDimensions = () => {
-    const dims = originalProposeDimensions()
-    if (dims) {
-      const cellWidth = (term as any)._core?._renderService?.dimensions?.css?.cell?.width
-      if (cellWidth) {
-        // Recalculate cols without the scrollbar subtraction
-        const el = term.element
-        if (el && el.parentElement) {
-          const parentStyle = window.getComputedStyle(el.parentElement)
-          const availableWidth = Math.max(0, parseInt(parentStyle.getPropertyValue('width')))
-            - (parseInt(parentStyle.getPropertyValue('padding-right')) + parseInt(parentStyle.getPropertyValue('padding-left')))
-          const myStyle = window.getComputedStyle(el)
-          const innerWidth = availableWidth
-            - (parseInt(myStyle.getPropertyValue('padding-right')) + parseInt(myStyle.getPropertyValue('padding-left')))
-          const cols = Math.max(2, Math.floor(innerWidth / cellWidth))
-          if (cols > dims.cols) {
-            return { ...dims, cols }
-          }
-        }
-      }
-    }
-  }
-  
-  // Register OSC 52 handler to capture TUI clipboard writes
-  term.parser.registerOscHandler(52, (data) => {
-    try {
-      const parts = data.split(';')
-      let base64Data = ''
-      if (parts.length > 1) {
-        base64Data = parts[1]
-      } else {
-        base64Data = parts[0]
-      }
-      if (base64Data === '?') {
-        // Query - ignore
-        return true
-      }
-      if (!base64Data) {
-        ;(term as any)._tuiClipboard = ''
-        return true
-      }
-      const binaryString = atob(base64Data.trim())
-      const bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-      const decoded = new TextDecoder().decode(bytes)
-      ;(term as any)._tuiClipboard = decoded
-    } catch (e) {
-      console.error('Failed to parse OSC 52 data:', e)
-    }
-    return true
-  })
-
   return { term, fit }
 }
 
-// applyPadding centers the xterm.js grid within its container by setting
+// applyPadding centers the terminal grid within its container by setting
 // CSS margins sized in pixels. The server sends cell-based padding
 // (padCols/padRows) computed from (viewer dimensions − PTY dimensions);
 // we multiply by the current cell pixel dimensions to get exact pixel
 // margins. The odd cell goes to the right/bottom so the content sits
 // slightly left/up, matching typical reading layout.
 //
-// Margins are applied to the .xterm element itself, not its parent, so
+// Margins are applied to the terminal element itself, not its parent, so
 // the FitAddon's proposeDimensions (which reads the parent's CSS width)
 // is unaffected — no feedback loop between padding and fitting.
 function applyPadding(inst: TerminalInstance) {
@@ -234,9 +190,7 @@ function applyPadding(inst: TerminalInstance) {
     el.style.marginBottom = ''
     return
   }
-  const cell = (inst.term as any)._core?._renderService?.dimensions?.css?.cell
-  const cellW = cell?.width ?? 0
-  const cellH = cell?.height ?? 0
+  const { w: cellW, h: cellH } = getCellDimensions(inst)
   if (cellW <= 0 || cellH <= 0) return
   const left = Math.floor(inst._padCols / 2) * cellW
   const right = Math.ceil(inst._padCols / 2) * cellW
@@ -317,16 +271,49 @@ export function setTerminalUserScrolling(leafId: string, scrolling: boolean) {
   }
 }
 
-function wireInput(inst: TerminalInstance) {
-  inst.term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
-      if (inst.ws?.readyState === WebSocket.OPEN) {
-        inst.ws.send(JSON.stringify({ type: 'input', data: '\n' }))
-      }
-      return false
+// OSC 52 regex — matches ESC ]52 ; <opts> ; <base64> (BEL | ST)
+// Captures the base64 payload from group 2.
+const OSC52_RE = new RegExp(
+  String.fromCharCode(27) + '\\]52;([^;]*);([A-Za-z0-9+/=]+)(?:' + String.fromCharCode(7) + '|' + String.fromCharCode(27) + '\\\\)',
+  'g',
+)
+
+// interceptOSC52 scans a data string for OSC 52 clipboard sequences and
+// stores the decoded content in the module-level tuiClipboards map.
+function interceptOSC52(leafId: string, data: string) {
+  let m: RegExpExecArray | null
+  OSC52_RE.lastIndex = 0
+  while ((m = OSC52_RE.exec(data)) !== null) {
+    const base64 = m[2]
+    if (!base64) {
+      tuiClipboards.set(leafId, '')
+      continue
     }
-    return true
-  })
+    try {
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      tuiClipboards.set(leafId, new TextDecoder().decode(bytes))
+    } catch { /* ignore malformed base64 */ }
+  }
+}
+
+function wireInput(inst: TerminalInstance) {
+  // Attach key event handler to the textarea for Ctrl+Enter override.
+  // ghostty-web does not expose attachCustomKeyEventHandler, so we listen
+  // on the textarea element directly.
+  const textarea = inst.term.textarea
+  if (textarea) {
+    textarea.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'Return')) {
+        if (inst.ws?.readyState === WebSocket.OPEN) {
+          inst.ws.send(JSON.stringify({ type: 'input', data: '\n' }))
+        }
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    })
+  }
 
   inst.term.onData((data) => {
     if (inst.ws?.readyState === WebSocket.OPEN) {
@@ -343,11 +330,6 @@ function wireInput(inst: TerminalInstance) {
         finalData = '\x1b' + data
         resetStickyModifiers()
       } else if (stickyModifiers.shift && data.length === 1) {
-        // Uppercase letters; for other characters, xterm.js already applied
-        // the shift modifier internally before emitting onData, so we only
-        // need to handle the case where the user pressed a key without a
-        // physical shift (sticky mode sends the raw key). Uppercasing letters
-        // gives the expected shifted result.
         const code = data.charCodeAt(0)
         if (code >= 97 && code <= 122) {
           finalData = String.fromCharCode(code - 32)
@@ -360,7 +342,7 @@ function wireInput(inst: TerminalInstance) {
 }
 
 // DEC private modes whose state must be re-applied to a re-attached
-// xterm.js instance so mouse clicks / wheel scroll / bracketed paste keep
+// terminal instance so mouse clicks / wheel scroll / bracketed paste keep
 // working. Mirrors the server-side syncModes set in session.go.
 const SYNC_MODES = new Set([1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004])
 // Matches a single DEC private mode set/reset, e.g. "\x1b[?1003h" or
@@ -391,11 +373,13 @@ function syncModes(inst: TerminalInstance): string {
 function safeScrollToBottom(inst: TerminalInstance) {
   if (inst.userScrolling) return
   try {
-    inst.term.scrollToBottom()
+    // ghostty-web does not expose scrollToBottom; scroll the textarea to bottom.
+    const textarea = inst.term.textarea
+    if (textarea) textarea.scrollTop = textarea.scrollHeight
   } catch { /* ignore if not attached to DOM */ }
 }
 
-// scheduleFlush accumulates output chunks and flushes them to xterm.js in
+// scheduleFlush accumulates output chunks and flushes them to the terminal in
 // a single term.write per animation frame. This replaces the previous
 // pattern of calling term.write(data, cb) + scrollToBottom for every WS
 // message, which caused N independent renders per burst. Batching into
@@ -405,7 +389,7 @@ function scheduleFlush(inst: TerminalInstance) {
   if (inst._detached) {
     // Terminal is detached (another tab is visible). Keep buffering WS
     // output into the ring buffer but do NOT schedule a render flush —
-    // there is no live xterm.js instance to write to. On re-attach the
+    // there is no live terminal instance to write to. On re-attach the
     // buffer is replayed in one shot.
     for (const ch of inst._pendingOutput) inst.buffer.push(ch)
     inst._pendingOutput = []
@@ -418,9 +402,8 @@ function scheduleFlush(inst: TerminalInstance) {
     inst._pendingOutput = []
     if (chunks.length === 0) return
     const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
-    inst.term.write(combined, () => {
-      safeScrollToBottom(inst)
-    })
+    inst.term.write(combined)
+    safeScrollToBottom(inst)
     for (const ch of chunks) {
       inst.buffer.push(ch)
     }
@@ -449,9 +432,8 @@ function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
   for (const data of queue) {
-    inst.term.write(data, () => {
-      safeScrollToBottom(inst)
-    })
+    inst.term.write(data)
+    safeScrollToBottom(inst)
     inst.buffer.push(data)
   }
   // After replay, any subsequently batched output should resume normal
@@ -475,6 +457,11 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         // re-apply it even if the original sequence was evicted from the
         // 10k-entry buffer.
         trackModes(inst, msg.data)
+        // Intercept OSC 52 clipboard sequences before the terminal processes
+        // them, so we can store the content for the "Copy TUI Clipboard"
+        // context-menu action. ghostty-web renders to canvas so there is no
+        // DOM node to attach a custom property to.
+        interceptOSC52(inst.leafId, msg.data)
         if (inst._replaying) {
           inst._pendingQueue.push(msg.data)
           return
@@ -577,20 +564,20 @@ export async function attachTerminal(
 ): Promise<TerminalInstance> {
   const existing = registry.get(leafId)
   if (existing) {
-    // Recreate the xterm instance bound to the new DOM element, while
+    // Recreate the terminal instance bound to the new DOM element, while
     // preserving the existing WebSocket/backend connection.
     try { existing.term.dispose() } catch { /* ignore */ }
     const { term, fit } = makeTerminal()
     existing.term = term
     existing.fit = fit
     // The terminal is being re-attached to the DOM, so live output can
-    // once again be rendered directly to xterm.js.
+    // once again be rendered directly to the terminal.
     existing._detached = false
     // Wait for the container to have real dimensions before opening
-    // xterm.js, so fit.fit() computes correct cols/rows and the terminal
-    // doesn't render garbled output that requires a manual resize.
+    // the terminal, so fit.fit() computes correct cols/rows and the
+    // terminal doesn't render garbled output that requires a manual resize.
     await waitForLayout(el)
-    term.open(el)
+    await term.open(el)
     fit.fit()
 
     // Re-wire input handlers since the old term was disposed.
@@ -602,16 +589,15 @@ export async function attachTerminal(
       existing._replaying = true
       existing._pendingQueue = []
       if (existing.buffer.length > 0) {
-        term.write(existing.buffer.join(''), () => {
-          term.scrollToBottom()
-          existing._replaying = false
-          // Re-apply the tracked DEC private modes (mouse tracking, SGR
-          // mouse, bracketed paste, etc.) so the fresh xterm.js instance
-          // enters the same input-routing mode the running TUI expects.
-          const sync = syncModes(existing)
-          if (sync) term.write(sync)
-          flushPending(existing)
-        })
+        term.write(existing.buffer.join(''))
+        safeScrollToBottom(existing)
+        existing._replaying = false
+        // Re-apply the tracked DEC private modes (mouse tracking, SGR
+        // mouse, bracketed paste, etc.) so the fresh terminal instance
+        // enters the same input-routing mode the running TUI expects.
+        const sync = syncModes(existing)
+        if (sync) term.write(sync)
+        flushPending(existing)
       } else {
         existing._replaying = false
         const sync = syncModes(existing)
@@ -638,10 +624,10 @@ export async function attachTerminal(
 
   const { term, fit } = makeTerminal()
   // Wait for the container to have real dimensions before opening
-  // xterm.js, so fit.fit() computes correct cols/rows and the terminal
-  // doesn't render garbled output that requires a manual resize.
+  // the terminal, so fit.fit() computes correct cols/rows and the
+  // terminal doesn't render garbled output that requires a manual resize.
   await waitForLayout(el)
-  term.open(el)
+  await term.open(el)
   fit.fit()
 
   const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0 }
@@ -662,9 +648,9 @@ export async function attachTerminal(
 
 export function setAllTerminalFontSizes(size: number) {
   for (const inst of registry.values()) {
-    inst.term.options.fontSize = size
+    ;(inst.term as any).options.fontSize = size
     // Cell pixel dimensions change with the font size, so re-apply the
-    // pixel-based padding margins on the next frame after xterm.js
+    // pixel-based padding margins on the next frame after the terminal
     // updates its renderer dimensions.
     requestAnimationFrame(() => applyPadding(inst))
   }
@@ -673,7 +659,7 @@ export function setAllTerminalFontSizes(size: number) {
 export function setAllTerminalThemes(theme: 'dark' | 'light') {
   const t = theme === 'light' ? lightTerminalTheme : darkTerminalTheme
   for (const inst of registry.values()) {
-    inst.term.options.theme = t
+    ;(inst.term as any).options.theme = t
   }
   localStorage.setItem('caw:terminalTheme', theme)
 }
@@ -684,6 +670,7 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
+  tuiClipboards.delete(leafId)
   registry.delete(leafId)
   notify()
   fetch(`/api/terminals/${encodeURIComponent(leafId)}${deleteBranch ? '?deleteBranch=true' : ''}`, {
@@ -697,7 +684,7 @@ export function detachTerminal(leafId: string) {
   cancelFlush(inst)
   // Mark the terminal as detached from the DOM so the live WS output
   // handler keeps buffering into the ring buffer WITHOUT writing to the
-  // disposed xterm.js instance. The WebSocket is intentionally left open
+  // disposed terminal instance. The WebSocket is intentionally left open
   // so that switching back to this tab replays the local ring buffer
   // instantly instead of reconnecting and reloading scrollback from the
   // backend. Closing the WS here is what caused the "reload on every tab
@@ -707,7 +694,7 @@ export function detachTerminal(leafId: string) {
 }
 
 // releaseTerminal drops this client's hold on a terminal (disposes the
-// xterm.js instance, closes the WebSocket, removes the registry entry)
+// terminal instance, closes the WebSocket, removes the registry entry)
 // WITHOUT asking the backend to kill the PTY. Use this when a terminal
 // disappears from THIS client's view only because another browser
 // reshaped the shared workspace state — the shared backend PTY must
@@ -726,6 +713,10 @@ export function releaseTerminal(leafId: string) {
 
 export function getTerminal(leafId: string): TerminalInstance | undefined {
   return registry.get(leafId)
+}
+
+export function getTuiClipboard(leafId: string): string {
+  return tuiClipboards.get(leafId) || ''
 }
 
 export function useTerminalIds(): string[] {

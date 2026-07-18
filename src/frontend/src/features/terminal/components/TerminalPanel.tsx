@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, getTerminal, getTuiClipboard, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -211,7 +211,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      const target = el.querySelector('.xterm-viewport') || el
+      const target = el.querySelector('canvas') || el
       if (!target) return
       accumDelta += deltaY
       const wholeLines = Math.trunc(accumDelta)
@@ -332,7 +332,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let tuiClip = ''
     if (inst) {
       sel = inst.term.getSelection()
-      tuiClip = (inst.term as any)._tuiClipboard || ''
+      tuiClip = getTuiClipboard(terminalId)
     }
     setSavedSelection(sel)
     setTuiClipboard(tuiClip)

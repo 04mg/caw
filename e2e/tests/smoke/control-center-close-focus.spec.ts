@@ -13,7 +13,7 @@ test.describe('Control Center close focus', () => {
     // Find the active terminal pane and focus it.
     const panel = page.locator('[data-testid^="terminal-panel-"]').first()
     await expect(panel).toBeVisible({ timeout: 30_000 })
-    const textarea = panel.locator('.xterm-helper-textarea')
+    const textarea = panel.locator('textarea')
     await textarea.focus()
     await focusTerminal(page, await panel.getAttribute('data-testid') || '')
     await page.waitForTimeout(500)
