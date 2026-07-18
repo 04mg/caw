@@ -455,17 +455,13 @@ export function FolderSidebar({
               Paste
             </button>
           )}
-          {!contextMenu.isDir && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download
-              </button>
-            </>
-          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </button>
           {!contextMenu.isRoot && (
             <>
               <div className="border-t border-border my-0.5" />
