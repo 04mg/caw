@@ -13,7 +13,7 @@
   </p>
 
   <p align="center">
-    A single self-hostable binary for managing multiple AI coding agents in parallel.
+    Web terminal multiplexer for AI agents.
   </p>
 
   <p align="center">
