@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -135,14 +136,52 @@ func (h *Handler) fileDownload(c *gin.Context) {
 		httpx.NotFound(c, err.Error())
 		return
 	}
-	if info.IsDir() {
-		httpx.BadRequest(c, "cannot download directory")
+	if !info.IsDir() {
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
+		c.Header("Content-Type", "application/octet-stream")
+		c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
+		c.File(abs)
 		return
 	}
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
-	c.File(abs)
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	base := filepath.Base(abs)
+	err = filepath.Walk(abs, func(p string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(filepath.Dir(abs), p)
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			_, err = w.Create(base + "/" + rel + "/")
+			return err
+		}
+		f, err := w.Create(base + "/" + rel)
+		if err != nil {
+			return err
+		}
+		src, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		_, err = io.Copy(f, src)
+		return err
+	})
+	if err != nil {
+		w.Close()
+		httpx.InternalErr(c, err)
+		return
+	}
+	if err := w.Close(); err != nil {
+		httpx.InternalErr(c, err)
+		return
+	}
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, base))
+	c.Header("Content-Type", "application/zip")
+	c.Data(http.StatusOK, "application/zip", buf.Bytes())
 }
 
 func (h *Handler) FileWrite(c *gin.Context) {
