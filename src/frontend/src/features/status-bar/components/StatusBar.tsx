@@ -9,9 +9,8 @@ import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanb
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
-import { useSpeechRecognition, isVoiceSupported } from '@/features/voice-mode/hooks/useSpeechRecognition'
+import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
-import type { VoicePhase } from '@/features/voice-mode/types'
 
 interface Quota {
 	used:  number
@@ -100,8 +99,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
-	const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle')
-	const speech = useSpeechRecognition()
+	const voice = useVoiceMode()
 
 	useEffect(() => {
 		const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -173,30 +171,22 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	}
 
 	const handleToggleVoice = () => {
-		if (!isVoiceSupported()) {
-			speech.reset()
-			return
-		}
-		if (voicePhase === 'idle') {
-			speech.reset()
-			speech.start()
-			setVoicePhase('listening')
-		} else if (voicePhase === 'listening') {
-			speech.stop()
-			setVoicePhase('review')
+		if (!isVoiceSupported()) return
+		if (voice.phase === 'idle') {
+			voice.start()
+		} else if (voice.phase === 'listening') {
+			voice.stop()
 		}
 	}
 
 	const handleSendVoice = () => {
-		const text = speech.transcript.trim()
+		const text = voice.transcript.trim()
 		if (text) onSendText?.(text)
-		speech.reset()
-		setVoicePhase('idle')
+		voice.reset()
 	}
 
 	const handleDiscardVoice = () => {
-		speech.reset()
-		setVoicePhase('idle')
+		voice.reset()
 	}
 
 	const hasClaude = settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
@@ -399,11 +389,11 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		</div>
 
 			<div className="flex items-center gap-2">
-				{voicePhase !== 'idle' && (
+				{voice.phase !== 'idle' && (
 					<VoiceBubble
-						transcript={speech.transcript}
-						error={speech.error}
-						isListening={voicePhase === 'listening'}
+						transcript={voice.transcript}
+						error={voice.error}
+						isListening={voice.phase === 'listening'}
 						onSend={handleSendVoice}
 						onDiscard={handleDiscardVoice}
 					/>
@@ -417,14 +407,14 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									data-testid="status-bar-voice-mode"
 									className={cn(
 										"shrink-0 transition-colors cursor-pointer",
-										voicePhase === 'listening'
+										voice.phase === 'listening'
 											? "text-primary"
 											: "text-muted-foreground hover:text-foreground"
 									)}
 								>
 									<Mic className={cn(
 										"h-3.5 w-3.5",
-										voicePhase === 'listening' && "lava-lamp-mic"
+										voice.phase === 'listening' && "lava-lamp-mic"
 									)} />
 								</button>
 							</TooltipTrigger>

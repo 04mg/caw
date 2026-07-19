@@ -6,7 +6,7 @@ import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLe
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
-import { isVoiceSupported } from '@/features/voice-mode/hooks/useSpeechRecognition'
+import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { SettingsItem } from './SettingsItem'
 
 
