@@ -112,6 +112,17 @@ Caw can show live usage limits and reset times for the following providers:
   <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
 </p>
 
+## CLI
+
+```
+caw              Start the server (default)
+caw update       Update caw to the latest release
+caw version      Print the current version
+caw help         Show available commands
+```
+
+Run `caw help` for the full list of flags and commands.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for commit and branch naming conventions.
