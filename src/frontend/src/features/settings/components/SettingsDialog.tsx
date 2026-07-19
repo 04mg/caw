@@ -6,6 +6,7 @@ import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLe
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
+import { isVoiceSupported } from '@/features/voice-mode/hooks/useSpeechRecognition'
 import { SettingsItem } from './SettingsItem'
 
 
@@ -764,6 +765,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <h3 className="text-sm font-medium mb-1">Voice</h3>
                 <p className="text-xs text-muted-foreground">Configure voice input language for speech recognition.</p>
               </div>
+
+              {isVoiceSupported() ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+                  <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Voice Mode is supported in this browser</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/5">
+                  <div className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
+                  <span className="text-xs text-red-600 dark:text-red-400 font-medium">Voice Mode is not supported in this browser. Use Chrome, Edge, or Safari for speech recognition.</span>
+                </div>
+              )}
 
               <div className="flex flex-col gap-5 mt-2">
                 <div className="flex flex-col gap-2">
