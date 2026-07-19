@@ -13,7 +13,7 @@
   </p>
 
   <p align="center">
-    A single self-hostable binary for managing multiple AI coding agents in parallel.
+    Web terminal multiplexer for AI agents.
   </p>
 
   <p align="center">
@@ -111,6 +111,17 @@ Caw can show live usage limits and reset times for the following providers:
   <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
   <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
 </p>
+
+## Supported commands
+
+```
+caw              Start the server (default)
+caw update       Update caw to the latest release
+caw version      Print the current version
+caw help         Show available commands
+```
+
+Run `caw help` for the full list of flags, commands, and environment variables.
 
 ## Contributing
 

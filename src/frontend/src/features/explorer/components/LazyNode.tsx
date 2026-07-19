@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Loader2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, FolderOpen, Loader2, MoreVertical } from 'lucide-react'
 import { type FileNode } from '../types'
 
 async function listDir(path: string): Promise<FileNode[]> {
@@ -18,6 +18,10 @@ function isAncestor(parent: string, child: string): boolean {
   const p = parent.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '')
   const c = child.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '')
   return c === p || c.startsWith(p + '/')
+}
+
+function getIsMobile() {
+  return window.innerWidth < 768
 }
 
 export interface LazyNodeProps {
@@ -63,9 +67,16 @@ export function LazyNode({
   const [children, setChildren] = useState<FileNode[]>([])
   const [createValue, setCreateValue] = useState('')
   const [renameValue, setRenameValue] = useState(name)
+  const [isMobile, setIsMobile] = useState(getIsMobile)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const createInputRef = useRef<HTMLInputElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(getIsMobile())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   const load = useCallback(async (force = false) => {
     if (!force && (loaded || loading)) return
@@ -223,6 +234,19 @@ export function LazyNode({
           <span className="truncate text-muted-foreground">{name}</span>
         )}
         {loading && <Loader2 className="h-3 w-3 animate-spin ml-auto" />}
+        {isMobile && (
+          <span
+            role="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              onShowContextMenu?.(path, name, rect.right, rect.bottom + 2)
+            }}
+            className="h-5 w-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/40 flex items-center justify-center shrink-0"
+          >
+            <MoreVertical className="h-3 w-3" />
+          </span>
+        )}
       </button>
       {expanded && loaded && (
         <div>
