@@ -408,7 +408,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 						onDiscard={handleDiscardVoice}
 					/>
 				)}
-				{!isMobile && (
+				{!isMobile && isVoiceSupported() && (
 					<>
 						<Tooltip delayDuration={0}>
 							<TooltipTrigger asChild>
