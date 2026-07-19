@@ -121,7 +121,7 @@ caw version      Print the current version
 caw help         Show available commands
 ```
 
-Run `caw help` for the full list of flags and commands.
+Run `caw help` for the full list of flags, commands, and environment variables.
 
 ## Contributing
 

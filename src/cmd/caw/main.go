@@ -65,6 +65,10 @@ func showHelp() {
 	fmt.Println("  -h, --help       Show help")
 	fmt.Println("  -v, --version    Print version")
 	fmt.Println("      --update     Update caw to the latest release")
+	fmt.Println()
+	fmt.Println("Environment:")
+	fmt.Println("  HOST    Bind address (default: localhost)")
+	fmt.Println("  PORT    Bind port (default: 8080)")
 }
 
 func printVersion() {
