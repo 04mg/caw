@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/server"
 	"github.com/04mg/caw/internal/update"
 )
@@ -38,12 +39,32 @@ func handleSubcommands() bool {
 	case "version", "-v", "--version":
 		printVersion()
 		return true
-	case "update":
+	case "update", "--update":
 		runUpdate()
 		return true
+	case "help", "-h", "--help":
+		showHelp()
+		return true
 	default:
-		return false
+		showHelp()
+		return true
 	}
+}
+
+func showHelp() {
+	fmt.Print(embed.IconTxt)
+	fmt.Println("Usage: caw [command]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  (no args)    Start the server")
+	fmt.Println("  update       Update caw to the latest release")
+	fmt.Println("  version      Print the current version")
+	fmt.Println("  help         Show this help message")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  -h, --help       Show help")
+	fmt.Println("  -v, --version    Print version")
+	fmt.Println("      --update     Update caw to the latest release")
 }
 
 func printVersion() {
@@ -55,4 +76,3 @@ func runUpdate() {
 		log.Fatalf("Error updating caw: %v", err)
 	}
 }
-
