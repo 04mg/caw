@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ElementType } from 'reac
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -15,7 +15,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -81,6 +81,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [pushBusy, setPushBusy] = useState(false)
   const [pushError, setPushError] = useState('')
   const [soundEnabled, setSoundEnabled] = useState(true)
+  const [voiceLanguage, setVoiceLanguage] = useState('')
   const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
 
   const loadQuotaSettings = useCallback(async () => {
@@ -187,6 +188,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       // Load push notification state
       setSoundEnabled(localStorage.getItem('caw:soundEnabled') !== '0')
+      setVoiceLanguage(localStorage.getItem('caw:voiceLanguage') || '')
       if (pushSupported && 'Notification' in window) {
         setPushPermission(Notification.permission)
       } else if (!pushSupported && !pushIOSPWA) {
@@ -390,6 +392,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'workspaces', label: 'Workspaces', icon: Folder },
     { id: 'terminal', label: 'Terminal', icon: Terminal },
+    { id: 'voice', label: 'Voice', icon: Mic },
     { id: 'agents', label: 'Agents', icon: Bot },
     { id: 'limits', label: 'Limits', icon: ChartSpline },
   ]
@@ -750,6 +753,48 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       Reset to Defaults
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'voice' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Voice</h3>
+                <p className="text-xs text-muted-foreground">Configure voice input language for speech recognition.</p>
+              </div>
+
+              <div className="flex flex-col gap-5 mt-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Speech Language</label>
+                  <select
+                    value={voiceLanguage}
+                    onChange={(e) => {
+                      setVoiceLanguage(e.target.value)
+                      if (e.target.value) {
+                        localStorage.setItem('caw:voiceLanguage', e.target.value)
+                      } else {
+                        localStorage.removeItem('caw:voiceLanguage')
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground outline-none focus:border-ring transition-colors cursor-pointer"
+                  >
+                    <option value="">System Default</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="en-GB">English (UK)</option>
+                    <option value="es-ES">Spanish</option>
+                    <option value="fr-FR">French</option>
+                    <option value="de-DE">German</option>
+                    <option value="ja-JP">Japanese</option>
+                    <option value="ko-KR">Korean</option>
+                    <option value="zh-CN">Chinese (Simplified)</option>
+                    <option value="pt-BR">Portuguese (Brazil)</option>
+                    <option value="it-IT">Italian</option>
+                    <option value="nl-NL">Dutch</option>
+                    <option value="ru-RU">Russian</option>
+                  </select>
+                  <p className="text-[10px] text-muted-foreground">Language used for speech recognition. "System Default" uses your browser's default language.</p>
                 </div>
               </div>
             </div>

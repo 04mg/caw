@@ -27,7 +27,7 @@ import {
 import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
-import { destroyTerminal, releaseTerminal, setOnTerminalExit } from '@/features/terminal/services/terminalRegistry'
+import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -1672,6 +1672,7 @@ export function AppLayout() {
               setSettingsOpen(true)
             }}
             hideControlCenter
+            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
           />
         </div>
       ) : (
@@ -1877,6 +1878,7 @@ export function AppLayout() {
               setSettingsOpen(true)
             }}
             controlCenterButtonRef={controlCenterBtnRef}
+            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
           />
         </>
       )}

@@ -271,6 +271,91 @@ html, body, #root {
 }
 
 /* ==========================================================================
+   Voice Mode
+   ========================================================================== */
+
+.lava-lamp-mic {
+  stroke: url(#lava-gradient) !important;
+  filter: drop-shadow(0 0 3px rgba(168, 85, 247, 0.5));
+}
+
+.voice-bubble-container {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  pointer-events: auto;
+}
+
+.voice-bubble {
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 10px 14px;
+  min-width: 180px;
+  max-width: 420px;
+  animation: voice-bubble-in 0.2s ease-out;
+}
+
+@keyframes voice-bubble-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.voice-bubble-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-bubble-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a855f7;
+  animation: voice-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.voice-bubble-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.voice-bubble-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--secondary));
+  border: 1px solid hsl(var(--border));
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.voice-bubble-btn:hover {
+  transform: scale(1.08);
+}
+
+/* ==========================================================================
    Monaco Editor overrides to match Shadcn UI context menus & floats
    ========================================================================== */
 
