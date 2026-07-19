@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -97,6 +96,7 @@ func (s *Server) Engine() *gin.Engine {
 
 func (s *Server) ListenAndServe(host, port string) {
 	addr := host + ":" + port
-	fmt.Print(strings.Replace(embed.IconTxt, "localhost:8080", addr, 1))
+	fmt.Print(embed.IconTxt)
+	fmt.Printf("\033[38;2;255;150;150m└─\033[0m \033[38;2;255;150;150mlistening on \033[1;4m%s\033[0m\n", addr)
 	log.Fatal(http.ListenAndServe(addr, s.Engine()))
 }
