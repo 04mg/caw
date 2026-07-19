@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { ChevronDown, ChevronRight, FolderOpen, Folder, FileCode, Loader2, MoreVertical } from 'lucide-react'
 import { type FileNode } from '../types'
 
+function getIsMobile() {
+  return window.innerWidth < 768
+}
+
 export interface LazyFileNodeProps {
   name: string
   path: string
@@ -52,6 +56,13 @@ export function LazyFileNode({
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [isMobile, setIsMobile] = useState(getIsMobile)
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(getIsMobile())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   const [children, setChildren] = useState<FileNode[]>([])
   const [localEditValue, setLocalEditValue] = useState(name)
   const [localCreateValue, setLocalCreateValue] = useState('')
@@ -303,7 +314,7 @@ export function LazyFileNode({
               const rect = e.currentTarget.getBoundingClientRect()
               onShowContextMenu(path, name, isDir, rect.right, rect.bottom + 2)
             }}
-            className="h-5 w-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            className={`h-5 w-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-accent/40 flex items-center justify-center transition-opacity shrink-0 ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
             title="More"
           >
             <MoreVertical className="h-3 w-3" />
