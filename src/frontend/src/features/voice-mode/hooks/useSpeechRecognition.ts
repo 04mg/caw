@@ -60,8 +60,10 @@ export function useSpeechRecognition() {
 	const [error, setError] = useState<string | null>(null)
 	const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
 	const shouldRestartRef = useRef(false)
+	const finalizedRef = useRef('')
 
 	const reset = useCallback(() => {
+		finalizedRef.current = ''
 		setTranscript('')
 		setError(null)
 	}, [])
@@ -91,21 +93,20 @@ export function useSpeechRecognition() {
 		if (lang) recognition.lang = lang
 
 		recognition.onresult = (event: SpeechRecognitionResultEvent) => {
-			let finalText = ''
-			let interimText = ''
 			for (let i = event.resultIndex; i < event.results.length; i++) {
 				const result = event.results[i]
 				if (result.isFinal) {
-					finalText += result[0].transcript
-				} else {
+					finalizedRef.current += result[0].transcript
+				}
+			}
+			let interimText = ''
+			for (let i = event.resultIndex; i < event.results.length; i++) {
+				const result = event.results[i]
+				if (!result.isFinal) {
 					interimText += result[0].transcript
 				}
 			}
-			setTranscript((prev) => {
-				const base = prev.replace(/\u200B$/, '')
-				if (finalText) return base + finalText
-				return base + interimText
-			})
+			setTranscript(finalizedRef.current + interimText)
 		}
 
 		recognition.onerror = (event: SpeechRecognitionErrorEvent) => {

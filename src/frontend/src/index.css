@@ -348,13 +348,15 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: hsl(var(--secondary));
+  background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .voice-bubble-btn:hover {
+  color: hsl(var(--foreground));
   transform: scale(1.08);
 }
 

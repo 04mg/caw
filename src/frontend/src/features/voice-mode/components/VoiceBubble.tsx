@@ -12,8 +12,6 @@ interface VoiceBubbleProps {
 
 export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard }: VoiceBubbleProps) {
 	const hasContent = transcript.trim().length > 0
-	const words = transcript.trim().split(/\s+/).filter(Boolean)
-	const showTranscript = words.length > 0
 
 	return createPortal(
 		<div className="voice-bubble-container">
@@ -21,10 +19,8 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard 
 				<div className="voice-bubble-content">
 					{error ? (
 						<span className="text-xs text-red-400 font-sans">{error}</span>
-					) : showTranscript ? (
+					) : hasContent ? (
 						<span className="text-xs text-foreground font-sans leading-relaxed">{transcript}</span>
-					) : isListening ? (
-						<span className="text-xs text-muted-foreground font-sans italic">Listening...</span>
 					) : null}
 
 					{isListening && (
@@ -37,10 +33,7 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard 
 				<div className="voice-bubble-actions">
 					<button
 						onClick={onDiscard}
-						className={cn(
-							"voice-bubble-btn",
-							"text-muted-foreground hover:text-foreground hover:bg-destructive/10"
-						)}
+						className="voice-bubble-btn"
 						title="Discard"
 					>
 						<X className="h-3.5 w-3.5" />
@@ -50,9 +43,7 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard 
 						disabled={!hasContent}
 						className={cn(
 							"voice-bubble-btn",
-							hasContent
-								? "text-primary hover:bg-primary/10"
-								: "text-muted-foreground/40 cursor-not-allowed"
+							!hasContent && "opacity-40 cursor-not-allowed"
 						)}
 						title="Send to terminal"
 					>
