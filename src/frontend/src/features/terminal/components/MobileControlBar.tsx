@@ -9,7 +9,9 @@ import {
   resetStickyModifiers,
   sendTerminalInput
 } from '@/features/terminal/services/terminalRegistry'
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft, Mic } from 'lucide-react'
+import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
+import { cn } from '@/features/shared/utils/utils'
 
 interface MobileControlBarProps {
   terminalId: string
@@ -17,6 +19,7 @@ interface MobileControlBarProps {
 
 export function MobileControlBar({ terminalId }: MobileControlBarProps) {
   const [sticky, setSticky] = useState({ ctrl: false, alt: false, shift: false })
+  const voice = useVoiceMode()
 
   useEffect(() => {
     return subscribeStickyModifiers(() => {
@@ -28,15 +31,38 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
     sendTerminalInput(terminalId, sequence)
   }
 
+  const handleToggleVoice = () => {
+    if (!isVoiceSupported()) return
+    if (voice.phase === 'idle') {
+      voice.start()
+    } else if (voice.phase === 'listening') {
+      voice.stop()
+    }
+  }
+
   return (
     <div className="flex gap-1.5 overflow-x-auto py-1.5 px-3 bg-secondary/35 border-t border-border/60 scrollbar-none shrink-0 select-none items-center w-full justify-between" onMouseDown={(e) => e.preventDefault()}>
       {/* Sticky Modifiers with toggled color states */}
       <div className="flex gap-1 shrink-0">
+        {isVoiceSupported() && (
+          <Button
+            variant={voice.phase === 'listening' ? 'default' : 'ghost'}
+            className={cn(
+              "h-7 px-2 transition-all border animate-none",
+              voice.phase === 'listening'
+                ? 'bg-primary text-primary-foreground border-primary font-extrabold shadow-sm'
+                : 'border-border/30 text-muted-foreground'
+            )}
+            onClick={handleToggleVoice}
+          >
+            <Mic className={cn("h-3.5 w-3.5", voice.phase === 'listening' && "lava-lamp-mic")} />
+          </Button>
+        )}
         <Button
           variant={sticky.ctrl ? 'default' : 'ghost'}
           className={`h-7 px-2.5 text-xs font-bold transition-all border ${
-            sticky.ctrl 
-              ? 'bg-amber-500 hover:bg-amber-600 text-black border-amber-400 font-extrabold shadow-sm animate-none' 
+            sticky.ctrl
+              ? 'bg-amber-500 hover:bg-amber-600 text-black border-amber-400 font-extrabold shadow-sm animate-none'
               : 'border-border/30 text-muted-foreground'
           }`}
           onClick={toggleStickyCtrl}
@@ -46,8 +72,8 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
         <Button
           variant={sticky.alt ? 'default' : 'ghost'}
           className={`h-7 px-2.5 text-xs font-bold transition-all border ${
-            sticky.alt 
-              ? 'bg-violet-600 hover:bg-violet-700 text-white border-violet-500 font-extrabold shadow-sm animate-none' 
+            sticky.alt
+              ? 'bg-violet-600 hover:bg-violet-700 text-white border-violet-500 font-extrabold shadow-sm animate-none'
               : 'border-border/30 text-muted-foreground'
           }`}
           onClick={toggleStickyAlt}
@@ -57,8 +83,8 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
         <Button
           variant={sticky.shift ? 'default' : 'ghost'}
           className={`h-7 px-2.5 text-xs font-bold transition-all border ${
-            sticky.shift 
-              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 font-extrabold shadow-sm animate-none' 
+            sticky.shift
+              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 font-extrabold shadow-sm animate-none'
               : 'border-border/30 text-muted-foreground'
           }`}
           onClick={toggleStickyShift}
