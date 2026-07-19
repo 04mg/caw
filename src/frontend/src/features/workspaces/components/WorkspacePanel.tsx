@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
-import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2, FolderPlus, Settings } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 
@@ -10,6 +10,10 @@ import { type Workspace } from '@/features/workspaces/types'
 
 
 const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '🎨', '💡', '📁', '🔧', '📊', '🎮', '🤖', '🛠️', '📦', '🔬', '🎪', '🏗️', '🧩', '🎭', '📡', '🔍', '💎', '🌿', '🍀', '🎵', '📚', '⚙️', '🧪']
+
+function getIsMobile() {
+  return window.innerWidth < 768
+}
 
 interface WorkspacePanelProps {
   workspaces: Workspace[]
@@ -53,6 +57,13 @@ export function WorkspacePanel({
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
   const [generalContextMenu, setGeneralContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [isMobile, setIsMobile] = useState(getIsMobile)
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(getIsMobile())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -158,21 +169,37 @@ export function WorkspacePanel({
         </div>
         <div className="flex flex-col items-center flex-1 overflow-y-auto">
           {workspaces.map((ws, i) => (
-            <button
+            <div
               key={ws.id}
-              onClick={() => onSelectWorkspace(ws.id)}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: ws.id })
-              }}
-              className={`flex items-center justify-center h-[33px] w-full text-base transition-colors ${
+              className={`flex items-center h-[33px] w-full transition-colors ${
                 ws.id === activeWorkspaceId ? 'bg-accent/70' : 'hover:bg-accent/40'
               }`}
-              title={ws.name || ws.path || 'Workspace'}
             >
-              {ws.emoji || commonEmojis[i % commonEmojis.length]}
-            </button>
+              <button
+                onClick={() => onSelectWorkspace(ws.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: ws.id })
+                }}
+                className="flex items-center justify-center flex-1 text-base"
+                title={ws.name || ws.path || 'Workspace'}
+              >
+                {ws.emoji || commonEmojis[i % commonEmojis.length]}
+              </button>
+              {isMobile && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    setContextMenu({ x: rect.left, y: rect.bottom + 2, workspaceId: ws.id })
+                  }}
+                  className="flex items-center justify-center h-5 w-5 shrink-0 text-muted-foreground/40 hover:text-foreground"
+                >
+                  <MoreVertical className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
         {contextMenu && (() => {
@@ -288,7 +315,7 @@ export function WorkspacePanel({
                 >
                   <span className="text-base leading-none shrink-0">{ws.emoji || commonEmojis[i % commonEmojis.length]}</span>
                   <span className="truncate flex-1" title={ws.path}>{label}</span>
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className={`transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                     <WorkspaceMenu
                       onDelete={() => onDeleteWorkspace(ws.id)}
                       onEdit={() => setEditTarget(ws)}
