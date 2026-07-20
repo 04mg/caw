@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type ElementType } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
 import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
@@ -877,32 +878,36 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
                   <div className="flex flex-col gap-2">
                     <label className="text-xs font-medium">Speech Language</label>
-                    <select
+                    <Select
                       value={voiceLanguage}
-                      onChange={(e) => {
-                        setVoiceLanguage(e.target.value)
-                        if (e.target.value) {
-                          localStorage.setItem('caw:voiceLanguage', e.target.value)
+                      onValueChange={(value) => {
+                        setVoiceLanguage(value)
+                        if (value) {
+                          localStorage.setItem('caw:voiceLanguage', value)
                         } else {
                           localStorage.removeItem('caw:voiceLanguage')
                         }
                       }}
-                      className="px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground outline-none focus:border-ring transition-colors cursor-pointer"
                     >
-                      <option value="">System Default</option>
-                      <option value="en-US">English (US)</option>
-                      <option value="en-GB">English (UK)</option>
-                      <option value="es-ES">Spanish</option>
-                      <option value="fr-FR">French</option>
-                      <option value="de-DE">German</option>
-                      <option value="ja-JP">Japanese</option>
-                      <option value="ko-KR">Korean</option>
-                      <option value="zh-CN">Chinese (Simplified)</option>
-                      <option value="pt-BR">Portuguese (Brazil)</option>
-                      <option value="it-IT">Italian</option>
-                      <option value="nl-NL">Dutch</option>
-                      <option value="ru-RU">Russian</option>
-                    </select>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="System Default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">System Default</SelectItem>
+                        <SelectItem value="en-US">English (US)</SelectItem>
+                        <SelectItem value="en-GB">English (UK)</SelectItem>
+                        <SelectItem value="es-ES">Spanish</SelectItem>
+                        <SelectItem value="fr-FR">French</SelectItem>
+                        <SelectItem value="de-DE">German</SelectItem>
+                        <SelectItem value="ja-JP">Japanese</SelectItem>
+                        <SelectItem value="ko-KR">Korean</SelectItem>
+                        <SelectItem value="zh-CN">Chinese (Simplified)</SelectItem>
+                        <SelectItem value="pt-BR">Portuguese (Brazil)</SelectItem>
+                        <SelectItem value="it-IT">Italian</SelectItem>
+                        <SelectItem value="nl-NL">Dutch</SelectItem>
+                        <SelectItem value="ru-RU">Russian</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <p className="text-[10px] text-muted-foreground">Language used for speech recognition. "System Default" uses your browser's default language.</p>
                   </div>
                 </>
@@ -924,18 +929,22 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     <>
                       <div className="flex flex-col gap-2">
                         <label className="text-xs font-medium">Model Language</label>
-                        <select
+                        <Select
                           value={krokoLanguage}
-                          onChange={(e) => {
-                            setKrokoLanguageState(e.target.value)
-                            setKrokoLanguage(e.target.value)
+                          onValueChange={(value) => {
+                            setKrokoLanguageState(value)
+                            setKrokoLanguage(value)
                           }}
-                          className="px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground outline-none focus:border-ring transition-colors cursor-pointer"
                         >
-                          {krokoLanguages.map((lang) => (
-                            <option key={lang.iso} value={lang.iso}>{lang.name}</option>
-                          ))}
-                        </select>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select language" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {krokoLanguages.map((lang) => (
+                              <SelectItem key={lang.iso} value={lang.iso}>{lang.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <p className="text-[10px] text-muted-foreground">Language for the local speech recognition model.</p>
                       </div>
 

@@ -31,6 +31,17 @@ export function getKrokoVoicePhase(): VoicePhase {
 	return globalState.phase
 }
 
+export function getKrokoVoiceState(): KrokoVoiceState {
+	return globalState
+}
+
+export function subscribeKrokoVoice(cb: () => void): () => void {
+	listeners.push(cb)
+	return () => {
+		listeners = listeners.filter((l) => l !== cb)
+	}
+}
+
 let recognizerCache: any = null
 
 export async function ensureRecognizer(): Promise<any> {

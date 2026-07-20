@@ -3,8 +3,8 @@ const KROKO_SDK_URL =
 const KROKO_API_BASE = 'https://license.kroko.ai/api/public/v1'
 const CACHE_NAME = 'kroko-sdk'
 
-let sdkLoaded = false
-let sdkLoadPromise: Promise<void> | null = null
+let sdkModule: any = null
+let sdkLoadPromise: Promise<any> | null = null
 
 export interface KrokoModel {
 	model_id: string
@@ -24,33 +24,15 @@ export interface KrokoLanguage {
 let cachedLanguages: KrokoLanguage[] | null = null
 let cachedModels: KrokoModel[] | null = null
 
-export function loadKrokoSdk(): Promise<void> {
-	if (sdkLoaded) return Promise.resolve()
+export async function loadKrokoSdk(): Promise<any> {
+	if (sdkModule) return sdkModule
 	if (sdkLoadPromise) return sdkLoadPromise
 
-	sdkLoadPromise = new Promise<void>((resolve, reject) => {
-		if (typeof document === 'undefined') {
-			reject(new Error('Kroko SDK requires a browser environment'))
-			return
-		}
-		const existing = document.querySelector(`script[src="${KROKO_SDK_URL}"]`)
-		if (existing) {
-			sdkLoaded = true
-			resolve()
-			return
-		}
-		const script = document.createElement('script')
-		script.src = KROKO_SDK_URL
-		script.onload = () => {
-			sdkLoaded = true
-			resolve()
-		}
-		script.onerror = () => {
-			sdkLoadPromise = null
-			reject(new Error('Failed to load Kroko SDK'))
-		}
-		document.head.appendChild(script)
-	})
+	sdkLoadPromise = (async () => {
+		const mod = await import(KROKO_SDK_URL)
+		sdkModule = mod
+		return mod
+	})()
 	return sdkLoadPromise
 }
 
@@ -182,9 +164,9 @@ export async function deleteModel(): Promise<void> {
 }
 
 export async function createKrokoRecognizer(): Promise<any> {
-	await loadKrokoSdk()
+	const mod = await loadKrokoSdk()
 
-	const KrokoWorker = (window as any).KrokoWorker
+	const KrokoWorker = mod.KrokoWorker
 	if (!KrokoWorker) throw new Error('KrokoWorker not available')
 
 	const worker = new KrokoWorker()
