@@ -1,10 +1,61 @@
-const KROKO_SDK_URL =
-	'https://huggingface.co/spaces/Banafo/Kroko-Streaming-ASR-Wasm/resolve/main/kroko-sdk.js'
+const WASM_CDN_BASE =
+	'https://cdn.jsdelivr.net/npm/@siteed/sherpa-onnx.rn@1.3.1/wasm/'
 const KROKO_API_BASE = 'https://license.kroko.ai/api/public/v1'
 const CACHE_NAME = 'kroko-sdk'
+const MODEL_FS_PREFIX = '/caw-models'
 
-let sdkModule: any = null
-let sdkLoadPromise: Promise<any> | null = null
+declare global {
+	interface Window {
+		Module: any
+		createOnlineRecognizer: any
+	}
+}
+
+let moduleReady: Promise<any> | null = null
+
+function loadScript(src: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const existing = document.querySelector<HTMLScriptElement>(
+			`script[src="${src}"]`,
+		)
+		if (existing) {
+			resolve()
+			return
+		}
+		const script = document.createElement('script')
+		script.src = src
+		script.onload = () => resolve()
+		script.onerror = () => reject(new Error(`Failed to load: ${src}`))
+		document.head.appendChild(script)
+	})
+}
+
+export async function loadSherpaOnnx(): Promise<any> {
+	if (moduleReady) return moduleReady
+
+	moduleReady = (async () => {
+		window.Module = {
+			locateFile: (path: string) => WASM_CDN_BASE + path,
+		}
+
+		await loadScript('./wasm/sherpa-onnx-wasm-combined.js')
+
+		await new Promise<void>((resolve, reject) => {
+			window.Module.onRuntimeInitialized = resolve
+			window.Module.onAbort = () =>
+				reject(new Error('Sherpa-ONNX WASM failed to initialize'))
+		})
+
+		await loadScript('./wasm/sherpa-onnx-asr.js')
+
+		return window.Module
+	})()
+
+	moduleReady.catch(() => {
+		moduleReady = null
+	})
+	return moduleReady
+}
 
 export interface KrokoModel {
 	model_id: string
@@ -23,22 +74,6 @@ export interface KrokoLanguage {
 
 let cachedLanguages: KrokoLanguage[] | null = null
 let cachedModels: KrokoModel[] | null = null
-
-export async function loadKrokoSdk(): Promise<any> {
-	if (sdkModule) return sdkModule
-	if (sdkLoadPromise) return sdkLoadPromise
-
-	sdkLoadPromise = (async () => {
-		const mod = await import(KROKO_SDK_URL)
-		sdkModule = mod
-		return mod
-	})()
-	// Clear the cached promise on failure so the user can retry
-	sdkLoadPromise.catch(() => {
-		sdkLoadPromise = null
-	})
-	return sdkLoadPromise
-}
 
 export async function fetchLanguages(): Promise<KrokoLanguage[]> {
 	if (cachedLanguages) return cachedLanguages
@@ -98,15 +133,27 @@ async function fetchWithCache(
 	return cachedResponse
 }
 
-async function createCacheEntry(name: string, contents: Uint8Array): Promise<string> {
-	const dummyUrl = `${KROKO_SDK_URL}/${name}`
+async function createCacheEntry(
+	name: string,
+	contents: Uint8Array,
+): Promise<void> {
 	const cache = await caches.open(CACHE_NAME)
-	const existing = await cache.match(dummyUrl)
+	const key = `${MODEL_FS_PREFIX}/${name}`
+	const existing = await cache.match(key)
 	if (!existing) {
-		const response = new Response(new Uint8Array(contents), { status: 200, statusText: 'OK' })
-		await cache.put(dummyUrl, response.clone())
+		const response = new Response(new Uint8Array(contents), {
+			status: 200,
+			statusText: 'OK',
+		})
+		await cache.put(key, response.clone())
 	}
-	return dummyUrl
+}
+
+async function readCacheEntry(name: string): Promise<Uint8Array | null> {
+	const cache = await caches.open(CACHE_NAME)
+	const res = await cache.match(`${MODEL_FS_PREFIX}/${name}`)
+	if (!res) return null
+	return new Uint8Array(await res.arrayBuffer())
 }
 
 interface ModelData {
@@ -121,7 +168,7 @@ interface ModelData {
 async function unpackModel(
 	url: string,
 	onProgress?: (downloaded: number, total: number) => void,
-): Promise<[string, string, string, string]> {
+): Promise<void> {
 	const res = await fetchWithCache(url, onProgress)
 	const arrayBuf = await res.arrayBuffer()
 	const data = new Uint8Array(arrayBuf)
@@ -150,7 +197,10 @@ async function unpackModel(
 	let offset = 0
 	const readBlock = (): Uint8Array => {
 		if (offset + 4 > blob.length) throw new Error('Invalid block header')
-		const len = new DataView(blob.buffer, blob.byteOffset).getUint32(offset, true)
+		const len = new DataView(blob.buffer, blob.byteOffset).getUint32(
+			offset,
+			true,
+		)
 		offset += 4
 		if (offset + len > blob.length) throw new Error('Block size mismatch')
 		const buf = blob.slice(offset, offset + len)
@@ -163,7 +213,7 @@ async function unpackModel(
 	modelData.joiner = readBlock()
 	modelData.tokens = readBlock()
 
-	return Promise.all([
+	await Promise.all([
 		createCacheEntry('encoder', modelData.encoder),
 		createCacheEntry('decoder', modelData.decoder),
 		createCacheEntry('joiner', modelData.joiner),
@@ -195,26 +245,47 @@ export async function deleteModel(): Promise<void> {
 }
 
 export async function createKrokoRecognizer(): Promise<any> {
-	const mod = await loadKrokoSdk()
+	const mod = await loadSherpaOnnx()
 
-	const KrokoWorker = mod.KrokoWorker
-	if (!KrokoWorker) throw new Error('KrokoWorker not available')
+	const encoderBuf = await readCacheEntry('encoder')
+	const decoderBuf = await readCacheEntry('decoder')
+	const joinerBuf = await readCacheEntry('joiner')
+	const tokensBuf = await readCacheEntry('tokens')
 
-	const worker = new KrokoWorker()
-	const encoderUrl = `${KROKO_SDK_URL}/encoder`
-	const decoderUrl = `${KROKO_SDK_URL}/decoder`
-	const joinerUrl = `${KROKO_SDK_URL}/joiner`
-	const tokensUrl = `${KROKO_SDK_URL}/tokens`
+	if (!encoderBuf || !decoderBuf || !joinerBuf || !tokensBuf) {
+		throw new Error('Model not downloaded')
+	}
 
-	const recognizer = await worker.createOnlineRecognizer({
+	const fs = mod.FS
+	try {
+		fs.mkdir(MODEL_FS_PREFIX)
+	} catch {}
+	fs.writeFile(`${MODEL_FS_PREFIX}/encoder.onnx`, encoderBuf)
+	fs.writeFile(`${MODEL_FS_PREFIX}/decoder.onnx`, decoderBuf)
+	fs.writeFile(`${MODEL_FS_PREFIX}/joiner.onnx`, joinerBuf)
+	fs.writeFile(`${MODEL_FS_PREFIX}/tokens.txt`, tokensBuf)
+
+	const recognizer = window.createOnlineRecognizer(mod, {
+		featConfig: {
+			sampleRate: 16000,
+			featureDim: 80,
+		},
 		modelConfig: {
 			transducer: {
-				encoder: encoderUrl,
-				decoder: decoderUrl,
-				joiner: joinerUrl,
+				encoder: `${MODEL_FS_PREFIX}/encoder.onnx`,
+				decoder: `${MODEL_FS_PREFIX}/decoder.onnx`,
+				joiner: `${MODEL_FS_PREFIX}/joiner.onnx`,
 			},
-			tokens: tokensUrl,
+			tokens: `${MODEL_FS_PREFIX}/tokens.txt`,
+			provider: 'cpu',
+			numThreads: 1,
+			debug: 0,
 		},
+		decodingMethod: 'greedy_search',
+		enableEndpoint: 1,
+		rule1MinTrailingSilence: 2.4,
+		rule2MinTrailingSilence: 1.2,
+		rule3MinUtteranceLength: 300,
 	})
 
 	return recognizer

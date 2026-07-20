@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
 	createKrokoRecognizer,
 	downsampleBuffer,
-	loadKrokoSdk,
+	loadSherpaOnnx,
 } from '../services/krokoAsr'
 
 type VoicePhase = 'idle' | 'loading' | 'listening' | 'review'
@@ -46,7 +46,7 @@ let recognizerCache: any = null
 
 export async function ensureRecognizer(): Promise<any> {
 	if (recognizerCache) return recognizerCache
-	await loadKrokoSdk()
+	await loadSherpaOnnx()
 	try {
 		recognizerCache = await createKrokoRecognizer()
 	} catch (err) {
