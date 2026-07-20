@@ -106,6 +106,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [krokoDownloading, setKrokoDownloading] = useState<string | null>(null)
   const [krokoDownloadProgress, setKrokoDownloadProgress] = useState<{ downloaded: number, total: number } | null>(null)
   const [krokoLoading, setKrokoLoading] = useState(true)
+  const hasInstalledModel = Object.values(krokoModelCache).some(Boolean)
   const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
 
   const loadQuotaSettings = useCallback(async () => {
@@ -952,19 +953,26 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <label className="text-xs font-medium">Available Models</label>
                         <div className="flex flex-col gap-2">
                           {krokoModels
-                            .filter((m) => m.language_iso === krokoLanguage)
+                            .filter((m) => m.language_iso === krokoLanguage || (krokoModelCache[m.url] && hasInstalledModel))
                             .map((model) => {
                               const sizeMB = Math.round(model.file_size / 1000 / 1000)
                               const isDownloaded = krokoModelCache[model.url] || false
                               const isDownloading = krokoDownloading === model.url
+                              const isDisabled = hasInstalledModel && !isDownloaded
+                              const isOtherLanguage = model.language_iso !== krokoLanguage
                               return (
                                 <div
                                   key={model.model_id}
-                                  className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-background"
+                                  className={`flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-background ${isDisabled ? 'opacity-40' : ''}`}
                                 >
                                   <div className="flex flex-col gap-0.5">
                                     <span className="text-xs font-medium">{model.name}</span>
-                                    <span className="text-[10px] text-muted-foreground">{sizeMB}MB</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground">{sizeMB}MB</span>
+                                      {isDownloaded && isOtherLanguage && (
+                                        <span className="text-[10px] text-muted-foreground">· {krokoLanguages.find((l) => l.iso === model.language_iso)?.name || model.language_iso}</span>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     {isDownloaded ? (
@@ -1001,7 +1009,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                             setKrokoDownloadProgress(null)
                                           }
                                         }}
-                                        disabled={isDownloading}
+                                        disabled={isDownloading || isDisabled}
                                         className="flex items-center gap-1 px-2 py-1 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors disabled:opacity-50 cursor-pointer"
                                       >
                                         {isDownloading ? (
@@ -1020,7 +1028,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                 </div>
                               )
                             })}
-                          {krokoModels.filter((m) => m.language_iso === krokoLanguage).length === 0 && (
+                          {krokoModels.filter((m) => m.language_iso === krokoLanguage || (krokoModelCache[m.url] && hasInstalledModel)).length === 0 && (
                             <p className="text-xs text-muted-foreground">No models available for this language.</p>
                           )}
                         </div>
