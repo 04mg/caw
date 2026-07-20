@@ -56,14 +56,42 @@ export async function fetchModels(): Promise<KrokoModel[]> {
 	return cachedModels
 }
 
-async function fetchWithCache(url: string): Promise<Response> {
+async function fetchWithCache(
+	url: string,
+	onProgress?: (downloaded: number, total: number) => void,
+): Promise<Response> {
 	const cache = await caches.open(CACHE_NAME)
 	const cached = await cache.match(url)
 	if (cached) return cached
 	const response = await fetch(url)
 	if (!response.ok) throw new Error(`Failed to fetch: ${url}`)
-	await cache.put(url, response.clone())
-	return response
+
+	const total = Number(response.headers.get('Content-Length') || 0)
+	if (!onProgress || !response.body || total === 0) {
+		await cache.put(url, response.clone())
+		return response
+	}
+
+	const reader = response.body.getReader()
+	const chunks: Uint8Array[] = []
+	let downloaded = 0
+	for (;;) {
+		const { done, value } = await reader.read()
+		if (done) break
+		if (value) {
+			chunks.push(value)
+			downloaded += value.byteLength
+			onProgress(downloaded, total)
+		}
+	}
+	const blob = new Blob(chunks as BlobPart[])
+	const cachedResponse = new Response(blob, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers,
+	})
+	await cache.put(url, cachedResponse.clone())
+	return cachedResponse
 }
 
 async function createCacheEntry(name: string, contents: Uint8Array): Promise<string> {
@@ -86,8 +114,11 @@ interface ModelData {
 	tokens: Uint8Array
 }
 
-async function unpackModel(url: string): Promise<[string, string, string, string]> {
-	const res = await fetchWithCache(url)
+async function unpackModel(
+	url: string,
+	onProgress?: (downloaded: number, total: number) => void,
+): Promise<[string, string, string, string]> {
+	const res = await fetchWithCache(url, onProgress)
 	const arrayBuf = await res.arrayBuffer()
 	const data = new Uint8Array(arrayBuf)
 
@@ -138,15 +169,11 @@ async function unpackModel(url: string): Promise<[string, string, string, string
 
 export async function downloadModel(
 	url: string,
-	onProgress?: (status: string) => void,
+	onProgress?: (downloadedMB: number, totalMB: number) => void,
 ): Promise<void> {
-	onProgress?.('Downloading model...')
-	const [encoder, decoder, joiner, tokens] = await unpackModel(url)
-	void encoder
-	void decoder
-	void joiner
-	void tokens
-	onProgress?.('Model ready')
+	await unpackModel(url, (downloaded, total) => {
+		onProgress?.(downloaded / 1000 / 1000, total / 1000 / 1000)
+	})
 }
 
 export async function isModelCached(url: string): Promise<boolean> {

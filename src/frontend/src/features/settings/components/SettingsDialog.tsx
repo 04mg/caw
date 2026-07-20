@@ -104,7 +104,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [krokoLanguage, setKrokoLanguageState] = useState('')
   const [krokoModelCache, setKrokoModelCache] = useState<Record<string, boolean>>({})
   const [krokoDownloading, setKrokoDownloading] = useState<string | null>(null)
-  const [krokoDownloadStatus, setKrokoDownloadStatus] = useState('')
+  const [krokoDownloadProgress, setKrokoDownloadProgress] = useState<{ downloaded: number, total: number } | null>(null)
   const [krokoLoading, setKrokoLoading] = useState(true)
   const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
 
@@ -988,15 +988,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                       <button
                                         onClick={async () => {
                                           setKrokoDownloading(model.url)
-                                          setKrokoDownloadStatus('Downloading...')
+                                          setKrokoDownloadProgress(null)
                                           try {
-                                            await downloadModel(model.url, setKrokoDownloadStatus)
+                                            await downloadModel(model.url, (downloaded, total) => {
+                                              setKrokoDownloadProgress({ downloaded, total })
+                                            })
                                             setKrokoModelCache((prev) => ({ ...prev, [model.url]: true }))
                                           } catch {
-                                            setKrokoDownloadStatus('Download failed')
+                                            setKrokoDownloadProgress(null)
                                           } finally {
                                             setKrokoDownloading(null)
-                                            setKrokoDownloadStatus('')
+                                            setKrokoDownloadProgress(null)
                                           }
                                         }}
                                         disabled={isDownloading}
@@ -1007,7 +1009,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                         ) : (
                                           <Download className="h-3 w-3" />
                                         )}
-                                        {isDownloading ? krokoDownloadStatus : 'Download'}
+                                        {isDownloading && krokoDownloadProgress
+                                          ? `${krokoDownloadProgress.downloaded.toFixed(1)} / ${krokoDownloadProgress.total.toFixed(1)} MB`
+                                          : isDownloading
+                                            ? 'Downloading...'
+                                            : 'Download'}
                                       </button>
                                     )}
                                   </div>
