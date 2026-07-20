@@ -143,24 +143,31 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 					silentTicks++
 				}
 
-				// Mid-session re-bind for /new.
-				if silentTicks >= rebindSilenceTicks {
-					lastPtyOut := agent.LastPtyActivity(sessionID)
-					if time.Since(lastPtyOut) < 3*time.Second {
-						newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
-						if newFile != "" && newFile != watchedFilePath {
-							if ClaimSession(agentID, cwd, newFile) {
-								UnclaimSession(agentID, cwd, watchedFilePath)
-								watchedFilePath = newFile
-								lastFileSize = 0
-								silentTicks = 0
-								if notifyCh != nil {
-									notifier.Watch(watchedFilePath)
-								}
+			// Mid-session re-bind for /new. Gated on PTY activity OR user
+			// focus: only the watcher whose PTY is producing output (or
+			// whose pane the user is currently driving) switches, so a
+			// sibling Copilot in the same cwd writing to its own events
+			// file can't make this idle, unfocused watcher steal its
+			// session. The focus exemption covers /new issued in the
+			// focused pane before the agent emits any PTY output.
+			if silentTicks >= rebindSilenceTicks {
+				focused := agent.IsPtyFocused(sessionID)
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second || focused {
+					newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
+					if newFile != "" && newFile != watchedFilePath {
+						if ClaimSession(agentID, cwd, newFile) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newFile
+							lastFileSize = 0
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
 							}
 						}
 					}
 				}
+			}
 			}
 		}
 	}

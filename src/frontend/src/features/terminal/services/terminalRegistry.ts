@@ -57,6 +57,14 @@ export interface TerminalInstance {
    * output does not yank the view back to the bottom.
    */
   userScrolling: boolean
+  /**
+   * @internal True when this pane is the workspace's active pane (the user
+   * is focused on it). Maintained by TerminalPanel via the `focus`/`blur`
+   * WS message so the backend's agent status heuristics know which terminal
+   * the user is driving. On WS reconnect we re-send this flag so the
+   * backend doesn't lose focus state across socket drops.
+   */
+  _focused: boolean
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -466,6 +474,13 @@ function connectWs(inst: TerminalInstance, backendId: string) {
   ws.onopen = () => {
     const dims = inst.fit.proposeDimensions()
     if (dims) ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+    // Re-send the current focus flag so a dropped socket that the backend
+    // cleared on disconnect is restored. Without this, the agent status
+    // idle-timeout and re-bind heuristics would treat the pane as unfocused
+    // until the user clicked another pane and back, leaving a window where
+    // a focused-but-recently-reconnected watcher could be falsely reverted
+    // to idle.
+    ws.send(JSON.stringify({ type: 'focus', focused: inst._focused }))
   }
   ws.onmessage = (event) => {
     try {
@@ -644,7 +659,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0 }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
