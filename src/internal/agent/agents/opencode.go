@@ -67,6 +67,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	watcherStart := time.Now().Add(-10 * time.Second)
 	// Re-bind bookkeeping for /new and /resume detection.
 	var silentTicks int
+	// lastBoundUpdated tracks the time_updated of the currently bound session
+	// row. Because OpenCode stores all sessions in a single shared DB, the
+	// db-changed detector fires on writes to ANY session. Comparing the bound
+	// row's time_updated before and after a DB change lets us distinguish "our"
+	// session (boundAdvanced) from a sibling session (otherSessionActive).
+	var lastBoundUpdated int64
+	var otherSessionActive bool
 
 	// fsnotify-based immediate change notifier on the SQLite DB and WAL
 	// files. Reacts to writes in ~tens of ms; the 2s ticker acts as a
@@ -110,6 +117,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
 				if openCodeSessionID != "" {
 					silentTicks = 0
+					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
 				}
 			}
 		}
@@ -119,14 +127,35 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 		// so the idle-timeout never fires while a question is pending.
 		if changed || lastReportedStatus == "waiting_input" {
 			if openCodeSessionID != "" {
+				// Determine whether this DB change advanced the bound session
+				// or a sibling. All sessions share one SQLite DB, so a
+				// modtime change alone is ambiguous — we must compare the
+				// bound row's time_updated to disambiguate.
+				boundAdvanced := false
+				if changed {
+					cur := openCodeSessionUpdated(dbPath, openCodeSessionID)
+					if cur != lastBoundUpdated {
+						boundAdvanced = true
+						lastBoundUpdated = cur
+					} else {
+						// DB changed but the bound session didn't — another
+						// session (e.g. one switched to via /session) got a
+						// write. Mark it so the rebind pass can fire.
+						otherSessionActive = true
+					}
+				}
+
 				before := lastReportedStatus
 				wrappedCallback := func(status, tool, details, title string) {
 					lastReportedStatus = status
 					callback(status, tool, details, title)
 				}
 				w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
-				if before != lastReportedStatus || changed {
+				if before != lastReportedStatus || boundAdvanced {
 					silentTicks = 0
+					if boundAdvanced {
+						otherSessionActive = false
+					}
 				} else {
 					silentTicks++
 				}
@@ -148,8 +177,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 			heartbeat()
 			processState(dbChanged())
 
-			// Mid-session re-bind for /new and /resume.
-			if openCodeSessionID != "" && silentTicks >= rebindSilenceTicks {
+			// Mid-session re-bind for /new, /resume, and /session.
+			// Fires when the bound session has been silent long enough OR
+			// when the DB changed due to a sibling session (OpenCode stores
+			// all sessions in a single SQLite DB, so writes to a session
+			// switched to via /session would otherwise reset silentTicks
+			// and prevent re-binding).
+			if openCodeSessionID != "" && (silentTicks >= rebindSilenceTicks || otherSessionActive) {
 				newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
 				if newKey != "" && newKey != openCodeSessionID {
 					if ClaimSession(agentID, cwd, newKey) {
@@ -157,11 +191,30 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 						openCodeSessionID = newKey
 						lastReportedStatus = ""
 						silentTicks = 0
+						otherSessionActive = false
+						lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
 					}
+				} else {
+					otherSessionActive = false
 				}
 			}
 		}
 	}
+}
+
+// openCodeSessionUpdated returns the time_updated column of the given session
+// row, or 0 if the query fails. Used by processState to tell whether a DB
+// modtime change corresponds to the bound session (boundAdvanced) or a
+// sibling session (otherSessionActive) in the shared SQLite database.
+func openCodeSessionUpdated(dbPath, sid string) int64 {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var tu int64
+	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, sid).Scan(&tu)
+	return tu
 }
 
 // findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the
