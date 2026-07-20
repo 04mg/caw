@@ -110,17 +110,12 @@ function record(report: ErrorReport): void {
   }
 
   const tag = `[caw:error:${report.kind}]`
-  // eslint-disable-next-line no-console
   console.groupCollapsed(`${tag} ${report.message}`)
-  // eslint-disable-next-line no-console
   console.error(report.stack || report.message)
   if (report.componentStack) {
-    // eslint-disable-next-line no-console
     console.error('Component stack:\n', report.componentStack)
   }
-  // eslint-disable-next-line no-console
   console.log('report', report)
-  // eslint-disable-next-line no-console
   console.groupEnd()
 }
 

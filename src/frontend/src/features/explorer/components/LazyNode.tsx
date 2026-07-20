@@ -104,8 +104,7 @@ export function LazyNode({
       setLoaded(false)
       setChildren([])
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshCounter])
+  }, [refreshCounter, expanded, load])
 
   useEffect(() => {
     if (!focusPath) return
