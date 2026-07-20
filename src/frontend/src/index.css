@@ -286,6 +286,9 @@ html, body, #root {
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 @media (max-width: 767px) {
@@ -294,6 +297,7 @@ html, body, #root {
     left: 12px;
     right: 12px;
     transform: none;
+    align-items: stretch;
   }
 }
 
@@ -306,9 +310,6 @@ html, body, #root {
   min-width: 180px;
   max-width: 420px;
   animation: voice-bubble-in 0.2s ease-out;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 @media (max-width: 767px) {
@@ -350,14 +351,12 @@ html, body, #root {
 }
 
 .voice-bubble-footer {
+  position: absolute;
+  bottom: -15px;
+  right: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 6px;
-  margin: 0 -14px -10px;
-  padding: 6px 14px 8px;
-  border-radius: 0 0 16px 16px;
-  background: hsl(var(--popover));
 }
 
 .voice-bubble-btn {

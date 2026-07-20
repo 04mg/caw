@@ -18,10 +18,8 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard,
 
 	const style: React.CSSProperties = targetRect
 		? {
-			position: 'fixed',
-			top: targetRect.top - 8,
 			left: targetRect.left + targetRect.width / 2,
-			transform: 'translateX(-50%) translateY(-100%)',
+			transform: 'translateX(-50%)',
 		}
 		: {}
 
@@ -39,30 +37,30 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard,
 						<div className="voice-bubble-pulse" />
 					)}
 				</div>
-
-				{!isListening && (
-					<div className="voice-bubble-footer">
-						<button
-							onClick={onDiscard}
-							className="voice-bubble-btn"
-							title="Discard"
-						>
-							<X className="h-3.5 w-3.5" />
-						</button>
-						<button
-							onClick={onSend}
-							disabled={!hasContent}
-							className={cn(
-								"voice-bubble-btn",
-								!hasContent && "opacity-40 cursor-not-allowed"
-							)}
-							title="Send to terminal"
-						>
-							<Check className="h-3.5 w-3.5" />
-						</button>
-					</div>
-				)}
 			</div>
+
+			{!isListening && (
+				<div className="voice-bubble-footer">
+					<button
+						onClick={onDiscard}
+						className="voice-bubble-btn"
+						title="Discard"
+					>
+						<X className="h-3.5 w-3.5" />
+					</button>
+					<button
+						onClick={onSend}
+						disabled={!hasContent}
+						className={cn(
+							"voice-bubble-btn",
+							!hasContent && "opacity-40 cursor-not-allowed"
+						)}
+						title="Send to terminal"
+					>
+						<Check className="h-3.5 w-3.5" />
+					</button>
+				</div>
+			)}
 		</div>,
 		document.body
 	)
