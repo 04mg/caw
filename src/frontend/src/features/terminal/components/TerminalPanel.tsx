@@ -144,7 +144,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       resizeObsRef.current = null
       detachTerminal(terminalId)
     }
-  }, [terminalId, stableCmd])
+  }, [terminalId, stableCmd, env])
 
   useEffect(() => {
     if (!isActive) return
