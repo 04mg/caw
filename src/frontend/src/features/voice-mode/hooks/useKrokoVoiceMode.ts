@@ -88,6 +88,7 @@ export function useKrokoVoiceMode() {
 			audioCtxRef.current = null
 		}
 		streamRef.current = null
+		finalizedRef.current = ''
 	}, [])
 
 	const start = useCallback(async () => {
@@ -127,35 +128,40 @@ export function useKrokoVoiceMode() {
 					samples = downsampleBuffer(samples, recordRate, EXPECTED_SAMPLE_RATE)
 				}
 
-				try {
-				if (!recognizerStream) {
-					recognizerStream = await recognizer.createStream()
-					streamRef.current = recognizerStream
+			try {
+			if (!recognizerStream) {
+				recognizerStream = await recognizer.createStream()
+				if (!activeRef.current) return
+				streamRef.current = recognizerStream
+			}
+
+				await recognizerStream.acceptWaveform(EXPECTED_SAMPLE_RATE, samples)
+				if (!activeRef.current) return
+
+				while (await recognizer.isReady(recognizerStream)) {
+					if (!activeRef.current) return
+					await recognizer.decode(recognizerStream)
 				}
 
-					await recognizerStream.acceptWaveform(EXPECTED_SAMPLE_RATE, samples)
+				const isEndpoint = await recognizer.isEndpoint(recognizerStream)
+				if (!activeRef.current) return
+				const result = await recognizer.getResult(recognizerStream)
+				const text = result.text || ''
 
-					while (await recognizer.isReady(recognizerStream)) {
-						await recognizer.decode(recognizerStream)
+				if (text.length > 0 && finalizedRef.current + text !== globalState.transcript) {
+					setState({ transcript: finalizedRef.current + text })
+				}
+
+				if (isEndpoint) {
+					if (text.length > 0) {
+						finalizedRef.current += text
 					}
-
-					const isEndpoint = await recognizer.isEndpoint(recognizerStream)
-					const result = await recognizer.getResult(recognizerStream)
-					const text = result.text || ''
-
-					if (text.length > 0 && finalizedRef.current + text !== globalState.transcript) {
-						setState({ transcript: finalizedRef.current + text })
-					}
-
-					if (isEndpoint) {
-						if (text.length > 0) {
-							finalizedRef.current += text
-						}
-						await recognizer.reset(recognizerStream)
-						recognizerStream = null
-						streamRef.current = null
-					}
-				} catch {
+					await recognizer.reset(recognizerStream)
+					if (!activeRef.current) return
+					recognizerStream = null
+					streamRef.current = null
+				}
+			} catch {
 					// recognizer errors during processing — ignore, keep listening
 				}
 			}
