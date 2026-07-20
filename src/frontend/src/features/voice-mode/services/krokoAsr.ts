@@ -8,6 +8,7 @@ declare global {
 	interface Window {
 		Module: any
 		createOnlineRecognizer: any
+		SherpaOnnx: any
 	}
 }
 
@@ -46,6 +47,7 @@ export async function loadSherpaOnnx(): Promise<any> {
 				reject(new Error('Sherpa-ONNX WASM failed to initialize'))
 		})
 
+		window.SherpaOnnx = {}
 		await loadScript('./wasm/sherpa-onnx-asr.js')
 
 		return window.Module
