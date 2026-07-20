@@ -183,18 +183,38 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 			// all sessions in a single SQLite DB, so writes to a session
 			// switched to via /session would otherwise reset silentTicks
 			// and prevent re-binding).
+			//
+			// Gated on PTY activity: OpenCode keeps every session for a cwd
+			// in one shared SQLite DB, so a DB modtime change alone is
+			// ambiguous — it may come from a sibling agent running in a
+			// different PTY. Only re-bind when *this* watcher's PTY has
+			// produced output recently, indicating the agent process in
+			// this PTY is the one that wrote (e.g. the user issued /new or
+			// /resume here). Without this gate, when a sibling agent in the
+			// same cwd keeps working after this one goes idle, the idle
+			// watcher would steal the sibling's session and briefly flip
+			// back to "working" with the sibling's task under this card.
 			if openCodeSessionID != "" && (silentTicks >= rebindSilenceTicks || otherSessionActive) {
-				newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
-				if newKey != "" && newKey != openCodeSessionID {
-					if ClaimSession(agentID, cwd, newKey) {
-						UnclaimSession(agentID, cwd, openCodeSessionID)
-						openCodeSessionID = newKey
-						lastReportedStatus = ""
-						silentTicks = 0
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second {
+					newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
+					if newKey != "" && newKey != openCodeSessionID {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, openCodeSessionID)
+							openCodeSessionID = newKey
+							lastReportedStatus = ""
+							silentTicks = 0
+							otherSessionActive = false
+							lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
+						}
+					} else {
 						otherSessionActive = false
-						lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
 					}
 				} else {
+					// PTY silent: the DB movement came from a sibling, not
+					// from a /new or /resume issued here. Drop the flag so
+					// we stop re-evaluating the re-bind every tick while
+					// our own PTY stays quiet.
 					otherSessionActive = false
 				}
 			}
