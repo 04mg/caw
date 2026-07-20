@@ -20,9 +20,9 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard 
 			<div className="voice-bubble">
 				<div className="voice-bubble-content">
 					{error ? (
-						<span className="text-xs text-red-400 font-sans">{error}</span>
+						<span className="text-xs text-red-400">{error}</span>
 					) : (
-						<span className="text-xs text-foreground font-sans leading-relaxed">{transcript}</span>
+						<span className="text-xs text-foreground leading-relaxed">{transcript}</span>
 					)}
 
 					{isListening && hasContent && (

@@ -293,7 +293,11 @@ html, body, #root {
 
 @media (max-width: 767px) {
   .voice-bubble-container {
-    bottom: 90px;
+    bottom: 100px;
+    left: 12px;
+    right: 12px;
+    transform: none;
+    width: auto;
   }
 }
 
@@ -306,6 +310,14 @@ html, body, #root {
   min-width: 180px;
   max-width: 420px;
   animation: voice-bubble-in 0.2s ease-out;
+}
+
+@media (max-width: 767px) {
+  .voice-bubble {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
 }
 
 @keyframes voice-bubble-in {
@@ -341,9 +353,9 @@ html, body, #root {
 
 .voice-bubble-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
