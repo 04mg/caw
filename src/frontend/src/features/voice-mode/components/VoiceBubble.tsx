@@ -13,17 +13,19 @@ interface VoiceBubbleProps {
 export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard }: VoiceBubbleProps) {
 	const hasContent = transcript.trim().length > 0
 
+	if (!hasContent && !error) return null
+
 	return createPortal(
 		<div className="voice-bubble-container">
 			<div className="voice-bubble">
 				<div className="voice-bubble-content">
 					{error ? (
 						<span className="text-xs text-red-400 font-sans">{error}</span>
-					) : hasContent ? (
+					) : (
 						<span className="text-xs text-foreground font-sans leading-relaxed">{transcript}</span>
-					) : null}
+					)}
 
-					{isListening && (
+					{isListening && hasContent && (
 						<div className="voice-bubble-pulse" />
 					)}
 				</div>

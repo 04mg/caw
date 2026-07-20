@@ -291,6 +291,12 @@ html, body, #root {
   gap: 8px;
 }
 
+@media (max-width: 767px) {
+  .voice-bubble-container {
+    bottom: 90px;
+  }
+}
+
 .voice-bubble {
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
