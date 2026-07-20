@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useKrokoVoiceMode } from './useKrokoVoiceMode'
+import { useKrokoVoiceMode, subscribeKrokoVoice, getKrokoVoiceState } from './useKrokoVoiceMode'
 import { getVoiceMode } from '../services/krokoAsr'
 
 type VoicePhase = 'idle' | 'listening' | 'review'
@@ -33,20 +33,22 @@ declare global {
 	}
 }
 
-let globalState: VoiceModeState = { phase: 'idle', transcript: '', error: null }
-let listeners: Array<() => void> = []
+let browserGlobalState: VoiceModeState = { phase: 'idle', transcript: '', error: null }
+let browserListeners: Array<() => void> = []
 
-function notify() {
-	for (const fn of listeners) fn()
+function browserNotify() {
+	for (const fn of browserListeners) fn()
 }
 
-function setState(partial: Partial<VoiceModeState>) {
-	globalState = { ...globalState, ...partial }
-	notify()
+function browserSetState(partial: Partial<VoiceModeState>) {
+	browserGlobalState = { ...browserGlobalState, ...partial }
+	browserNotify()
 }
 
 export function getVoicePhase(): VoicePhase {
-	return globalState.phase
+	const mode = getVoiceMode()
+	if (mode === 'local') return getKrokoVoiceState().phase
+	return browserGlobalState.phase
 }
 
 const SpeechRecognitionAPI =
@@ -65,7 +67,7 @@ function BrowserVoiceMode() {
 
 	const start = useCallback(async () => {
 		if (!SpeechRecognitionAPI) {
-			setState({ error: 'Voice input is not supported in this browser' })
+			browserSetState({ error: 'Voice input is not supported in this browser' })
 			return
 		}
 
@@ -91,12 +93,12 @@ function BrowserVoiceMode() {
 					interimText += result[0].transcript
 				}
 			}
-			setState({ transcript: finalizedRef.current + interimText })
+			browserSetState({ transcript: finalizedRef.current + interimText })
 		}
 
 		recognition.onerror = (event: any) => {
 			if (event.error === 'no-speech' || event.error === 'aborted') return
-			setState({
+			browserSetState({
 				error: event.error === 'not-allowed'
 					? 'Microphone permission denied'
 					: `Speech error: ${event.error}`,
@@ -105,11 +107,11 @@ function BrowserVoiceMode() {
 		}
 
 		recognition.onend = () => {
-			if (globalState.phase === 'listening') {
+			if (browserGlobalState.phase === 'listening') {
 				try {
 					recognition.start()
 				} catch {
-					setState({ phase: 'idle' })
+					browserSetState({ phase: 'idle' })
 				}
 				return
 			}
@@ -118,9 +120,9 @@ function BrowserVoiceMode() {
 		try {
 			recognition.start()
 			speechRef.current = recognition
-			setState({ phase: 'listening', transcript: '', error: null })
+			browserSetState({ phase: 'listening', transcript: '', error: null })
 		} catch {
-			setState({ error: 'Failed to start voice recognition' })
+			browserSetState({ error: 'Failed to start voice recognition' })
 		}
 	}, [])
 
@@ -131,17 +133,17 @@ function BrowserVoiceMode() {
 			} catch {}
 			speechRef.current = null
 		}
-		const text = globalState.transcript.trim()
+		const text = browserGlobalState.transcript.trim()
 		if (!text) {
-			setState({ phase: 'idle', transcript: '', error: null })
+			browserSetState({ phase: 'idle', transcript: '', error: null })
 			return
 		}
 		if (autoSend) {
 			autoSend.send(text)
 			finalizedRef.current = ''
-			setState({ phase: 'idle', transcript: '', error: null })
+			browserSetState({ phase: 'idle', transcript: '', error: null })
 		} else {
-			setState({ phase: 'review' })
+			browserSetState({ phase: 'review' })
 		}
 	}, [])
 
@@ -153,7 +155,7 @@ function BrowserVoiceMode() {
 			speechRef.current = null
 		}
 		finalizedRef.current = ''
-		setState({ phase: 'idle', transcript: '', error: null })
+		browserSetState({ phase: 'idle', transcript: '', error: null })
 	}, [])
 
 	return { start, stop, reset }
@@ -165,10 +167,14 @@ export function useVoiceMode() {
 	const browser = useRef(BrowserVoiceMode()).current
 
 	useEffect(() => {
-		const listener = () => forceRender((n) => n + 1)
-		listeners.push(listener)
+		const browserListener = () => forceRender((n) => n + 1)
+		browserListeners.push(browserListener)
+
+		const unsubscribeKroko = subscribeKrokoVoice(() => forceRender((n) => n + 1))
+
 		return () => {
-			listeners = listeners.filter((l) => l !== listener)
+			browserListeners = browserListeners.filter((l) => l !== browserListener)
+			unsubscribeKroko()
 		}
 	}, [])
 
@@ -201,10 +207,12 @@ export function useVoiceMode() {
 		}
 	}, [mode, kroko, browser])
 
+	const activeState = mode === 'local' ? getKrokoVoiceState() : browserGlobalState
+
 	return {
-		phase: globalState.phase,
-		transcript: globalState.transcript,
-		error: globalState.error,
+		phase: activeState.phase,
+		transcript: activeState.transcript,
+		error: activeState.error,
 		start,
 		stop,
 		reset,
