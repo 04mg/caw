@@ -8,6 +8,29 @@ interface VoiceModeState {
 	error: string | null
 }
 
+interface SpeechRecognitionInstance extends EventTarget {
+	continuous: boolean
+	interimResults: boolean
+	lang: string
+	onresult: ((event: any) => void) | null
+	onerror: ((event: any) => void) | null
+	onend: (() => void) | null
+	start(): void
+	stop(): void
+	abort(): void
+}
+
+interface SpeechRecognitionConstructor {
+	new(): SpeechRecognitionInstance
+}
+
+declare global {
+	interface Window {
+		SpeechRecognition?: SpeechRecognitionConstructor
+		webkitSpeechRecognition?: SpeechRecognitionConstructor
+	}
+}
+
 let globalState: VoiceModeState = { phase: 'idle', transcript: '', error: null }
 let listeners: Array<() => void> = []
 
@@ -114,7 +137,11 @@ export function useVoiceMode() {
 			} catch {}
 			speechRef.current = null
 		}
-		setState({ phase: 'review' })
+		if (!globalState.transcript.trim()) {
+			setState({ phase: 'idle', transcript: '', error: null })
+		} else {
+			setState({ phase: 'review' })
+		}
 	}, [])
 
 	const reset = useCallback(() => {
