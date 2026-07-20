@@ -66,7 +66,7 @@ func Register(rg *gin.RouterGroup, store *state.Store, upgrader *websocket.Upgra
 
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrader *websocket.Upgrader) {
 	sess, ok := defaultManagerMgr.Get(id)
-	if (!ok) {
+	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -80,16 +80,25 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer stopPing()
 
-	// lastReported holds the most recent cols/rows the client sent via a
-	// "resize" message before it is registered in sess.conns (which happens
-	// in sendScrollback). Once registered, the viewer struct carries the
-	// dimensions and lastReported is no longer used.
-	var lastReportedCols, lastReportedRows int
+	// Track this connection as pending until sendScrollback registers it
+	// in sess.conns. This prevents resizePTY from treating this connection
+	// as the only viewer while another connection is still connecting.
+	sess.mu.Lock()
+	sess.pendingResizes++
+	sess.mu.Unlock()
 
 	defer func() {
 		sess.mu.Lock()
-		delete(sess.conns, wc)
-		sess.recomputeResize()
+		if wc.vs != nil {
+			wc.vs.Dispose()
+			wc.vs = nil
+		}
+		if _, ok := sess.conns[wc]; ok {
+			delete(sess.conns, wc)
+		} else {
+			// sendScrollback hasn't run yet — undo the pending count.
+			sess.pendingResizes--
+		}
 		sess.mu.Unlock()
 		wc.Close()
 	}()
@@ -119,19 +128,51 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		scrollback := make([]byte, len(sess.scrollback))
 		copy(scrollback, sess.scrollback)
 		syncSeq := sess.syncMessage()
-		sess.mu.Unlock()
 
-		if len(scrollback) > 0 {
-			stripped := stripAlternateScreen(scrollback)
-			if len(stripped) > 0 {
-				msg, _ := json.Marshal(map[string]any{
-					"type": "output",
-					"data": string(stripped),
-				})
-				wc.WriteMessage(websocket.TextMessage, msg)
+		// Ensure VirtualScreen exists if viewer dimensions differ from
+		// the PTY. All vs operations must be under sess.mu to avoid
+		// races with resizePTY running in the message handler.
+		if wc.cols > 0 && wc.rows > 0 && (wc.cols != sess.cols || wc.rows != sess.rows) {
+			if wc.vs == nil {
+				wc.vs = NewVirtualScreen(sess.cols, sess.rows, wc.cols, wc.rows)
 			}
 		}
 
+		var scrollbackMsg []byte
+		if len(scrollback) > 0 {
+			if wc.vs != nil {
+				// VirtualScreen: process scrollback through the terminal
+				// emulator and serialize adapted output for this viewer.
+				adapted := wc.vs.Process(scrollback)
+				if len(adapted) > 0 {
+					scrollbackMsg, _ = json.Marshal(map[string]any{
+						"type": "output",
+						"data": string(adapted),
+					})
+				}
+			} else {
+				stripped := stripAlternateScreen(scrollback)
+				if len(stripped) > 0 {
+					scrollbackMsg, _ = json.Marshal(map[string]any{
+						"type": "output",
+						"data": string(stripped),
+					})
+				}
+			}
+		}
+
+		// Register the client only after scrollback is fully written so
+		// that live output from ReadLoop doesn't interleave with the
+		// replay. Decrement pendingResizes now that this connection is
+		// fully established.
+		sess.pendingResizes--
+		sess.conns[wc] = true
+		sess.mu.Unlock()
+
+		// Send messages outside the lock to avoid holding it during I/O.
+		if len(scrollbackMsg) > 0 {
+			wc.WriteMessage(websocket.TextMessage, scrollbackMsg)
+		}
 		if syncSeq != "" {
 			msg, _ := json.Marshal(map[string]any{
 				"type": "output",
@@ -139,16 +180,6 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			})
 			wc.WriteMessage(websocket.TextMessage, msg)
 		}
-
-		// Register the client only after scrollback is fully written so
-		// that live output from ReadLoop doesn't interleave with the
-		// replay. Seed the viewer with the dimensions the client already
-		// reported (if any) and recompute the PTY size so the new viewer
-		// participates in the "smallest" calculation immediately.
-		sess.mu.Lock()
-		sess.conns[wc] = &viewer{cols: lastReportedCols, rows: lastReportedRows}
-		sess.recomputeResize()
-		sess.mu.Unlock()
 	}
 
 	// Wait for the first resize from the client, with a timeout fallback.
@@ -192,19 +223,7 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 				continue
 			}
 			sess.mu.Lock()
-			if v, ok := sess.conns[wc]; ok {
-				// Viewer is already registered — update its size and
-				// recompute the PTY to the new smallest.
-				v.cols = cols
-				v.rows = rows
-				sess.recomputeResize()
-			} else {
-				// Viewer is not yet registered (sendScrollback hasn't
-				// run). Stash the reported size so it can be seeded into
-				// the viewer struct at registration time.
-				lastReportedCols = cols
-				lastReportedRows = rows
-			}
+			sess.resizePTY(cols, rows, wc)
 			sess.mu.Unlock()
 			// Signal the first resize so sendScrollback runs with the
 			// client's actual dimensions.

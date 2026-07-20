@@ -45,6 +45,15 @@ var syncModes = map[int]bool{
 type connWriter struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+
+	// Per-connection terminal dimensions reported by the viewer's xterm.js.
+	// Used to decide whether this viewer needs a VirtualScreen.
+	cols int
+	rows int
+
+	// vs adapts PTY output for this viewer when its dimensions differ from
+	// the PTY's. Nil when dimensions match (fast path: raw output).
+	vs *VirtualScreen
 }
 
 func (w *connWriter) WriteMessage(msgType int, data []byte) error {
@@ -63,113 +72,92 @@ func (w *connWriter) Close() error {
 // etc.) emit each mode as its own sequence.
 var modeRe = regexp.MustCompile("\x1b\\[\\?(\\d+)([hl])")
 
-// viewer tracks the last-reported terminal dimensions of a single
-// connected WebSocket client. The Session adopts the smallest cols and
-// rows across all viewers (tmux "smallest" mode) so every client can see
-// the full PTY output without truncation.
-//
-// padCols/padRows are the cell-based padding the server computes so a
-// viewer that is larger than the PTY size can center its xterm.js grid
-// and leave the surrounding area as clean background. The difference
-// (viewer dimensions − PTY dimensions) is split floor/ceil so each side
-// is off by at most one cell.
-type viewer struct {
-	cols    int
-	rows    int
-	padCols int
-	padRows int
-}
-
 type Session struct {
 	ID           string
 	Pty          *Pty
 	Cwd          string
 	DeleteBranch bool
 	mu           sync.Mutex
-	conns        map[*connWriter]*viewer
-	cols         int
-	rows         int
-	scrollback   []byte
+	conns        map[*connWriter]bool
+	// pendingResizes counts WebSocket connections that have opened but
+	// haven't yet completed their first resize (and thus aren't in conns).
+	// This prevents resizePTY from treating a connection as the only viewer
+	// when another connection is still waiting for its first resize message.
+	pendingResizes int
+	cols           int
+	rows           int
+	scrollback     []byte
 	// modes holds the last-set state of the DEC private modes listed in
 	// syncModes, tracked incrementally from the live PTY stream. It is the
 	// authoritative source used to re-sync a freshly-attached client.
-	modes map[int]bool
-	onExit       func()
+	modes   map[int]bool
+	onExit  func()
 }
 
-// recomputeResize adopts the smallest cols and rows across all connected
-// viewers (tmux "smallest" mode), resizing the single PTY to that minimum
-// and notifying every client of the new dimensions. A single PTY has only
-// one size; using the smallest ensures every viewer can see the full
-// output. When the smallest viewer disconnects, the PTY grows to the next
-// smallest size.
-//
-// broadcastResize is invoked on every call (even when the PTY size is
-// unchanged) so each viewer always receives a fresh padCols/padRows for
-// its current dimensions — e.g. when a viewer changes size but the
-// minimum is unaffected, its padding still needs to update. Must be
-// called with s.mu held.
-func (s *Session) recomputeResize() {
-	if len(s.conns) == 0 {
+// resizePTY handles a viewer resize request. For a single viewer the PTY is
+// resized directly. With multiple viewers the PTY stays at its current size
+// (set by the first viewer); viewers whose dimensions differ get a
+// VirtualScreen that adapts output. Each viewer maintains independent
+// dimensions — no resize messages are sent between viewers.
+// Must be called with s.mu held.
+func (s *Session) resizePTY(cols, rows int, source *connWriter) {
+	if cols <= 0 || rows <= 0 {
 		return
 	}
-	minCols, minRows := -1, -1
-	for _, v := range s.conns {
-		if v.cols <= 0 || v.rows <= 0 {
-			continue
+	source.cols = cols
+	source.rows = rows
+
+	// Total viewers = registered + still-connecting. If more than one
+	// viewer exists (or is about to), keep the PTY stable.
+	totalViewers := len(s.conns) + s.pendingResizes
+	if totalViewers <= 1 {
+		// Single viewer — resize PTY directly.
+		if s.cols == cols && s.rows == rows {
+			return
 		}
-		if minCols < 0 || v.cols < minCols {
-			minCols = v.cols
-		}
-		if minRows < 0 || v.rows < minRows {
-			minRows = v.rows
-		}
-	}
-	if minCols <= 0 || minRows <= 0 {
+		s.cols = cols
+		s.rows = rows
+		_ = s.Pty.ptmx.Resize(cols, rows)
+		s.cleanupViewerVS()
+		s.broadcastResize()
 		return
 	}
 
-	// Compute per-viewer padding before resizing/broadcasting. Every
-	// viewer's padCols/padRows is recomputed on every call, not only when
-	// the PTY size changed.
-	for _, v := range s.conns {
-		v.padCols = 0
-		v.padRows = 0
-		if v.cols > minCols {
-			v.padCols = v.cols - minCols
-		}
-		if v.rows > minRows {
-			v.padRows = v.rows - minRows
-		}
+	// Multiple viewers — PTY stays at its current size.
+	// Create or update a VirtualScreen for viewers that differ.
+	if cols == s.cols && rows == s.rows {
+		source.vs = nil
+	} else if source.vs == nil {
+		source.vs = NewVirtualScreen(s.cols, s.rows, cols, rows)
+	} else {
+		source.vs.Resize(cols, rows)
 	}
+}
 
-	if s.cols != minCols || s.rows != minRows {
-		s.cols = minCols
-		s.rows = minRows
-		_ = s.Pty.ptmx.Resize(minCols, minRows)
+// cleanupViewerVS removes VirtualScreens from all connections whose
+// dimensions now match the PTY. Must be called with s.mu held.
+func (s *Session) cleanupViewerVS() {
+	for c := range s.conns {
+		if c.vs != nil && c.cols == s.cols && c.rows == s.rows {
+			c.vs.Dispose()
+			c.vs = nil
+		}
 	}
-	s.broadcastResize()
 }
 
 // broadcastResize sends the current PTY size to every connected client
-// so each one can fit its local xterm.js to match. Each viewer also
-// receives its padCols/padRows so it can center the terminal grid and
-// leave the surrounding area as clean background. Must be called with
-// s.mu held.
+// so each one can fit its local xterm.js to match. Must be called with s.mu held.
 func (s *Session) broadcastResize() {
 	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
-	for c, v := range s.conns {
-		msg, _ := json.Marshal(map[string]any{
-			"type":    "resize",
-			"cols":    s.cols,
-			"rows":    s.rows,
-			"padCols": v.padCols,
-			"padRows": v.padRows,
-		})
+	msg, _ := json.Marshal(map[string]any{
+		"type": "resize",
+		"cols": s.cols,
+		"rows": s.rows,
+	})
+	for c := range s.conns {
 		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
-			// Dead connection — remove it to avoid repeated failures.
 			delete(s.conns, c)
 		}
 	}
@@ -312,9 +300,18 @@ func (s *Session) ReadLoop() {
 				s.scrollback = append([]byte(nil), s.scrollback[len(s.scrollback)-256*1024:]...)
 			}
 			for c := range s.conns {
+				var out string
+				if c.vs != nil {
+					// VirtualScreen: process raw PTY output and
+					// serialize adapted output for this viewer's dimensions.
+					out = string(c.vs.Process(data))
+				} else {
+					// Fast path: viewer dimensions match the PTY.
+					out = string(data)
+				}
 				msg, _ := json.Marshal(map[string]any{
 					"type": "output",
-					"data": string(data),
+					"data": out,
 				})
 				if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 					// Dead connection — remove it to avoid repeated failures.
@@ -330,6 +327,10 @@ func (s *Session) ReadLoop() {
 
 	s.mu.Lock()
 	for c := range s.conns {
+		if c.vs != nil {
+			c.vs.Dispose()
+			c.vs = nil
+		}
 		msg, _ := json.Marshal(map[string]any{"type": "exit"})
 		c.WriteMessage(websocket.TextMessage, msg)
 		c.Close()
