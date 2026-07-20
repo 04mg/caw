@@ -9,7 +9,7 @@ import {
   resetStickyModifiers,
   sendTerminalInput
 } from '@/features/terminal/services/terminalRegistry'
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft, Mic } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft, Mic, Loader2 } from 'lucide-react'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { cn } from '@/features/shared/utils/utils'
 
@@ -54,8 +54,13 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
                 : 'border-border/30 text-muted-foreground'
             )}
             onClick={handleToggleVoice}
+            disabled={voice.phase === 'loading'}
           >
-            <Mic className={cn("h-3.5 w-3.5", voice.phase === 'listening' && "lava-lamp-mic")} />
+            {voice.phase === 'loading' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Mic className={cn("h-3.5 w-3.5", voice.phase === 'listening' && "lava-lamp-mic")} />
+            )}
           </Button>
         )}
         <Button

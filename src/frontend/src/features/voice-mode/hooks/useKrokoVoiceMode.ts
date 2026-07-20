@@ -5,7 +5,7 @@ import {
 	loadKrokoSdk,
 } from '../services/krokoAsr'
 
-type VoicePhase = 'idle' | 'listening' | 'review'
+type VoicePhase = 'idle' | 'loading' | 'listening' | 'review'
 
 interface KrokoVoiceState {
 	phase: VoicePhase
@@ -47,7 +47,12 @@ let recognizerCache: any = null
 export async function ensureRecognizer(): Promise<any> {
 	if (recognizerCache) return recognizerCache
 	await loadKrokoSdk()
-	recognizerCache = await createKrokoRecognizer()
+	try {
+		recognizerCache = await createKrokoRecognizer()
+	} catch (err) {
+		recognizerCache = null
+		throw err
+	}
 	return recognizerCache
 }
 
@@ -99,7 +104,7 @@ export function useKrokoVoiceMode() {
 	const start = useCallback(async () => {
 		const gen = ++sessionGenRef.current
 		try {
-			setState({ phase: 'listening', transcript: '', error: null })
+			setState({ phase: 'loading', transcript: '', error: null })
 			finalizedRef.current = ''
 			activeRef.current = false
 
@@ -188,6 +193,8 @@ export function useKrokoVoiceMode() {
 			source.connect(processor)
 			processor.connect(audioCtx.destination)
 			activeRef.current = true
+			if (gen !== sessionGenRef.current) return
+			setState({ phase: 'listening' })
 		} catch (err: any) {
 			if (gen !== sessionGenRef.current) return
 			cleanup()

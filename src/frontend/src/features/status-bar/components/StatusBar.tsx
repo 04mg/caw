@@ -417,21 +417,28 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								<button
 									onClick={handleToggleVoice}
 									data-testid="status-bar-voice-mode"
+									disabled={voice.phase === 'loading'}
 									className={cn(
 										"shrink-0 transition-colors cursor-pointer",
 										voice.phase === 'listening'
 											? "text-primary"
-											: "text-muted-foreground hover:text-foreground"
+											: voice.phase === 'loading'
+												? "text-muted-foreground cursor-wait"
+												: "text-muted-foreground hover:text-foreground"
 									)}
 								>
-									<Mic className={cn(
-										"h-3.5 w-3.5",
-										voice.phase === 'listening' && "lava-lamp-mic"
-									)} />
+									{voice.phase === 'loading' ? (
+										<Loader2 className="h-3.5 w-3.5 animate-spin" />
+									) : (
+										<Mic className={cn(
+											"h-3.5 w-3.5",
+											voice.phase === 'listening' && "lava-lamp-mic"
+										)} />
+									)}
 								</button>
 							</TooltipTrigger>
 							<TooltipContent side="top" className="select-none">
-								Voice Mode
+								{voice.phase === 'loading' ? 'Loading voice engine…' : 'Voice Mode'}
 							</TooltipContent>
 						</Tooltip>
 						<span className="h-4 w-px bg-border shrink-0" />

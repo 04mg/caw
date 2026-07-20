@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useKrokoVoiceMode, subscribeKrokoVoice, getKrokoVoiceState } from './useKrokoVoiceMode'
 import { getVoiceMode } from '../services/krokoAsr'
 
-type VoicePhase = 'idle' | 'listening' | 'review'
+type VoicePhase = 'idle' | 'loading' | 'listening' | 'review'
 
 interface VoiceModeState {
 	phase: VoicePhase
