@@ -1,3 +1,4 @@
+import { useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, X } from 'lucide-react'
 import { cn } from '@/features/shared/utils/utils'
@@ -12,13 +13,22 @@ interface VoiceBubbleProps {
 
 export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard }: VoiceBubbleProps) {
 	const hasContent = transcript.trim().length > 0
+	const scrollRef = useRef<HTMLDivElement>(null)
+	const [isOverflowing, setIsOverflowing] = useState(false)
+
+	useEffect(() => {
+		const el = scrollRef.current
+		if (el) {
+			setIsOverflowing(el.scrollHeight > el.clientHeight)
+		}
+	}, [transcript])
 
 	if (!hasContent && !error) return null
 
 	return createPortal(
 		<div className="voice-bubble-container">
 			<div className="voice-bubble">
-				<div className="voice-bubble-scroll">
+				<div ref={scrollRef} className={cn('voice-bubble-scroll', isOverflowing && 'voice-bubble-scroll-fade')}>
 					<div className="voice-bubble-content">
 						{error ? (
 							<span className="text-xs text-red-400">{error}</span>

@@ -316,11 +316,14 @@ html, body, #root {
   overflow-y: auto;
   scrollbar-width: none;
   position: relative;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 
 .voice-bubble-scroll::-webkit-scrollbar { display: none; }
+
+.voice-bubble-scroll-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
 
 .voice-bubble-content {
   display: flex;
