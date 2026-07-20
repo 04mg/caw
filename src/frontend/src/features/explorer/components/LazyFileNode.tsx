@@ -112,8 +112,7 @@ export function LazyFileNode({
       setLoaded(false)
       setChildren([])
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshCounter])
+  }, [refreshCounter, expanded, load])
 
   const isCreating = createTarget?.parentPath === path
   useEffect(() => {
