@@ -404,6 +404,14 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 				)}
 				{!isMobile && isVoiceSupported() && (
 					<>
+						{voice.phase === 'listening' && (
+							<span
+								className="text-[11px] font-sans text-muted-foreground truncate max-w-[160px] animate-in fade-in duration-200 select-none"
+								title={voice.transcript}
+							>
+								{voice.transcript.trim().split(/\s+/).filter(Boolean).slice(-1).join(' ') || ''}
+							</span>
+						)}
 						<Tooltip delayDuration={0}>
 							<TooltipTrigger asChild>
 								<button
