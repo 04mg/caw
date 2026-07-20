@@ -281,42 +281,23 @@ html, body, #root {
 
 .voice-bubble-container {
   position: fixed;
-  bottom: 44px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 100px;
+  left: 12px;
+  right: 12px;
   z-index: 50;
   pointer-events: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-@media (max-width: 767px) {
-  .voice-bubble-container {
-    bottom: 100px;
-    left: 12px;
-    right: 12px;
-    transform: none;
-    align-items: stretch;
-  }
 }
 
 .voice-bubble {
   background: hsl(var(--popover));
-  border: 1px solid hsl(var(--border));
-  border-radius: 16px;
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 10px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   padding: 10px 14px;
-  min-width: 180px;
-  max-width: 420px;
   animation: voice-bubble-in 0.2s ease-out;
-}
-
-@media (max-width: 767px) {
-  .voice-bubble {
-    min-width: 0;
-    max-width: none;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 @keyframes voice-bubble-in {
@@ -329,6 +310,17 @@ html, body, #root {
     transform: translateY(0) scale(1);
   }
 }
+
+.voice-bubble-scroll {
+  max-height: 140px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  position: relative;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+
+.voice-bubble-scroll::-webkit-scrollbar { display: none; }
 
 .voice-bubble-content {
   display: flex;
@@ -351,12 +343,12 @@ html, body, #root {
 }
 
 .voice-bubble-footer {
-  position: absolute;
-  bottom: -15px;
-  right: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid hsl(var(--border) / 0.4);
 }
 
 .voice-bubble-btn {
@@ -367,7 +359,7 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   background: hsl(var(--popover));
-  border: 1px solid hsl(var(--border));
+  border: 1px solid hsl(var(--border) / 0.5);
   color: hsl(var(--muted-foreground));
   cursor: pointer;
   transition: all 0.15s ease;

@@ -130,14 +130,21 @@ export function useVoiceMode() {
 		}
 	}, [])
 
-	const stop = useCallback(() => {
+	const stop = useCallback((autoSend?: { send: (text: string) => void }) => {
 		if (speechRef.current) {
 			try {
 				speechRef.current.stop()
 			} catch {}
 			speechRef.current = null
 		}
-		if (!globalState.transcript.trim()) {
+		const text = globalState.transcript.trim()
+		if (!text) {
+			setState({ phase: 'idle', transcript: '', error: null })
+			return
+		}
+		if (autoSend) {
+			autoSend.send(text)
+			finalizedRef.current = ''
 			setState({ phase: 'idle', transcript: '', error: null })
 		} else {
 			setState({ phase: 'review' })

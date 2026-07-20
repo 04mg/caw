@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -100,14 +100,6 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
 	const voice = useVoiceMode()
-	const micBtnRef = useRef<HTMLButtonElement>(null)
-	const [micRect, setMicRect] = useState<DOMRect | null>(null)
-
-	useEffect(() => {
-		if (voice.phase !== 'idle' && micBtnRef.current) {
-			setMicRect(micBtnRef.current.getBoundingClientRect())
-		}
-	}, [voice.phase])
 
 	useEffect(() => {
 		const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -183,7 +175,11 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		if (voice.phase === 'idle') {
 			voice.start()
 		} else if (voice.phase === 'listening') {
-			voice.stop()
+			if (isMobile) {
+				voice.stop()
+			} else {
+				voice.stop({ send: (text) => onSendText?.(text) })
+			}
 		}
 	}
 
@@ -397,14 +393,13 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		</div>
 
 			<div className="flex items-center gap-2">
-				{voice.phase !== 'idle' && (
+				{isMobile && voice.phase !== 'idle' && (
 					<VoiceBubble
 						transcript={voice.transcript}
 						error={voice.error}
 						isListening={voice.phase === 'listening'}
 						onSend={handleSendVoice}
 						onDiscard={handleDiscardVoice}
-						targetRect={micRect}
 					/>
 				)}
 				{!isMobile && isVoiceSupported() && (
@@ -412,7 +407,6 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 						<Tooltip delayDuration={0}>
 							<TooltipTrigger asChild>
 								<button
-									ref={micBtnRef}
 									onClick={handleToggleVoice}
 									data-testid="status-bar-voice-mode"
 									className={cn(
