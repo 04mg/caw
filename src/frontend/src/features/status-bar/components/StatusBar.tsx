@@ -5,10 +5,12 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
+import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
+import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
 
 interface Quota {
 	used:  number
@@ -88,14 +90,16 @@ interface StatusBarProps {
 	onOpenSettings: (section?: string) => void
 	hideControlCenter?: boolean
 	controlCenterButtonRef?: React.Ref<HTMLButtonElement>
+	onSendText?: (text: string) => void
 }
 
-export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+	const voice = useVoiceMode()
 
 	useEffect(() => {
 		const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -164,6 +168,29 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const selectView = (view: string) => {
 		setSelectedView(view)
 		localStorage.setItem('caw:quota:selected_view', view)
+	}
+
+	const handleToggleVoice = () => {
+		if (!isVoiceSupported()) return
+		if (voice.phase === 'idle') {
+			voice.start()
+		} else if (voice.phase === 'listening') {
+			if (isMobile) {
+				voice.stop()
+			} else {
+				voice.stop({ send: (text) => onSendText?.(text) })
+			}
+		}
+	}
+
+	const handleSendVoice = () => {
+		const text = voice.transcript.trim()
+		if (text) onSendText?.(text)
+		voice.reset()
+	}
+
+	const handleDiscardVoice = () => {
+		voice.reset()
 	}
 
 	const hasClaude = settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
@@ -364,6 +391,59 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 				</>
 			)}
 		</div>
+
+			<div className="flex items-center gap-2">
+				{isMobile && voice.phase !== 'idle' && (
+					<VoiceBubble
+						transcript={voice.transcript}
+						error={voice.error}
+						isListening={voice.phase === 'listening'}
+						onSend={handleSendVoice}
+						onDiscard={handleDiscardVoice}
+					/>
+				)}
+				{!isMobile && isVoiceSupported() && (
+					<>
+						{voice.phase === 'listening' && (
+							<span
+								className="text-[11px] font-sans text-muted-foreground truncate max-w-[160px] animate-in fade-in duration-200 select-none"
+								title={voice.transcript}
+							>
+								{voice.transcript.trim().split(/\s+/).filter(Boolean).slice(-1).join(' ') || ''}
+							</span>
+						)}
+						<Tooltip delayDuration={0}>
+							<TooltipTrigger asChild>
+								<button
+									onClick={handleToggleVoice}
+									data-testid="status-bar-voice-mode"
+									disabled={voice.phase === 'loading'}
+									className={cn(
+										"shrink-0 transition-colors cursor-pointer",
+										voice.phase === 'listening'
+											? "text-primary"
+											: voice.phase === 'loading'
+												? "text-muted-foreground cursor-wait"
+												: "text-muted-foreground hover:text-foreground"
+									)}
+								>
+									{voice.phase === 'loading' ? (
+										<Loader2 className="h-3.5 w-3.5 animate-spin" />
+									) : (
+										<Mic className={cn(
+											"h-3.5 w-3.5",
+											voice.phase === 'listening' && "lava-lamp-mic"
+										)} />
+									)}
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top" className="select-none">
+								{voice.phase === 'loading' ? 'Loading voice engine…' : 'Voice Mode'}
+							</TooltipContent>
+						</Tooltip>
+						<span className="h-4 w-px bg-border shrink-0" />
+					</>
+				)}
 
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
@@ -806,6 +886,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					)}
 				</DropdownMenuContent>
 			</DropdownMenu>
+			</div>
 		</div>
 	)
 }
