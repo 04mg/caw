@@ -8,15 +8,25 @@ interface VoiceBubbleProps {
 	isListening: boolean
 	onSend: () => void
 	onDiscard: () => void
+	targetRect?: DOMRect | null
 }
 
-export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard }: VoiceBubbleProps) {
+export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard, targetRect }: VoiceBubbleProps) {
 	const hasContent = transcript.trim().length > 0
 
 	if (!hasContent && !error) return null
 
+	const style: React.CSSProperties = targetRect
+		? {
+			position: 'fixed',
+			top: targetRect.top - 8,
+			left: targetRect.left + targetRect.width / 2,
+			transform: 'translateX(-50%) translateY(-100%)',
+		}
+		: {}
+
 	return createPortal(
-		<div className="voice-bubble-container">
+		<div className="voice-bubble-container" style={style}>
 			<div className="voice-bubble">
 				<div className="voice-bubble-content">
 					{error ? (
