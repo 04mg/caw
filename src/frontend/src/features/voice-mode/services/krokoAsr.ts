@@ -33,6 +33,10 @@ export async function loadKrokoSdk(): Promise<any> {
 		sdkModule = mod
 		return mod
 	})()
+	// Clear the cached promise on failure so the user can retry
+	sdkLoadPromise.catch(() => {
+		sdkLoadPromise = null
+	})
 	return sdkLoadPromise
 }
 
