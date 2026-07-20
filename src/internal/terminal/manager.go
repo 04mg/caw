@@ -63,7 +63,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		ID:         id,
 		Pty:        ps,
 		Cwd:        cwd,
-		conns:      make(map[*connWriter]*viewer),
+		conns:      make(map[*connWriter]bool),
 		scrollback: []byte{},
 		modes:      make(map[int]bool),
 	}
