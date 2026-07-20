@@ -60,6 +60,7 @@ export function useKrokoVoiceMode() {
 	const streamRef = useRef<any>(null)
 	const finalizedRef = useRef('')
 	const activeRef = useRef(false)
+	const sessionGenRef = useRef(0)
 
 	useEffect(() => {
 		const listener = () => forceRender((n) => n + 1)
@@ -71,7 +72,11 @@ export function useKrokoVoiceMode() {
 
 	const cleanup = useCallback(() => {
 		activeRef.current = false
+		sessionGenRef.current++ // invalidate any in-flight handler from this session
 		if (processorRef.current) {
+			try {
+				processorRef.current.onaudioprocess = null
+			} catch {}
 			try {
 				processorRef.current.disconnect()
 			} catch {}
@@ -92,11 +97,14 @@ export function useKrokoVoiceMode() {
 	}, [])
 
 	const start = useCallback(async () => {
+		const gen = ++sessionGenRef.current
 		try {
 			setState({ phase: 'listening', transcript: '', error: null })
 			finalizedRef.current = ''
+			activeRef.current = false
 
 			const recognizer = await ensureRecognizer()
+			if (gen !== sessionGenRef.current) return
 			recognizerRef.current = recognizer
 
 			const stream = await navigator.mediaDevices.getUserMedia({
@@ -106,9 +114,18 @@ export function useKrokoVoiceMode() {
 					sampleRate: EXPECTED_SAMPLE_RATE,
 				} as any,
 			})
+			if (gen !== sessionGenRef.current) {
+				stream.getTracks().forEach((t) => t.stop())
+				return
+			}
 			mediaStreamRef.current = stream
 
 			const audioCtx = new AudioContext({ sampleRate: EXPECTED_SAMPLE_RATE })
+			if (gen !== sessionGenRef.current) {
+				stream.getTracks().forEach((t) => t.stop())
+				audioCtx.close()
+				return
+			}
 			audioCtxRef.current = audioCtx
 
 			const source = audioCtx.createMediaStreamSource(stream)
@@ -120,7 +137,7 @@ export function useKrokoVoiceMode() {
 			streamRef.current = null
 
 			processor.onaudioprocess = async (e: AudioProcessingEvent) => {
-				if (!activeRef.current) return
+				if (gen !== sessionGenRef.current) return
 
 				let samples: Float32Array = new Float32Array(e.inputBuffer.getChannelData(0))
 				const recordRate = audioCtx.sampleRate
@@ -128,40 +145,42 @@ export function useKrokoVoiceMode() {
 					samples = downsampleBuffer(samples, recordRate, EXPECTED_SAMPLE_RATE)
 				}
 
-			try {
-			if (!recognizerStream) {
-				recognizerStream = await recognizer.createStream()
-				if (!activeRef.current) return
-				streamRef.current = recognizerStream
-			}
-
-				await recognizerStream.acceptWaveform(EXPECTED_SAMPLE_RATE, samples)
-				if (!activeRef.current) return
-
-				while (await recognizer.isReady(recognizerStream)) {
-					if (!activeRef.current) return
-					await recognizer.decode(recognizerStream)
-				}
-
-				const isEndpoint = await recognizer.isEndpoint(recognizerStream)
-				if (!activeRef.current) return
-				const result = await recognizer.getResult(recognizerStream)
-				const text = result.text || ''
-
-				if (text.length > 0 && finalizedRef.current + text !== globalState.transcript) {
-					setState({ transcript: finalizedRef.current + text })
-				}
-
-				if (isEndpoint) {
-					if (text.length > 0) {
-						finalizedRef.current += text
+				try {
+					if (!recognizerStream) {
+						recognizerStream = await recognizer.createStream()
+						if (gen !== sessionGenRef.current) return
+						streamRef.current = recognizerStream
 					}
-					await recognizer.reset(recognizerStream)
-					if (!activeRef.current) return
-					recognizerStream = null
-					streamRef.current = null
-				}
-			} catch {
+
+					await recognizerStream.acceptWaveform(EXPECTED_SAMPLE_RATE, samples)
+					if (gen !== sessionGenRef.current) return
+
+					while (await recognizer.isReady(recognizerStream)) {
+						if (gen !== sessionGenRef.current) return
+						await recognizer.decode(recognizerStream)
+					}
+					if (gen !== sessionGenRef.current) return
+
+					const isEndpoint = await recognizer.isEndpoint(recognizerStream)
+					if (gen !== sessionGenRef.current) return
+					const result = await recognizer.getResult(recognizerStream)
+					if (gen !== sessionGenRef.current) return
+					const text = result.text || ''
+
+					if (text.length > 0 && finalizedRef.current + text !== globalState.transcript) {
+						setState({ transcript: finalizedRef.current + text })
+					}
+
+					if (isEndpoint) {
+						if (text.length > 0) {
+							finalizedRef.current += text
+						}
+						await recognizer.reset(recognizerStream)
+						if (gen !== sessionGenRef.current) return
+						recognizerStream = null
+						streamRef.current = null
+					}
+				} catch {
 					// recognizer errors during processing — ignore, keep listening
 				}
 			}
@@ -170,6 +189,7 @@ export function useKrokoVoiceMode() {
 			processor.connect(audioCtx.destination)
 			activeRef.current = true
 		} catch (err: any) {
+			if (gen !== sessionGenRef.current) return
 			cleanup()
 			setState({
 				error:
