@@ -29,30 +29,30 @@ export function VoiceBubble({ transcript, error, isListening, onSend, onDiscard 
 						<div className="voice-bubble-pulse" />
 					)}
 				</div>
-			</div>
 
-			{!isListening && (
-				<div className="voice-bubble-actions">
-					<button
-						onClick={onDiscard}
-						className="voice-bubble-btn"
-						title="Discard"
-					>
-						<X className="h-3.5 w-3.5" />
-					</button>
-					<button
-						onClick={onSend}
-						disabled={!hasContent}
-						className={cn(
-							"voice-bubble-btn",
-							!hasContent && "opacity-40 cursor-not-allowed"
-						)}
-						title="Send to terminal"
-					>
-						<Check className="h-3.5 w-3.5" />
-					</button>
-				</div>
-			)}
+				{!isListening && (
+					<div className="voice-bubble-footer">
+						<button
+							onClick={onDiscard}
+							className="voice-bubble-btn"
+							title="Discard"
+						>
+							<X className="h-3.5 w-3.5" />
+						</button>
+						<button
+							onClick={onSend}
+							disabled={!hasContent}
+							className={cn(
+								"voice-bubble-btn",
+								!hasContent && "opacity-40 cursor-not-allowed"
+							)}
+							title="Send to terminal"
+						>
+							<Check className="h-3.5 w-3.5" />
+						</button>
+					</div>
+				)}
+			</div>
 		</div>,
 		document.body
 	)

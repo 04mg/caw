@@ -286,9 +286,6 @@ html, body, #root {
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 @media (max-width: 767px) {
@@ -305,16 +302,18 @@ html, body, #root {
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
   border-radius: 16px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   padding: 10px 14px;
   min-width: 180px;
   max-width: 420px;
   animation: voice-bubble-in 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 @media (max-width: 767px) {
   .voice-bubble {
-    flex: 1;
     min-width: 0;
     max-width: none;
   }
@@ -351,12 +350,13 @@ html, body, #root {
   50% { opacity: 0.4; transform: scale(0.7); }
 }
 
-.voice-bubble-actions {
+.voice-bubble-footer {
   display: flex;
-  flex-direction: row;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  flex-shrink: 0;
+  padding-top: 6px;
+  border-top: 1px solid hsl(var(--border));
 }
 
 .voice-bubble-btn {
