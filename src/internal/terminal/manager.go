@@ -80,7 +80,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	}
 
 	if OnSessionStart != nil {
-		OnSessionStart(id, req.Cmd, cwd)
+		OnSessionStart(id, cmd, cwd)
 	}
 
 	go sess.ReadLoop()
