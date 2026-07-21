@@ -138,30 +138,37 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 					silentTicks++
 				}
 
-				// Mid-session re-bind for /new and /resume.
-				if silentTicks >= rebindSilenceTicks {
-					lastPtyOut := agent.LastPtyActivity(sessionID)
-					if time.Since(lastPtyOut) < 3*time.Second {
-						cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
-						var others []RebindCandidate
-						for _, c := range cands {
-							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
-						}
-						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSession(agentID, cwd, newKey) {
-								UnclaimSession(agentID, cwd, watchedFilePath)
-								watchedFilePath = newKey
-								lastFileSize = 0
-								lastCheck = time.Now()
-								silentTicks = 0
-								if notifyCh != nil {
-									notifier.Watch(watchedFilePath)
-								}
+			// Mid-session re-bind for /new and /resume. Gated on PTY activity
+			// OR user focus: only the watcher whose PTY is producing output
+			// (or whose pane the user is currently driving) switches, so a
+			// sibling Codex in the same cwd writing to its own transcript
+			// can't make this idle, unfocused watcher steal its session.
+			// The focus exemption covers /new or /resume issued in the
+			// focused pane before the agent emits any PTY output.
+			if silentTicks >= rebindSilenceTicks {
+				focused := agent.IsPtyFocused(sessionID)
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second || focused {
+					cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
+					var others []RebindCandidate
+					for _, c := range cands {
+						others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
+					}
+					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+					if newKey != "" && newKey != watchedFilePath {
+						if ClaimSession(agentID, cwd, newKey) {
+							UnclaimSession(agentID, cwd, watchedFilePath)
+							watchedFilePath = newKey
+							lastFileSize = 0
+							lastCheck = time.Now()
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
 							}
 						}
 					}
 				}
+			}
 			}
 		}
 	}

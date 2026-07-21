@@ -92,6 +92,20 @@ var (
 	// correct PTY when multiple agents of the same type share a cwd.
 	ptyActivity   = make(map[string]time.Time)
 	ptyActivityMu sync.RWMutex
+	// ptyFocus tracks which leaf/session id currently has the user's focus
+	// (i.e. is the active terminal pane the user is typing into). Updated via
+	// OnPtyFocus when the frontend reports a focus/blur event for a pane.
+	// Read by the idle-timeout watchdog and the watchers' re-bind pass:
+	//   - A focused PTY is exempt from the auto-revert-to-idle even when its
+	//     output has gone quiet (the user may be mid-composition or reading).
+	//   - A focused PTY is allowed to re-bind to a sibling internal session
+	//     even with no recent PTY output (the user issued /new or /resume and
+	//     is waiting for the agent to start, which may not produce PTY bytes
+	//     immediately).
+	// Conversely, an unfocused PTY is more conservative: it will not steal
+	// a sibling's session and the idle-timeout watchdog may revert it.
+	ptyFocus   = make(map[string]bool)
+	ptyFocusMu sync.RWMutex
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -110,6 +124,7 @@ func init() {
 	terminal.OnSessionExit = handleSessionExit
 	terminal.OnPtyActivity = handlePtyActivity
 	terminal.OnPtyInput = handlePtyInput
+	terminal.OnPtyFocus = handlePtyFocus
 }
 
 // handlePtyInput detects when the user submits a command to a PTY.
@@ -125,6 +140,32 @@ func handlePtyInput(id string, data string) {
 	// Disabled to prevent transitioning to "thinking" on non-agent PTY inputs.
 	// (e.g. regular shell commands). The status will transition to "thinking"
 	// or "executing" via the log watcher when the agent actually starts.
+}
+
+// handlePtyFocus records whether the given leaf/session id currently has the
+// user's focus. Called from terminal.HandleTerminalWS when the frontend sends
+// a `focus`/`blur` message after the active pane changes. Also implicitly
+// clears focus on any other pane: only one pane is focused at a time.
+func handlePtyFocus(id string, focused bool) {
+	ptyFocusMu.Lock()
+	if focused {
+		// Single-focus model: clear any previously focused pane so the
+		// invariant "at most one entry is true" holds even if the frontend
+		// ever forgets to send a blur before a focus on another pane.
+		for k := range ptyFocus {
+			if k != id {
+				delete(ptyFocus, k)
+			}
+		}
+		ptyFocus[id] = true
+	} else {
+		// Only delete if it was our entry — avoids clobbering a newer focus
+		// that arrived between our blur and its processing.
+		if ptyFocus[id] {
+			delete(ptyFocus, id)
+		}
+	}
+	ptyFocusMu.Unlock()
 }
 
 // handlePtyActivity records that the PTY for the given leaf/session id just
@@ -147,6 +188,18 @@ func LastPtyActivity(sessionID string) time.Time {
 	ptyActivityMu.RLock()
 	defer ptyActivityMu.RUnlock()
 	return ptyActivity[sessionID]
+}
+
+// IsPtyFocused reports whether the given leaf/session id currently has the
+// user's focus (i.e. is the active terminal pane the user is typing into).
+// Used by watchers and the idle-timeout watchdog to bias the heuristics
+// toward the pane the user is actually driving: a focused PTY is exempt
+// from the auto-revert-to-idle and is allowed to re-bind to a sibling
+// internal session even without recent PTY output.
+func IsPtyFocused(sessionID string) bool {
+	ptyFocusMu.RLock()
+	defer ptyFocusMu.RUnlock()
+	return ptyFocus[sessionID]
 }
 
 // RegisterStatusWatcher allows status providers to register themselves
@@ -314,6 +367,10 @@ func handleSessionExit(id string) {
 		delete(statuses, id)
 		statusesMu.Unlock()
 
+		ptyFocusMu.Lock()
+		delete(ptyFocus, id)
+		ptyFocusMu.Unlock()
+
 		broadcastEvent(Event{
 			Type:      "agent_stopped",
 			SessionID: id,
@@ -370,6 +427,16 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	// to every agent (the watchdog is shared); the LLM-thinking phase after
 	// a tool finishes does write to the transcript, so the 2-minute idle
 	// timeout still catches genuinely stalled sessions.
+	//
+	// Focused PTY exemption: even when the PTY has been quiet (no output and
+	// no transcript writes) for longer than the timeout, if the user is
+	// currently focused on this pane we keep the last non-idle status. The
+	// user may be mid-composition (typing a prompt that hasn't been
+	// submitted), reading a long answer, or waiting for an answer that
+	// doesn't stream to the transcript until it completes. Reverting a
+	// pane the user is actively looking at to "idle" is more confusing
+	// than keeping the previous status, and a genuinely-stalled focused
+	// session will still be caught when the user eventually blurs it.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -384,6 +451,12 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 					// don't revert to idle.
 					lastPtyOut := LastPtyActivity(wCtx.sessionId)
 					if !lastPtyOut.IsZero() && time.Since(lastPtyOut) < ptyActivityWindow {
+						continue
+					}
+					// If this pane currently has the user's focus, don't
+					// auto-revert: the user is actively interacting with it
+					// and a spurious "idle" would be misleading.
+					if IsPtyFocused(wCtx.sessionId) {
 						continue
 					}
 					statusesMu.RLock()
