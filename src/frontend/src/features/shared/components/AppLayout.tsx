@@ -1949,18 +1949,12 @@ export function AppLayout() {
                 <DialogDescription className="text-xs text-muted-foreground mt-2" asChild>
                   <div className="space-y-1">
                     <div>
-                      <span className="font-mono text-foreground/80">{closeConfirm.unsavedFilePath.split(/[\\/]/).pop()}</span> has unsaved changes.
-                    </div>
-                    <div>
-                      Do you want to save before closing?
+                      <span className="text-foreground/80">{closeConfirm.unsavedFilePath.split(/[\\/]/).pop()}</span> has unsaved changes.
                     </div>
                   </div>
                 </DialogDescription>
               </DialogHeader>
               <div className="flex justify-end gap-2 mt-4">
-                <Button variant="ghost" onClick={() => { setCloseConfirm(null) }}>
-                  Cancel
-                </Button>
                 <Button
                   variant="outline"
                   onClick={async () => {
