@@ -39,6 +39,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Checkbox } from '@/components/checkbox'
 import { TerminalPanel } from '@/features/terminal/components/TerminalPanel'
 import { EditorPanel } from '@/features/editor/components/EditorPanel'
+import { isFileDirty, discardFileEdits, saveFileFromCache } from '@/features/editor/services/editorDirtyStore'
 import { MobileControlBar } from '@/features/terminal/components/MobileControlBar'
 import { NewTabMenu } from '@/features/workspaces/components/NewTabMenu'
 
@@ -145,6 +146,8 @@ export function AppLayout() {
     agentBranch: string;
     hasUncommitted: boolean;
     hasUnmergedCommits: boolean;
+    // Unsaved-file confirmation flow (Guardar / Descartar / Cancelar)
+    unsavedFilePath?: string;
   } | null>(null)
   const [deleteBranchChecked, setDeleteBranchChecked] = useState(false)
 
@@ -915,6 +918,26 @@ export function AppLayout() {
       const tab = activeWorkspace.layouts.find((l) => l.id === tabId)
       if (!tab) return
 
+      // Check for unsaved editor files in this tab before closing.
+      const unsavedFiles: string[] = []
+      for (const leafId of collectLeafIds(tab.layout)) {
+        const l = getLeaf(tab.layout, leafId)
+        if (l && !l.isDiff && l.filePath && isFileDirty(l.filePath)) {
+          unsavedFiles.push(l.filePath)
+        }
+      }
+      if (unsavedFiles.length > 0) {
+        setCloseConfirm({
+          type: 'tab',
+          targetId: tab.id,
+          agentBranch: '',
+          hasUncommitted: false,
+          hasUnmergedCommits: false,
+          unsavedFilePath: unsavedFiles[0],
+        })
+        return
+      }
+
       const agentLeaves = findAgentLeaves(tab.layout)
       if (agentLeaves.length > 0) {
         const firstLeaf = agentLeaves[0]
@@ -1207,6 +1230,18 @@ export function AppLayout() {
       }
 
       const leaf = findLeafById(activeTab.layout, id)
+      // Unsaved editor file inside this pane -> confirm before closing.
+      if (leaf && leaf.type === 'leaf' && !leaf.isDiff && leaf.filePath && isFileDirty(leaf.filePath)) {
+        setCloseConfirm({
+          type: 'pane',
+          targetId: id,
+          agentBranch: '',
+          hasUncommitted: false,
+          hasUnmergedCommits: false,
+          unsavedFilePath: leaf.filePath,
+        })
+        return
+      }
       if (leaf && leaf.type === 'leaf' && leaf.agentBranch && leaf.cwd) {
         let uncommitted = false
         let unmerged = false
@@ -1905,63 +1940,123 @@ export function AppLayout() {
         }}
       >
         <DialogContent className="max-w-md p-6">
-          <DialogHeader>
-            <DialogTitle className="text-base font-semibold text-foreground">
-              Close workspace
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground mt-2 space-y-2" asChild>
-              <div>
-                <div>
-                  Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will delete the temporary worktree directory.
-                </div>
-                
-                {closeConfirm && (closeConfirm.hasUncommitted || closeConfirm.hasUnmergedCommits) ? (
-                  <div className="text-red-400">
-                    ⚠️ Branch {closeConfirm.agentBranch} has unmerged changes.
+          {closeConfirm?.unsavedFilePath ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-base font-semibold text-foreground">
+                  Unsaved changes
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground mt-2" asChild>
+                  <div className="space-y-1">
+                    <div>
+                      <span className="font-mono text-foreground/80">{closeConfirm.unsavedFilePath.split(/[\\/]/).pop()}</span> has unsaved changes.
+                    </div>
+                    <div>
+                      Do you want to save before closing?
+                    </div>
                   </div>
-                ) : (
-                  <div className="text-muted-foreground">
-                    ✓ Branch {closeConfirm?.agentBranch} is clean with no unmerged changes.
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 pt-2">
-                  <Checkbox
-                    id="delete-branch-cb"
-                    checked={deleteBranchChecked}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeleteBranchChecked(e.target.checked)}
-                  />
-                  <label
-                    htmlFor="delete-branch-cb"
-                    className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Delete branch {closeConfirm?.agentBranch}
-                  </label>
-                </div>
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="ghost" onClick={() => { setCloseConfirm(null) }}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (closeConfirm) {
+                      discardFileEdits(closeConfirm.unsavedFilePath!)
+                      if (closeConfirm.type === 'tab') {
+                        forceCloseTab(closeConfirm.targetId)
+                      } else {
+                        forceClosePane(closeConfirm.targetId)
+                      }
+                      setCloseConfirm(null)
+                    }
+                  }}
+                >
+                  Discard
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (closeConfirm) {
+                      const ok = await saveFileFromCache(closeConfirm.unsavedFilePath!)
+                      if (ok) {
+                        if (closeConfirm.type === 'tab') {
+                          forceCloseTab(closeConfirm.targetId)
+                        } else {
+                          forceClosePane(closeConfirm.targetId)
+                        }
+                        setCloseConfirm(null)
+                      }
+                    }
+                  }}
+                >
+                  Save
+                </Button>
               </div>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="ghost" onClick={() => { setCloseConfirm(null); setDeleteBranchChecked(false) }}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (closeConfirm) {
-                  if (closeConfirm.type === 'tab') {
-                    forceCloseTab(closeConfirm.targetId, deleteBranchChecked)
-                  } else {
-                    forceClosePane(closeConfirm.targetId, deleteBranchChecked)
-                  }
-                  setCloseConfirm(null)
-                  setDeleteBranchChecked(false)
-                }
-              }}
-            >
-              Close
-            </Button>
-          </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-base font-semibold text-foreground">
+                  Close workspace
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground mt-2 space-y-2" asChild>
+                  <div>
+                    <div>
+                      Closing this {closeConfirm?.type === 'tab' ? 'tab' : 'pane'} will delete the temporary worktree directory.
+                    </div>
+
+                    {closeConfirm && (closeConfirm.hasUncommitted || closeConfirm.hasUnmergedCommits) ? (
+                      <div className="text-red-400">
+                        ⚠️ Branch {closeConfirm.agentBranch} has unmerged changes.
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground">
+                        ✓ Branch {closeConfirm?.agentBranch} is clean with no unmerged changes.
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <Checkbox
+                        id="delete-branch-cb"
+                        checked={deleteBranchChecked}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeleteBranchChecked(e.target.checked)}
+                      />
+                      <label
+                        htmlFor="delete-branch-cb"
+                        className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Delete branch {closeConfirm?.agentBranch}
+                      </label>
+                    </div>
+                  </div>
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="ghost" onClick={() => { setCloseConfirm(null); setDeleteBranchChecked(false) }}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    if (closeConfirm) {
+                      if (closeConfirm.type === 'tab') {
+                        forceCloseTab(closeConfirm.targetId, deleteBranchChecked)
+                      } else {
+                        forceClosePane(closeConfirm.targetId, deleteBranchChecked)
+                      }
+                      setCloseConfirm(null)
+                      setDeleteBranchChecked(false)
+                    }
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
