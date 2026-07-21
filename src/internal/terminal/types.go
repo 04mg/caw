@@ -23,4 +23,12 @@ var (
 	// when multiple agents of the same type run in the same cwd.
 	OnPtyActivity func(id string, n int)
 	OnPtyInput    func(id string, data string)
+	// OnPtyFocus is invoked when a terminal pane gains or loses the user's
+	// focus. The focused flag is true when the pane becomes the active pane
+	// the user is interacting with, false when it loses that status. Used by
+	// the agent status watcher to make the idle-timeout and re-bind heuristics
+	// aware of which terminal the user is currently looking at, so a focused
+	// agent that the user is typing into is never falsely reverted to idle and
+	// so re-binds are biased toward the pane the user is actually driving.
+	OnPtyFocus func(id string, focused bool)
 )

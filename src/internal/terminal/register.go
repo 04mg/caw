@@ -231,6 +231,15 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			case firstResize <- struct{}{}:
 			default:
 			}
+		case "focus":
+			// Frontend reports that this pane gained or lost the user's
+			// focus. Forward to the agent status package via OnPtyFocus so
+			// the idle-timeout and re-bind heuristics can account for which
+			// terminal the user is currently driving.
+			focused, _ := msg["focused"].(bool)
+			if OnPtyFocus != nil {
+				OnPtyFocus(id, focused)
+			}
 		}
 	}
 }
