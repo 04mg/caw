@@ -9,6 +9,29 @@ import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/ser
 import { pathsEqual } from '@/features/shared/utils/path'
 
 
+// Cache of unsaved (dirty) editor content per filePath, so that switching
+// tabs/panes and coming back preserves in-memory edits instead of reloading
+// from disk. Entries are cleared on successful save or explicit close.
+interface DirtyEntry {
+  dirty: string
+  original: string
+}
+
+const dirtyContentCache = new Map<string, DirtyEntry>()
+
+function getCachedDirty(filePath: string): DirtyEntry | undefined {
+  return dirtyContentCache.get(filePath)
+}
+
+function setCachedDirty(filePath: string, dirty: string, original: string): void {
+  dirtyContentCache.set(filePath, { dirty, original })
+}
+
+function clearCachedDirty(filePath: string): void {
+  dirtyContentCache.delete(filePath)
+}
+
+
 function defineCawDarkTheme(monaco: Monaco) {
   monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
     noSemanticValidation: true,
@@ -152,6 +175,22 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       return
     }
 
+    // Restore unsaved edits from the in-memory cache instead of hitting disk.
+    // This keeps dirty state alive across tab/pane switches.
+    if (!isDiff) {
+      const cached = getCachedDirty(filePath)
+      if (cached !== undefined) {
+        setContent(cached.dirty)
+        setEditedContent(cached.dirty)
+        originalContentRef.current = cached.original
+        setLoading(false)
+        setError(null)
+        setSaveStatus('idle')
+        setIsBinaryRuntime(isBinaryContent(cached.dirty))
+        return
+      }
+    }
+
     setLoading(true)
     setError(null)
     setSaveStatus('idle')
@@ -216,6 +255,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setContent(text)
         setEditedContent(text)
         originalContentRef.current = text
+        clearCachedDirty(filePath)
         if (editorRef.current) editorRef.current.setValue(text)
       }
     } catch { /* ignore */ }
@@ -273,6 +313,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setContent(editedContent)
         setSaveStatus('success')
         lastSavedAtRef.current = Date.now()
+        if (filePath && !isDiff) clearCachedDirty(filePath)
         if (onSaveSuccess) onSaveSuccess()
         setTimeout(() => setSaveStatus('idle'), 2000)
       } else {
@@ -302,6 +343,9 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const handleEditorChange = (value?: string) => {
     if (value !== undefined) {
       setEditedContent(value)
+      if (filePath && !isDiff) {
+        setCachedDirty(filePath, value, originalContentRef.current)
+      }
     }
   }
 
