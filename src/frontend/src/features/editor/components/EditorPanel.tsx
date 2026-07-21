@@ -7,29 +7,7 @@ import { BinaryFileView } from './BinaryFileView'
 import { ImagePreviewView } from './ImagePreviewView'
 import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
 import { pathsEqual } from '@/features/shared/utils/path'
-
-
-// Cache of unsaved (dirty) editor content per filePath, so that switching
-// tabs/panes and coming back preserves in-memory edits instead of reloading
-// from disk. Entries are cleared on successful save or explicit close.
-interface DirtyEntry {
-  dirty: string
-  original: string
-}
-
-const dirtyContentCache = new Map<string, DirtyEntry>()
-
-function getCachedDirty(filePath: string): DirtyEntry | undefined {
-  return dirtyContentCache.get(filePath)
-}
-
-function setCachedDirty(filePath: string, dirty: string, original: string): void {
-  dirtyContentCache.set(filePath, { dirty, original })
-}
-
-function clearCachedDirty(filePath: string): void {
-  dirtyContentCache.delete(filePath)
-}
+import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
 
 
 function defineCawDarkTheme(monaco: Monaco) {
@@ -90,17 +68,29 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const [forceOpenBinary, setForceOpenBinary] = useState(false)
   const [isBinaryRuntime, setIsBinaryRuntime] = useState(false)
   const [diskConflict, setDiskConflict] = useState(false)
+  // Initial value for the model the first time a path is seen. After that,
+  // Monaco keeps the model alive across unmounts and we must NOT overwrite it.
+  const [initialValue, setInitialValue] = useState<string | undefined>(undefined)
 
   // Reset binary override when file changes
   useEffect(() => {
     setForceOpenBinary(false)
     setIsBinaryRuntime(false)
+    setInitialValue(undefined)
   }, [filePath])
 
   const originalContentRef = useRef('')
   const editorRef = useRef<any>(null)
+  const monacoRef = useRef<Monaco | null>(null)
   const lastSavedAtRef = useRef(0)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Helper: get the live Monaco model for this filePath (if any).
+  const getLiveModel = useCallback(() => {
+    if (!filePath || !monacoRef.current) return null
+    const uri = monacoRef.current.Uri.parse(`file://${filePath}`)
+    return monacoRef.current.editor.getModel(uri)
+  }, [filePath])
 
   // Determine file language based on extension
   const getLanguage = (path?: string) => {
@@ -175,22 +165,6 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       return
     }
 
-    // Restore unsaved edits from the in-memory cache instead of hitting disk.
-    // This keeps dirty state alive across tab/pane switches.
-    if (!isDiff) {
-      const cached = getCachedDirty(filePath)
-      if (cached !== undefined) {
-        setContent(cached.dirty)
-        setEditedContent(cached.dirty)
-        originalContentRef.current = cached.original
-        setLoading(false)
-        setError(null)
-        setSaveStatus('idle')
-        setIsBinaryRuntime(isBinaryContent(cached.dirty))
-        return
-      }
-    }
-
     setLoading(true)
     setError(null)
     setSaveStatus('idle')
@@ -211,12 +185,15 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setOriginalContent(origText)
         setEditedContent(currText)
       } else {
-        // Normal file read
+        // Normal file read. We always fetch to get the on-disk content for
+        // disk-conflict detection (originalContentRef). If a Monaco model
+        // already exists for this path (keepCurrentModel), the Editor will
+        // use it and ignore `defaultValue` — preserving undo/cursor/scroll.
         const res = await fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}`)
         if (res.ok) {
           const json = await res.json()
           const text = json?.data?.content ?? ''
-          setContent(text)
+          setInitialValue(text)
           setEditedContent(text)
           originalContentRef.current = text
           setIsBinaryRuntime(isBinaryContent(text))
@@ -255,11 +232,13 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         setContent(text)
         setEditedContent(text)
         originalContentRef.current = text
-        clearCachedDirty(filePath)
+        clearFileDirty(filePath)
+        const model = getLiveModel()
+        if (model) model.setValue(text)
         if (editorRef.current) editorRef.current.setValue(text)
       }
     } catch { /* ignore */ }
-  }, [filePath, isDiff])
+  }, [filePath, isDiff, getLiveModel])
 
   const handleReloadFromDisk = useCallback(() => {
     setDiskConflict(false)
@@ -277,7 +256,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
 
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
       debounceTimerRef.current = setTimeout(() => {
-        const dirty = !isDiff && editedContent !== originalContentRef.current
+        const dirty = !isDiff && isFileDirty(filePath)
         if (dirty) {
           setDiskConflict(true)
         } else {
@@ -292,28 +271,34 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       unsub()
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [filePath, cwd, isDiff, silentReload, editedContent])
+  }, [filePath, cwd, isDiff, silentReload])
 
   const handleSave = useCallback(async () => {
     if (!filePath || isDiff || saving) return
     setSaving(true)
     setSaveStatus('idle')
     try {
+      // Prefer reading from the live Monaco model (it's the source of truth
+      // and survives across tab switches).
+      const model = getLiveModel()
+      const bodyContent = model ? model.getValue() : editedContent
+
       const res = await fetch('/api/workspaces/files', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           path: filePath,
-          content: editedContent,
+          content: bodyContent,
         }),
       })
 
       if (res.ok) {
-        originalContentRef.current = editedContent
-        setContent(editedContent)
+        originalContentRef.current = bodyContent
+        setContent(bodyContent)
+        setEditedContent(bodyContent)
+        clearFileDirty(filePath)
         setSaveStatus('success')
         lastSavedAtRef.current = Date.now()
-        if (filePath && !isDiff) clearCachedDirty(filePath)
         if (onSaveSuccess) onSaveSuccess()
         setTimeout(() => setSaveStatus('idle'), 2000)
       } else {
@@ -324,7 +309,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setSaving(false)
     }
-  }, [filePath, isDiff, saving, editedContent, onSaveSuccess])
+  }, [filePath, isDiff, saving, editedContent, onSaveSuccess, getLiveModel])
 
   // Handle Ctrl+S keybinding
   useEffect(() => {
@@ -338,14 +323,14 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleSave])
 
-  const isDirty = !isDiff && filePath && editedContent !== originalContentRef.current
+  const isDirty = !isDiff && !!filePath && isFileDirty(filePath)
 
   const handleEditorChange = (value?: string) => {
-    if (value !== undefined) {
+    if (value !== undefined && filePath && !isDiff) {
       setEditedContent(value)
-      if (filePath && !isDiff) {
-        setCachedDirty(filePath, value, originalContentRef.current)
-      }
+      const dirty = value !== originalContentRef.current
+      if (dirty) markFileDirty(filePath)
+      else clearFileDirty(filePath)
     }
   }
 
@@ -381,6 +366,9 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   }
 
   const isDarkTheme = !window.document.documentElement.classList.contains('light')
+
+  // Build a stable Monaco URI for the model so it persists across unmounts.
+  const monacoPath = filePath ? `file://${filePath}` : undefined
 
   return (
     <div className="flex h-full w-full flex-col bg-background overflow-hidden">
@@ -490,16 +478,24 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
               scrollbar: { vertical: 'visible', horizontal: 'visible' },
             }}
           />
-        ) : (
+        ) : initialValue !== undefined ? (
           <Editor
+            key={filePath}
             height="100%"
+            path={monacoPath}
             language={getLanguage(filePath)}
             theme={isDarkTheme ? 'caw-dark' : 'light'}
-            beforeMount={defineCawDarkTheme}
-            value={content}
+            beforeMount={(monaco) => {
+              defineCawDarkTheme(monaco)
+              monacoRef.current = monaco
+            }}
+            defaultValue={initialValue}
+            saveViewState
+            keepCurrentModel
             onChange={handleEditorChange}
-            onMount={(editor) => {
+            onMount={(editor, monaco) => {
               editorRef.current = editor
+              monacoRef.current = monaco
             }}
             options={{
               fontSize: 12,
@@ -509,7 +505,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
               scrollbar: { vertical: 'visible', horizontal: 'visible' },
             }}
           />
-        )}
+        ) : null}
       </div>
     </div>
   )
