@@ -271,6 +271,109 @@ html, body, #root {
 }
 
 /* ==========================================================================
+   Voice Mode
+   ========================================================================== */
+
+.lava-lamp-mic {
+  stroke: url(#lava-gradient) !important;
+  filter: drop-shadow(0 0 3px rgba(168, 85, 247, 0.5));
+}
+
+.voice-bubble-container {
+  position: fixed;
+  bottom: 100px;
+  left: 12px;
+  right: 12px;
+  z-index: 50;
+  pointer-events: auto;
+}
+
+.voice-bubble {
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 10px 14px;
+  animation: voice-bubble-in 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@keyframes voice-bubble-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.voice-bubble-scroll {
+  max-height: 140px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  position: relative;
+}
+
+.voice-bubble-scroll::-webkit-scrollbar { display: none; }
+
+.voice-bubble-scroll-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+
+.voice-bubble-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-bubble-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a855f7;
+  animation: voice-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.voice-bubble-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+}
+
+.voice-bubble-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border) / 0.5);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.voice-bubble-btn:hover {
+  color: hsl(var(--foreground));
+  transform: scale(1.08);
+}
+
+/* ==========================================================================
    Monaco Editor overrides to match Shadcn UI context menus & floats
    ========================================================================== */
 

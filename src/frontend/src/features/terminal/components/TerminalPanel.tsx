@@ -144,13 +144,32 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       resizeObsRef.current = null
       detachTerminal(terminalId)
     }
-  }, [terminalId, stableCmd])
+  }, [terminalId, stableCmd, env])
 
   useEffect(() => {
     if (!isActive) return
     const inst = getTerminal(terminalId)
     if (inst) {
       inst.term.focus()
+    }
+  }, [isActive, terminalId])
+
+  // Notify the backend when this pane gains or loses the user's focus so the
+  // agent status heuristics (idle-timeout watchdog and the watchers' re-bind
+  // pass) can account for which terminal the user is currently driving. We
+  // send a `focus`/`blur` message on the terminal WS rather than a separate
+  // HTTP/WS channel because the lifecycle of the signal is bound to the
+  // terminal connection itself. The backend's agent package tracks this in a
+  // single-focus map keyed by leaf id. We also mirror the flag onto the
+  // TerminalInstance so connectWs.onopen can re-send it after a reconnect,
+  // preventing a dropped socket from leaving the backend with a stale
+  // unfocused state.
+  useEffect(() => {
+    const inst = getTerminal(terminalId)
+    const focused = isActive === true
+    if (inst) inst._focused = focused
+    if (inst?.ws?.readyState === WebSocket.OPEN) {
+      inst.ws.send(JSON.stringify({ type: 'focus', focused }))
     }
   }, [isActive, terminalId])
 

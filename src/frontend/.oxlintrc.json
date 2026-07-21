@@ -5,5 +5,19 @@
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }],
     "react/no-multi-comp": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/components/*.tsx"],
+      "rules": {
+        "react/no-multi-comp": "off"
+      }
+    },
+    {
+      "files": ["src/features/shared/errors/errorReporter.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
 }

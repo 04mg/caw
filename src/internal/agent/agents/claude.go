@@ -172,13 +172,22 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					silentTicks++
 				}
 
-				// Mid-session re-bind: detect /new and /resume issued inside
-				// the running agent. When the current file has been silent
-				// for a few polls and another same-cwd file has just received
-				// writes, atomically switch to it. Gated on PTY activity to
-				// ensure only the watcher whose PTY is producing output
-				// switches.
-				if silentTicks >= rebindSilenceTicks {
+			// Mid-session re-bind: detect /new and /resume issued inside
+			// the running agent. When the current file has been silent
+			// for a few polls and another same-cwd file has just received
+			// writes, atomically switch to it. Gated on PTY activity OR
+			// user focus to ensure only the watcher whose PTY is producing
+			// output (or whose pane the user is currently driving) switches
+			// — a sibling Claude in the same cwd writing to its own
+			// transcript should never cause this idle, unfocused watcher to
+			// steal its session. The focus exemption lets a /new or /resume
+			// issued in the focused pane re-bind even before the agent
+			// process emits any output (the new session file may appear
+			// before any PTY bytes are written).
+			if silentTicks >= rebindSilenceTicks {
+				focused := agent.IsPtyFocused(sessionID)
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second || focused {
 					cands, _ := FindLatestFiles(searchDir, ".jsonl", lastActivity)
 					var others []RebindCandidate
 					for _, c := range cands {
@@ -198,6 +207,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 						}
 					}
 				}
+			}
 			}
 		}
 	}

@@ -1,4 +1,3 @@
-/* eslint-disable react/no-multi-comp */
 import * as React from 'react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cn } from '@/features/shared/utils/utils'

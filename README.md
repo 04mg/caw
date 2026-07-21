@@ -8,7 +8,6 @@
   <p align="center">
     <img src="https://img.shields.io/github/v/release/04mg/caw?style=flat&label=release" alt="Latest release" />
     <a href="https://github.com/04mg/caw/stargazers"><img src="https://img.shields.io/github/stars/04mg/caw?style=flat&logo=github" alt="GitHub stars" /></a>
-    <img src="https://img.shields.io/github/downloads/04mg/caw/total?style=flat" alt="Total downloads" />
     <img src="https://img.shields.io/github/license/04mg/caw?style=flat" alt="License" />
   </p>
 

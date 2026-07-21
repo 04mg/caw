@@ -1,11 +1,27 @@
 import { useState, useEffect, useCallback, useRef, type ElementType } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2 } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
+import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
+import {
+	getVoiceMode,
+	setVoiceMode,
+	fetchLanguages,
+	fetchModels,
+	downloadModel,
+	isModelCached,
+	deleteModel,
+	isKrokoSupported,
+	getKrokoLanguage,
+	setKrokoLanguage,
+	type KrokoModel,
+	type KrokoLanguage,
+} from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
 
 
@@ -15,7 +31,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -81,6 +97,16 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [pushBusy, setPushBusy] = useState(false)
   const [pushError, setPushError] = useState('')
   const [soundEnabled, setSoundEnabled] = useState(true)
+  const [voiceLanguage, setVoiceLanguage] = useState('')
+  const [voiceMode, setVoiceModeState] = useState<'browser' | 'local'>('browser')
+  const [krokoLanguages, setKrokoLanguages] = useState<KrokoLanguage[]>([])
+  const [krokoModels, setKrokoModels] = useState<KrokoModel[]>([])
+  const [krokoLanguage, setKrokoLanguageState] = useState('')
+  const [krokoModelCache, setKrokoModelCache] = useState<Record<string, boolean>>({})
+  const [krokoDownloading, setKrokoDownloading] = useState<string | null>(null)
+  const [krokoDownloadProgress, setKrokoDownloadProgress] = useState<{ downloaded: number, total: number } | null>(null)
+  const [krokoLoading, setKrokoLoading] = useState(true)
+  const hasInstalledModel = Object.values(krokoModelCache).some(Boolean)
   const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
 
   const loadQuotaSettings = useCallback(async () => {
@@ -187,6 +213,37 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       // Load push notification state
       setSoundEnabled(localStorage.getItem('caw:soundEnabled') !== '0')
+      setVoiceLanguage(localStorage.getItem('caw:voiceLanguage') || '')
+      setVoiceModeState(getVoiceMode())
+      setKrokoLanguageState(getKrokoLanguage())
+
+      // Load Kroko models and languages
+      if (isKrokoSupported()) {
+        setKrokoLoading(true)
+        Promise.all([fetchLanguages(), fetchModels()])
+          .then(([langs, models]) => {
+            setKrokoLanguages(langs)
+            setKrokoModels(models)
+            const lang = getKrokoLanguage()
+            if (lang && langs.some((l) => l.iso === lang)) {
+              setKrokoLanguageState(lang)
+            } else if (langs.length > 0) {
+              setKrokoLanguageState(langs[0].iso)
+              setKrokoLanguage(langs[0].iso)
+            }
+            // Check cache status for all models
+            Promise.all(models.map((m) => isModelCached(m.url).then((c) => [m.url, c] as const)))
+              .then((results) => {
+                const cacheMap: Record<string, boolean> = {}
+                for (const [url, cached] of results) cacheMap[url] = cached
+                setKrokoModelCache(cacheMap)
+              })
+              .catch(() => {})
+          })
+          .catch(() => {})
+          .finally(() => setKrokoLoading(false))
+      }
+
       if (pushSupported && 'Notification' in window) {
         setPushPermission(Notification.permission)
       } else if (!pushSupported && !pushIOSPWA) {
@@ -390,6 +447,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'workspaces', label: 'Workspaces', icon: Folder },
     { id: 'terminal', label: 'Terminal', icon: Terminal },
+    { id: 'voice', label: 'Voice', icon: Mic },
     { id: 'agents', label: 'Agents', icon: Bot },
     { id: 'limits', label: 'Limits', icon: ChartSpline },
   ]
@@ -752,6 +810,233 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeSection === 'voice' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Voice</h3>
+                <p className="text-xs text-muted-foreground">Configure voice input engine and language for speech recognition.</p>
+              </div>
+
+              <div className="flex flex-col gap-2 mt-1">
+                <label className="text-xs font-medium">Voice Engine</label>
+                <div className="flex rounded-lg border border-border overflow-hidden">
+                  <button
+                    onClick={() => {
+                      setVoiceModeState('browser')
+                      setVoiceMode('browser')
+                    }}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+                      voiceMode === 'browser'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-background text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    Browser
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!isKrokoSupported()) return
+                      setVoiceModeState('local')
+                      setVoiceMode('local')
+                    }}
+                    disabled={!isKrokoSupported()}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-l border-border ${
+                      voiceMode === 'local'
+                        ? 'bg-primary text-primary-foreground'
+                        : isKrokoSupported()
+                          ? 'bg-background text-muted-foreground hover:text-foreground'
+                          : 'bg-background text-muted-foreground/50 cursor-not-allowed'
+                    }`}
+                  >
+                    <HardDrive className="h-3.5 w-3.5" />
+                    Local (Private)
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {voiceMode === 'browser'
+                    ? 'Uses the browser\'s built-in speech recognition. Requires Chrome, Edge, or Safari.'
+                    : 'Runs speech recognition locally in your browser. Models are downloaded and cached on your device.'}
+                </p>
+              </div>
+
+              {voiceMode === 'browser' && (
+                <>
+                  {isVoiceSupported() ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+                      <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Voice Mode is supported in this browser</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/5">
+                      <div className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
+                      <span className="text-xs text-red-600 dark:text-red-400 font-medium">Voice Mode is not supported in this browser. Use Chrome, Edge, or Safari for speech recognition.</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium">Speech Language</label>
+                    <Select
+                      value={voiceLanguage}
+                      onValueChange={(value) => {
+                        setVoiceLanguage(value)
+                        if (value) {
+                          localStorage.setItem('caw:voiceLanguage', value)
+                        } else {
+                          localStorage.removeItem('caw:voiceLanguage')
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="System Default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">System Default</SelectItem>
+                        <SelectItem value="en-US">English (US)</SelectItem>
+                        <SelectItem value="en-GB">English (UK)</SelectItem>
+                        <SelectItem value="es-ES">Spanish</SelectItem>
+                        <SelectItem value="fr-FR">French</SelectItem>
+                        <SelectItem value="de-DE">German</SelectItem>
+                        <SelectItem value="ja-JP">Japanese</SelectItem>
+                        <SelectItem value="ko-KR">Korean</SelectItem>
+                        <SelectItem value="zh-CN">Chinese (Simplified)</SelectItem>
+                        <SelectItem value="pt-BR">Portuguese (Brazil)</SelectItem>
+                        <SelectItem value="it-IT">Italian</SelectItem>
+                        <SelectItem value="nl-NL">Dutch</SelectItem>
+                        <SelectItem value="ru-RU">Russian</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[10px] text-muted-foreground">Language used for speech recognition. "System Default" uses your browser's default language.</p>
+                  </div>
+                </>
+              )}
+
+              {voiceMode === 'local' && (
+                <>
+                  {!isKrokoSupported() ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/5">
+                      <div className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
+                      <span className="text-xs text-red-600 dark:text-red-400 font-medium">Local voice mode is not supported in this browser. Cache API is required.</span>
+                    </div>
+                  ) : krokoLoading ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Loading available models...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-medium">Model Language</label>
+                        <Select
+                          value={krokoLanguage}
+                          onValueChange={(value) => {
+                            setKrokoLanguageState(value)
+                            setKrokoLanguage(value)
+                          }}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select language" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {krokoLanguages.map((lang) => (
+                              <SelectItem key={lang.iso} value={lang.iso}>{lang.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground">Language for the local speech recognition model.</p>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-medium">Available Models</label>
+                        <div className="flex flex-col gap-2">
+                          {krokoModels
+                            .filter((m) => m.language_iso === krokoLanguage || (krokoModelCache[m.url] && hasInstalledModel))
+                            .map((model) => {
+                              const sizeMB = Math.round(model.file_size / 1000 / 1000)
+                              const isDownloaded = krokoModelCache[model.url] || false
+                              const isDownloading = krokoDownloading === model.url
+                              const isDisabled = hasInstalledModel && !isDownloaded
+                              const isOtherLanguage = model.language_iso !== krokoLanguage
+                              return (
+                                <div
+                                  key={model.model_id}
+                                  className={`flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-background ${isDisabled ? 'opacity-40' : ''}`}
+                                >
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-xs font-medium">{model.name}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground">{sizeMB}MB</span>
+                                      {isDownloaded && isOtherLanguage && (
+                                        <span className="text-[10px] text-muted-foreground">· {krokoLanguages.find((l) => l.iso === model.language_iso)?.name || model.language_iso}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {isDownloaded ? (
+                                      <>
+                                        <div className="flex items-center gap-1">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Downloaded</span>
+                                        </div>
+                                        <button
+                                          onClick={async () => {
+                                            await deleteModel()
+                                            setKrokoModelCache((prev) => ({ ...prev, [model.url]: false }))
+                                          }}
+                                          className="p-1 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground cursor-pointer"
+                                          title="Remove model"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        onClick={async () => {
+                                          setKrokoDownloading(model.url)
+                                          setKrokoDownloadProgress(null)
+                                          try {
+                                            await downloadModel(model.url, (downloaded, total) => {
+                                              setKrokoDownloadProgress({ downloaded, total })
+                                            })
+                                            setKrokoModelCache((prev) => ({ ...prev, [model.url]: true }))
+                                          } catch {
+                                            setKrokoDownloadProgress(null)
+                                          } finally {
+                                            setKrokoDownloading(null)
+                                            setKrokoDownloadProgress(null)
+                                          }
+                                        }}
+                                        disabled={isDownloading || isDisabled}
+                                        className="flex items-center gap-1 px-2 py-1 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors disabled:opacity-50 cursor-pointer"
+                                      >
+                                        {isDownloading ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Download className="h-3 w-3" />
+                                        )}
+                                        {isDownloading && krokoDownloadProgress
+                                          ? `${krokoDownloadProgress.downloaded.toFixed(1)} / ${krokoDownloadProgress.total.toFixed(1)} MB`
+                                          : isDownloading
+                                            ? 'Downloading...'
+                                            : 'Download'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          {krokoModels.filter((m) => m.language_iso === krokoLanguage || (krokoModelCache[m.url] && hasInstalledModel)).length === 0 && (
+                            <p className="text-xs text-muted-foreground">No models available for this language.</p>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </div>
           )}
 
