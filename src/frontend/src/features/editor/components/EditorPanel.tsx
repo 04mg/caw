@@ -8,6 +8,7 @@ import { ImagePreviewView } from './ImagePreviewView'
 import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
 import { pathsEqual } from '@/features/shared/utils/path'
 import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
+import { useFileDirty } from '../hooks/useFileDirty'
 
 
 function defineCawDarkTheme(monaco: Monaco) {
@@ -296,6 +297,11 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         originalContentRef.current = bodyContent
         setContent(bodyContent)
         setEditedContent(bodyContent)
+        // Keep the Monaco model's undo/redo history intact across saves
+        // (VS Code parity). We only push a fresh undo stop so the just-saved
+        // state is a clean checkpoint; Ctrl+Z still walks back through prior
+        // edits until the file (model) is closed.
+        try { model?.pushStackElement() } catch { /* ignore */ }
         clearFileDirty(filePath)
         setSaveStatus('success')
         lastSavedAtRef.current = Date.now()
@@ -323,7 +329,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleSave])
 
-  const isDirty = !isDiff && !!filePath && isFileDirty(filePath)
+  const isDirty = useFileDirty(filePath) && !isDiff
 
   const handleEditorChange = (value?: string) => {
     if (value !== undefined && filePath && !isDiff) {
@@ -375,9 +381,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       {/* Editor Action Header */}
       {!isDiff && filePath && (
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/10 shrink-0">
-          <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[80%]">
+          <span className="text-[11px] text-muted-foreground truncate max-w-[80%]">
             {filePath}
-            {isDirty && <span className="ml-1.5 text-amber-500 font-bold">* unsaved</span>}
           </span>
           <div className="flex items-center gap-1.5">
             {saveStatus === 'success' && (
