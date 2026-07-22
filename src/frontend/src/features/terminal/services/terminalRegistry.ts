@@ -96,7 +96,7 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: 
 }
 
 const darkTerminalTheme = {
-  background: '#0a0a0a',
+  background: '#000',
   foreground: '#f0f0f0',
   cursor: '#f0f0f0',
   selectionBackground: '#264f78',
@@ -119,7 +119,7 @@ const darkTerminalTheme = {
 }
 
 const lightTerminalTheme = {
-  background: '#ffffff',
+  background: '#fff',
   foreground: '#1a1a1a',
   cursor: '#1a1a1a',
   selectionBackground: '#b0d4f1',
