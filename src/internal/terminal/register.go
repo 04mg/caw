@@ -95,6 +95,12 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		}
 		if _, ok := sess.conns[wc]; ok {
 			delete(sess.conns, wc)
+			// A viewer left — the PTY may now be able to grow to the
+			// remaining smallest viewer (or the single remaining viewer's
+			// full size). Recompute before broadcasting so larger viewers
+			// stop receiving downscaled output and the released mobile
+			// viewer no longer pins the PTY small.
+			sess.recomputeResize()
 		} else {
 			// sendScrollback hasn't run yet — undo the pending count.
 			sess.pendingResizes--
