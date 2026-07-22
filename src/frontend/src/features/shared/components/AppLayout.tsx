@@ -189,11 +189,27 @@ export function AppLayout() {
       skipPersistRef.current = true
       loadedRef.current = true
       const parsedWorkspaces = s.workspaces.map((w) => {
+        // Seed a local focus entry for every workspace on initial load so
+        // each client keeps its own selection independent of the shared
+        // backend state. The backend's activeTabIndex/activePaneId are only
+        // used as the fresh-load default here; afterwards selection is
+        // driven entirely by local user interaction.
+        localFocusRef.current[w.id] = {
+          tabIndex: Math.max(0, Math.min(w.activeTabIndex, w.layouts.length - 1)),
+          paneId: w.activePaneId,
+        }
         const { tree, activeGroupId } = ensureTabGroups(w)
         return { ...w, tabGroups: tree, activeGroupId }
       })
       setWorkspaces(parsedWorkspaces)
-      setActiveWorkspaceId(s.activeWorkspaceId)
+      // Selection is per-client: prefer the local focus we just seeded,
+      // falling back to the backend's last-writer value only to pick the
+      // initial workspace. Other devices switching workspaces must never
+      // clobber this client's active workspace.
+      const initialWs = s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
+        ? s.activeWorkspaceId
+        : (parsedWorkspaces[0]?.id ?? null)
+      setActiveWorkspaceId(initialWs)
       setLoaded(true)
     })
     return () => { done = true }
@@ -223,6 +239,17 @@ export function AppLayout() {
         for (const id of prevLeafIds) if (!nextLeafIds.has(id)) releaseTerminal(id)
 
         return remote.workspaces.map((rw) => {
+          // Selection is per-client. Seed a local focus entry for
+          // workspaces this client has never visited (e.g. one created on
+          // another device), so it doesn't inherit the other device's
+          // selection. For workspaces already known, keep this client's
+          // own tab/pane focus.
+          if (!localFocusRef.current[rw.id]) {
+            localFocusRef.current[rw.id] = {
+              tabIndex: Math.max(0, Math.min(rw.activeTabIndex, rw.layouts.length - 1)),
+              paneId: rw.activePaneId,
+            }
+          }
           const { tree, activeGroupId } = ensureTabGroups(rw)
           const focus = localFocusRef.current[rw.id]
           if (focus) {
@@ -231,7 +258,15 @@ export function AppLayout() {
           return { ...rw, tabGroups: tree, activeGroupId }
         })
       })
-      setActiveWorkspaceId(remote.activeWorkspaceId)
+      // Intentionally do NOT call setActiveWorkspaceId here. Each client
+      // keeps its own active workspace; adopting the remote value would
+      // make one device's workspace switch ripple to every other device.
+      // If the client's current workspace was removed remotely, fall back
+      // to the first remaining one below.
+      setActiveWorkspaceId((cur) => {
+        if (cur && remote.workspaces.some((w) => w.id === cur)) return cur
+        return remote.workspaces[0]?.id ?? null
+      })
     })
     return unsub
   }, [])
