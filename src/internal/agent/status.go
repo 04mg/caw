@@ -228,6 +228,38 @@ func IsPtyFocused(sessionID string) bool {
 	return ptyFocus[sessionID]
 }
 
+// SetPtyActivityForTest records (or clears) the last-activity timestamp for a
+// leaf/session id. It is intended only for tests that need to simulate PTY
+// output without a real terminal; production code drives ptyActivity via
+// terminal.OnPtyActivity (wired in init()).
+func SetPtyActivityForTest(sessionID string, at time.Time) {
+	ptyActivityMu.Lock()
+	if at.IsZero() {
+		delete(ptyActivity, sessionID)
+	} else {
+		ptyActivity[sessionID] = at
+	}
+	ptyActivityMu.Unlock()
+}
+
+// SetPtyFocusForTest records (or clears) whether a leaf/session id currently
+// has the user's focus. It is intended only for tests; production code drives
+// ptyFocus via terminal.OnPtyFocus (wired in init()).
+func SetPtyFocusForTest(sessionID string, focused bool) {
+	ptyFocusMu.Lock()
+	if focused {
+		for k := range ptyFocus {
+			if k != sessionID {
+				delete(ptyFocus, k)
+			}
+		}
+		ptyFocus[sessionID] = true
+	} else {
+		delete(ptyFocus, sessionID)
+	}
+	ptyFocusMu.Unlock()
+}
+
 // RegisterStatusWatcher allows status providers to register themselves
 func RegisterStatusWatcher(agentID string, w StatusWatcher) {
 	watchersMu.Lock()

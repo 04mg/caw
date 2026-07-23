@@ -114,7 +114,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	processState := func(changed bool) {
 		if openCodeSessionID == "" {
 			if changed {
-				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
+				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
 				if openCodeSessionID != "" {
 					silentTicks = 0
 					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
@@ -245,9 +245,9 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 }
 
 // findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the
-// opencode.db (filtered by directory=cwd when possible and started after
-// watcherStart) and returns the id of the earliest one (oldest first) that is
-// not already claimed by another watcher of the same agent type+cwd.
+// opencode.db (filtered by directory=cwd when possible) and returns the id of
+// the earliest one (oldest first) that is not already claimed by another
+// watcher of the same agent type+cwd.
 //
 // Subagent sessions (those with a non-empty parent_id) are always excluded:
 // subagents run internally inside the parent's PTY and have their own message
@@ -263,7 +263,21 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 // the agent process in this PTY is the one that created the session. This
 // prevents watcher 1 from claiming a session that was created by watcher 2's
 // agent just because watcher 1 polled first.
-func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
+//
+// Recency handling differs from the file-based watchers (claude, codex, ...).
+// Those filter by file mtime, which advances when a reattached old session
+// receives a new message — so a /sessions reattach in a fresh agent launch is
+// found naturally. OpenCode stores every session in a single shared SQLite DB,
+// so there is no per-session file mtime; filtering by session.time_created
+// (a row column set once at creation) would permanently exclude any session
+// the user reattaches to via /sessions. Instead we keep the recency check only
+// for the sibling-stealing guard: a fresh session (created after watcherStart)
+// is claimable with no extra gate, while an older session is claimable only
+// when this watcher's PTY recently produced output OR the pane has the user's
+// focus — the same gate the mid-session re-bind pass uses. This lets a
+// /sessions reattach in the active pane bind to its old session while an idle,
+// unfocused sibling watcher can't steal it.
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, ptyID string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
@@ -306,13 +320,26 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 	}
 
 	for _, r := range candidates {
-		// On resume, skip the recency filter — the session may predate the
-		// watcher (the agent reattaches to an old session). On fresh start,
-		// only match sessions started after the watcher launched.
+		// On resume, skip the recency filter entirely — the session may
+		// predate the watcher (the agent reattaches to an old session).
+		// On fresh start, a session created after the watcher launched is
+		// claimable with no extra gate (it was just created, most likely by
+		// this agent). An older session is only claimable when this watcher's
+		// PTY recently produced output OR the pane has the user's focus — the
+		// same gate the mid-session re-bind pass uses. This lets a /sessions
+		// reattach in the active pane bind to its old session (the user just
+		// drove it, so the PTY is active or focused), while an idle, unfocused
+		// sibling watcher can't steal a pre-existing session.
 		if !resume {
 			sessionCreated := time.UnixMilli(r.timeCreated)
 			if !sessionCreated.After(watcherStart) {
-				continue
+				ptyRecent := false
+				if lastPtyOut := agent.LastPtyActivity(ptyID); !lastPtyOut.IsZero() {
+					ptyRecent = time.Since(lastPtyOut) < 3*time.Second
+				}
+				if !(ptyRecent || agent.IsPtyFocused(ptyID)) {
+					continue
+				}
 			}
 		}
 		if ClaimSession(agentID, cwd, r.id) {
