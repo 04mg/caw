@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
   CircleSmall,
@@ -90,6 +90,27 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // `LayoutGroup` (see renderCard / board wrappers below). A shared
   // layoutId per sessionId lets cards glide smoothly across columns when
   // their status changes, instead of snapping as they unmount/remount.
+
+  // Detect when a column transitions from having agents to being empty,
+  // so the "No agents" placeholder only appears after the exit animation
+  // completes (200ms) rather than overlapping with the departing card.
+  const prevEmptyRef = useRef<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
+  const [showEmpty, setShowEmpty] = useState<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
+
+  const agentsEmpty = useCallback((colId: ColumnId, count: number) => {
+    const wasEmpty = prevEmptyRef.current[colId]
+    const nowEmpty = count === 0
+    prevEmptyRef.current[colId] = nowEmpty
+    if (wasEmpty && !nowEmpty) {
+      setShowEmpty(prev => ({ ...prev, [colId]: false }))
+    } else if (!wasEmpty && nowEmpty) {
+      const timer = setTimeout(() => {
+        setShowEmpty(prev => ({ ...prev, [colId]: true }))
+      }, 200)
+      return () => clearTimeout(timer)
+    }
+    return undefined
+  }, [])
 
   // Resolve a card to the workspace pane it should open.
   // Prefer the exact session id, then fall back to matching the agent cwd
@@ -198,6 +219,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
     groupedAgents[colId].sort(byStableOrder)
   })
+
+  // Track when each column transitions from non-empty to empty so the
+  // "No agents" placeholder only appears after the card exit animation
+  // (200ms) completes, avoiding an overlap with the departing card.
+  useEffect(() => { return agentsEmpty('idle', groupedAgents.idle.length) }, [agentsEmpty, groupedAgents.idle.length])
+  useEffect(() => { return agentsEmpty('working', groupedAgents.working.length) }, [agentsEmpty, groupedAgents.working.length])
+  useEffect(() => { return agentsEmpty('needs_input', groupedAgents.needs_input.length) }, [agentsEmpty, groupedAgents.needs_input.length])
 
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
@@ -407,7 +435,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated ? (
+                ) : hydrated && showEmpty[col.id] ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
                       <ColIcon className="w-3.5 h-3.5 text-foreground" />
@@ -458,7 +486,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated ? (
+                ) : hydrated && showEmpty[col.id] ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
                     <div className="p-2.5 rounded-full bg-muted/40">
                       <ColIcon className="w-4 h-4 text-foreground" />
