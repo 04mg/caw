@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
   CircleSmall,
   Clock, 
@@ -67,7 +68,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // paint, flashing "No agents in ..." placeholders for one frame.
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(() => getAgentStatuses())
   const [hydrated, setHydrated] = useState<boolean>(() => isAgentStatusesHydrated())
-  const cardsRef = useRef<Record<string, DOMRect>>({})
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
   useEffect(() => {
@@ -86,43 +86,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     })
   }, [])
 
-  // FLIP Layout Animation
-  useLayoutEffect(() => {
-    const newPositions: Record<string, DOMRect> = {}
-    const elements = document.querySelectorAll('[data-card-id]')
-
-    elements.forEach((el) => {
-      const id = el.getAttribute('data-card-id')
-      if (id) {
-        newPositions[id] = el.getBoundingClientRect()
-      }
-    })
-
-    Object.keys(newPositions).forEach((id) => {
-      const first = cardsRef.current[id]
-      const last = newPositions[id]
-
-      if (first && last) {
-        const dx = first.left - last.left
-        const dy = first.top - last.top
-
-        if (dx !== 0 || dy !== 0) {
-          const el = document.querySelector(`[data-card-id="${id}"]`) as HTMLElement
-          if (el) {
-            el.style.transform = `translate(${dx}px, ${dy}px)`
-            el.style.transition = 'none'
-
-            requestAnimationFrame(() => {
-              el.style.transform = ''
-              el.style.transition = 'transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)'
-            })
-          }
-        }
-      }
-    })
-
-    cardsRef.current = newPositions
-  }, [statuses])
+  // Card layout animations are handled by Framer Motion's `layout` prop +
+  // `LayoutGroup` (see renderCard / board wrappers below). A shared
+  // layoutId per sessionId lets cards glide smoothly across columns when
+  // their status changes, instead of snapping as they unmount/remount.
 
   // Resolve a card to the workspace pane it should open.
   // Prefer the exact session id, then fall back to matching the agent cwd
@@ -250,11 +217,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
 
     return (
-      <div
+      <motion.div
         key={agent.sessionId}
+        layout
+        layoutId={agent.sessionId}
         data-card-id={agent.sessionId}
         data-testid="kanban-card"
         onClick={handleCardClick}
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        transition={{
+          layout: { duration: 0.4, ease: [0.25, 0.8, 0.25, 1] },
+          opacity: { duration: 0.2 },
+          scale: { duration: 0.2 },
+        }}
         className={`group relative overflow-hidden cursor-pointer rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 active:scale-[0.98] select-none flex flex-col gap-3.5 shadow-sm hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`}
       >
         {/* Large semi-transparent background brand logo watermark */}
@@ -360,7 +337,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
           <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
         </div>
-      </div>
+      </motion.div>
     )
   }
 
@@ -407,7 +384,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       )
     }
     return (
-        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
+      <LayoutGroup>
+        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 kanban-scroll">
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
@@ -426,6 +404,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 </span>
               </div>
               <div className="flex flex-col gap-2">
+                <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
                 ) : hydrated ? (
@@ -436,18 +415,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
+                </AnimatePresence>
               </div>
             </div>
           )
         })}
       </div>
+      </LayoutGroup>
     )
   }
 
   return (
+    <LayoutGroup>
     <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
       {/* Kanban Board Columns */}
-      <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2">
+      <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2 kanban-scroll">
         {COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
           const ColIcon = col.icon
@@ -472,7 +454,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               </div>
 
               {/* Card List */}
-              <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 scrollbar-thin">
+              <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 kanban-scroll">
+                <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
                 ) : hydrated ? (
@@ -483,11 +466,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
+                </AnimatePresence>
               </div>
             </div>
           )
         })}
       </div>
     </div>
+    </LayoutGroup>
   )
 }
