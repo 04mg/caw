@@ -10,6 +10,7 @@ require (
 	github.com/gitpod-io/xterm-go v0.0.0-20260602140638-d86eba88b616
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/yuin/goldmark v1.8.4
 	modernc.org/sqlite v1.53.0
 )
 
