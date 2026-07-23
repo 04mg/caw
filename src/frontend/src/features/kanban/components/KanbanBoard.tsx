@@ -291,22 +291,20 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
         {/* Card Content - Dynamic Description */}
         <div className="flex flex-col gap-2 z-10">
-          {/* Title / Session Name */}
-          <div className="text-xs font-medium bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors h-[36px] overflow-hidden flex items-center">
-            <div
-              className="whitespace-nowrap overflow-hidden w-full"
-              style={{
-                maskImage: 'linear-gradient(to right, black 85%, transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)'
-              }}
-            >
-              {agent.title ? (
+          {/* Title / Session Name — only rendered when a title exists */}
+          {agent.title && (
+            <div className="text-xs font-medium bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors h-[36px] overflow-hidden flex items-center">
+              <div
+                className="whitespace-nowrap overflow-hidden w-full"
+                style={{
+                  maskImage: 'linear-gradient(to right, black 85%, transparent 100%)',
+                  WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)'
+                }}
+              >
                 <span className="text-foreground/90">{agent.title}</span>
-              ) : (
-                <span className="text-muted-foreground">Unnamed Session</span>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Active Tool / Details */}
           {(agent.tool || agent.details) && (
