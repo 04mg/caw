@@ -1,11 +1,12 @@
-import { useRef, useCallback, type ReactNode } from 'react'
-import { Group } from 'react-resizable-panels'
+import { type ReactNode, useMemo } from 'react'
+import { SplitLayout } from '@/features/shared/components/SplitLayout'
 
 interface SplitGroupProps {
   splitId: string
   orientation: 'horizontal' | 'vertical'
   onSizesChange: (splitId: string, sizes: number[]) => void
   children: ReactNode
+  sizes?: number[]
 }
 
 export function SplitGroup({
@@ -13,45 +14,30 @@ export function SplitGroup({
   orientation,
   onSizesChange,
   children,
+  sizes,
 }: SplitGroupProps): ReactNode {
-  const childIdsRef = useRef<string[]>([])
-  childIdsRef.current = []
+  const childArray = Array.isArray(children) ? children : [children]
+  const count = childArray.length
 
-  const collectIds = (kids: ReactNode) => {
-    const arr = Array.isArray(kids) ? kids : [kids]
-    for (const k of arr) {
-      if (k && typeof k === 'object' && 'props' in (k as any)) {
-        const p = (k as any).props
-        const id = p?.id
-        if (typeof id === 'string') childIdsRef.current.push(id)
-        if (p?.children) collectIds(p.children)
-      }
-    }
-  }
-  collectIds(children)
-
-  const handleLayoutChanged = useCallback(
-    (layout: Record<string, number>) => {
-      const ids = childIdsRef.current
-      if (ids.length === 0) return
-      const ordered = ids.map((id) => layout[id]).filter((v) => typeof v === 'number')
-      if (ordered.length === ids.length) {
-        const total = ordered.reduce((a, b) => a + b, 0) || 1
-        const normalized = ordered.map((v) => (v / total) * 100)
-        onSizesChange(splitId, normalized)
-      }
-    },
-    [splitId, onSizesChange],
-  )
+  const resolvedSizes = useMemo(() => {
+    if (sizes && sizes.length === count) return sizes
+    return new Array(count).fill(100 / Math.max(count, 1))
+  }, [sizes, count])
 
   return (
-    <Group
+    <SplitLayout
       key={splitId}
       orientation={orientation}
+      sizes={resolvedSizes}
+      onSizesChange={(next) => onSizesChange(splitId, next)}
       className="h-full w-full"
-      onLayoutChanged={handleLayoutChanged}
+      separatorClassName={
+        orientation === 'horizontal'
+          ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize'
+          : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize'
+      }
     >
-      {children}
-    </Group>
+      {childArray}
+    </SplitLayout>
   )
 }

@@ -592,10 +592,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
 
 // waitForLayout resolves when the container element has non-zero width
 // and height (i.e. the layout engine has applied final dimensions).
-// react-resizable-panels applies sizes asynchronously, so calling term.open
-// + fit.fit immediately after mount produces wrong cols/rows and garbled
-// rendering. We wait for the layout to settle, with a 500ms fallback so
-// we never block forever on a hidden/offscreen panel.
+// Flex-basis percentages apply synchronously, but xterm's cols/rows math
+// still benefits from a microtask delay until the browser paints. We wait
+// for the layout to settle, with a 500ms fallback so we never block
+// forever on a hidden/offscreen panel.
 function waitForLayout(el: HTMLElement): Promise<void> {
   return new Promise((resolve) => {
     const rect = el.getBoundingClientRect()
