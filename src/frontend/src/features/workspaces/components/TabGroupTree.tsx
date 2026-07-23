@@ -1,5 +1,4 @@
-import { type ReactNode, Fragment } from 'react'
-import { Panel, Separator } from 'react-resizable-panels'
+import { type ReactNode } from 'react'
 import { type Workspace, type TabGroupsNode } from '../types'
 import { TabGroupView } from './TabGroupView'
 import { TabSplitGroup } from './TabSplitGroup'
@@ -113,50 +112,38 @@ export function TabGroupTree({
       sizes={sizes}
       onSizesChange={onGroupSizesChange}
     >
-      {node.children.map((child, i) => {
+      {node.children.map((child) => {
         const childId = child.id
         return (
-          <Fragment key={childId}>
-            {i > 0 && (
-              <Separator
-                className={
-                  orientation === 'horizontal'
-                    ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize shrink-0'
-                    : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize shrink-0'
-                }
-              />
-            )}
-            <Panel id={childId} defaultSize={`${sizes[i]}%`}>
-              <TabGroupTree
-                workspace={workspace}
-                node={child}
-                activeGroupId={activeGroupId}
-                topRightGroupId={topRightGroupId}
-                draggedTabId={draggedTabId}
-                activePaneId={activePaneId}
-                gitStatuses={gitStatuses}
-                folderSidebarCollapsed={folderSidebarCollapsed}
-                onSetActiveGroup={onSetActiveGroup}
-                onSwitchTab={onSwitchTab}
-                onCloseTab={onCloseTab}
-                onReorderTabs={onReorderTabs}
-                onAddTab={onAddTab}
-                onSplitGroup={onSplitGroup}
-                onMoveTabToGroup={onMoveTabToGroup}
-                onDragStart={onDragStart}
-                onToggleWorktrees={onToggleWorktrees}
-                onFocusPane={onFocusPane}
-                onSplitVert={onSplitVert}
-                onSplitHoriz={onSplitHoriz}
-                onClosePane={onClosePane}
-                onSizesChange={onSizesChange}
-                onGroupSizesChange={onGroupSizesChange}
-                onOpenDiff={onOpenDiff}
-                onOpenSettings={onOpenSettings}
-                onToggleFolderSidebar={onToggleFolderSidebar}
-              />
-            </Panel>
-          </Fragment>
+          <TabGroupTree
+            key={childId}
+            workspace={workspace}
+            node={child}
+            activeGroupId={activeGroupId}
+            topRightGroupId={topRightGroupId}
+            draggedTabId={draggedTabId}
+            activePaneId={activePaneId}
+            gitStatuses={gitStatuses}
+            folderSidebarCollapsed={folderSidebarCollapsed}
+            onSetActiveGroup={onSetActiveGroup}
+            onSwitchTab={onSwitchTab}
+            onCloseTab={onCloseTab}
+            onReorderTabs={onReorderTabs}
+            onAddTab={onAddTab}
+            onSplitGroup={onSplitGroup}
+            onMoveTabToGroup={onMoveTabToGroup}
+            onDragStart={onDragStart}
+            onToggleWorktrees={onToggleWorktrees}
+            onFocusPane={onFocusPane}
+            onSplitVert={onSplitVert}
+            onSplitHoriz={onSplitHoriz}
+            onClosePane={onClosePane}
+            onSizesChange={onSizesChange}
+            onGroupSizesChange={onGroupSizesChange}
+            onOpenDiff={onOpenDiff}
+            onOpenSettings={onOpenSettings}
+            onToggleFolderSidebar={onToggleFolderSidebar}
+          />
         )
       })}
     </TabSplitGroup>
