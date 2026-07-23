@@ -84,7 +84,7 @@ export function AppLayout() {
   const folderSidebarRef = usePanelRef()
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
-  const sidebarSizeRef = useRef(25)
+  const sidebarSizeRef = useRef(15)
   const folderSidebarSizeRef = useRef(20)
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
@@ -170,7 +170,7 @@ export function AppLayout() {
     }
   }, [])
 
-  const sidebarDefaultSize = '25%'
+  const sidebarDefaultSize = '15%'
 
   useEffect(() => {
     let done = false
@@ -314,6 +314,9 @@ export function AppLayout() {
 
   // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
   // when hidden (no workspace or toggled off) and restores to its saved size.
+  // When collapsing, the workspace sidebar is also re-resized to its current
+  // size so the freed space goes to the main (terminals) panel instead of
+  // being absorbed proportionally by the workspace sidebar.
   useEffect(() => {
     const ref = folderSidebarRef.current
     if (!ref) return
@@ -322,9 +325,13 @@ export function AppLayout() {
       ref.resize(`${folderSidebarSizeRef.current}%`)
     } else {
       ref.resize('0%')
+      const sidebarPanel = sidebarRef.current
+      if (sidebarPanel && !sidebarCollapsed) {
+        sidebarPanel.resize(`${sidebarSizeRef.current}%`)
+      }
     }
     setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [folderVisible, folderSidebarRef])
+  }, [folderVisible, folderSidebarRef, sidebarRef, sidebarCollapsed])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
