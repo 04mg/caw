@@ -59,14 +59,14 @@ func (vs *VirtualScreen) Process(data []byte) []byte {
 		// First call: resize to viewer dimensions so the serialize
 		// output reflects the viewer's layout from the start.
 		if vs.viewerCols != vs.ptyCols || vs.viewerRows != vs.ptyRows {
-			vs.term.Resize(vs.viewerRows, vs.viewerCols)
+			vs.term.Resize(vs.viewerCols, vs.viewerRows)
 		}
 	}
 
 	vs.term.Write(data)
 
 	if vs.viewerCols != vs.ptyCols || vs.viewerRows != vs.ptyRows {
-		vs.term.Resize(vs.viewerRows, vs.viewerCols)
+		vs.term.Resize(vs.viewerCols, vs.viewerRows)
 	}
 
 	return vs.serializeAddon.Serialize(nil)
