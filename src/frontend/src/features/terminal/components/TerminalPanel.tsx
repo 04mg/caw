@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -142,7 +142,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       }
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
-      detachTerminal(terminalId)
+      // Desktop buffers non-active terminals (detach keeps the WS open so
+      // re-attaching replays the local ring buffer instantly). Mobile
+      // renders only the selected terminal, so switching terminals must
+      // fully release the previous one — closing the WS without killing
+      // the backend PTY — so the backend's smallest-viewer resize can grow
+      // the PTY back to desktop size when the mobile viewer drops off.
+      if (window.innerWidth < 768) {
+        releaseTerminal(terminalId)
+      } else {
+        detachTerminal(terminalId)
+      }
     }
   }, [terminalId, stableCmd, env])
 

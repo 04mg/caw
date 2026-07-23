@@ -65,6 +65,14 @@ export interface TerminalInstance {
    * backend doesn't lose focus state across socket drops.
    */
   _focused: boolean
+  /**
+   * @internal True after releaseTerminal intentionally drops this client's
+   * hold on a terminal (mobile switched to another terminal). Prevents the
+   * ws.onclose auto-reconnect from silently re-attaching and re-pinning
+   * the backend PTY to mobile dimensions. A later attachTerminal call
+   * re-opens the terminal and reconnects.
+   */
+  _released: boolean
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -521,6 +529,13 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       // clients, so reconnecting later resumes the same session.
       // Actual process exit is reported separately via the "exit" message.
       inst.ws = null
+      // If this terminal was intentionally released (mobile switched to
+      // another terminal), do NOT auto-reconnect — that would re-pin the
+      // backend PTY to mobile dimensions. A later attachTerminal call
+      // (switching back to this terminal) re-opens it explicitly.
+      if (inst._released) {
+        return
+      }
       // Auto-reconnect after a short delay, mirroring the pattern used
       // by the other WS clients in the app (workspaceStore, agentStatusStore,
       // fileTreeWs). Without this, every keystroke is silently dropped
@@ -601,6 +616,10 @@ export async function attachTerminal(
     // The terminal is being re-attached to the DOM, so live output can
     // once again be rendered directly to xterm.js.
     existing._detached = false
+    // A previous releaseTerminal call (mobile tab switch) set this flag to
+    // suppress auto-reconnect. We're now explicitly re-attaching, so clear
+    // it so a future socket drop reconnects normally.
+    existing._released = false
     // Wait for the container to have real dimensions before opening
     // xterm.js, so fit.fit() computes correct cols/rows and the terminal
     // doesn't render garbled output that requires a manual resize.
@@ -659,7 +678,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -733,6 +752,10 @@ export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  // Mark as intentionally released so ws.onclose does not auto-reconnect
+  // and re-pin the backend PTY (used by the mobile single-active-terminal
+  // model). A later attachTerminal call clears this flag and reconnects.
+  inst._released = true
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
