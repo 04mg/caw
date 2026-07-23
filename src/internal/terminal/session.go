@@ -121,7 +121,7 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 		s.rows = rows
 		_ = s.Pty.ptmx.Resize(cols, rows)
 		s.cleanupViewerVS()
-		s.broadcastResize()
+		s.broadcastResize(source)
 		return
 	}
 
@@ -129,7 +129,13 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	// fits every client. Larger viewers get a VirtualScreen that upscales
 	// PTY output to their dimensions, plus cell-based padding so xterm.js
 	// centers the min grid inside the larger panel.
-	minCols, minRows := s.smallestViewerSize()
+	// Include the source viewer in the min computation: a freshly-connected
+	// viewer reports its dimensions here before sendScrollback registers it
+	// in s.conns (it is still counted in pendingResizes). Without this, the
+	// min would be drawn only from the already-registered (e.g. desktop)
+	// viewers and the PTY would be driven to the desktop size instead of
+	// the smallest (mobile) viewer — the very bug this path exists to fix.
+	minCols, minRows := s.smallestViewerSize(source)
 	if minCols <= 0 || minRows <= 0 {
 		// No fully-sized viewer yet; keep the PTY as-is.
 		return
@@ -141,7 +147,8 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	}
 
 	// (Re)create or dispose each viewer's VirtualScreen based on whether
-	// it matches the (now smallest-driven) PTY size.
+	// it matches the (now smallest-driven) PTY size. The source viewer's
+	// VirtualScreen is created later in sendScrollback once it registers.
 	for c := range s.conns {
 		if c.cols <= 0 || c.rows <= 0 {
 			continue
@@ -159,17 +166,24 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 			c.vs.Resize(c.cols, c.rows)
 		}
 	}
-	s.broadcastResize()
+	s.broadcastResize(source)
 }
 
 // smallestViewerSize returns the minimum cols and rows across all
 // registered connections that have reported dimensions. Must be called
 // with s.mu held.
-func (s *Session) smallestViewerSize() (int, int) {
+//
+// extra is an optional viewer (e.g. a freshly-connected one that has
+// reported its dimensions via resizePTY but hasn't been registered in
+// s.conns yet — it is still counted in pendingResizes). Including it
+// ensures the PTY is driven to the true smallest viewer on the very first
+// resize, rather than waiting until sendScrollback registers the
+// connection.
+func (s *Session) smallestViewerSize(extra *connWriter) (int, int) {
 	minCols, minRows := 0, 0
-	for c := range s.conns {
+	consider := func(c *connWriter) {
 		if c.cols <= 0 || c.rows <= 0 {
-			continue
+			return
 		}
 		if minCols == 0 || c.cols < minCols {
 			minCols = c.cols
@@ -177,6 +191,12 @@ func (s *Session) smallestViewerSize() (int, int) {
 		if minRows == 0 || c.rows < minRows {
 			minRows = c.rows
 		}
+	}
+	for c := range s.conns {
+		consider(c)
+	}
+	if extra != nil {
+		consider(extra)
 	}
 	return minCols, minRows
 }
@@ -202,12 +222,12 @@ func (s *Session) recomputeResize() {
 			s.rows = c.rows
 			_ = s.Pty.ptmx.Resize(c.cols, c.rows)
 			s.cleanupViewerVS()
-			s.broadcastResize()
+			s.broadcastResize(nil)
 			return
 		}
 		return
 	}
-	minCols, minRows := s.smallestViewerSize()
+	minCols, minRows := s.smallestViewerSize(nil)
 	if minCols <= 0 || minRows <= 0 {
 		return
 	}
@@ -229,7 +249,7 @@ func (s *Session) recomputeResize() {
 				c.vs.Resize(c.cols, c.rows)
 			}
 		}
-		s.broadcastResize()
+		s.broadcastResize(nil)
 		return
 	}
 	s.cols = minCols
@@ -250,7 +270,7 @@ func (s *Session) recomputeResize() {
 			c.vs.Resize(c.cols, c.rows)
 		}
 	}
-	s.broadcastResize()
+	s.broadcastResize(nil)
 }
 
 // cleanupViewerVS removes VirtualScreens from all connections whose
@@ -272,12 +292,17 @@ func (s *Session) cleanupViewerVS() {
 //   - larger viewers receive their own (larger) cols/rows and positive
 //     padding so xterm.js renders a centered min-grid inside the panel.
 //
+// extra is an optional viewer that has reported dimensions but isn't in
+// s.conns yet (e.g. a freshly-connected client whose resizePTY ran before
+// sendScrollback registered it). It still needs its resize/padding message
+// so its frontend learns the padCols/padRows to center the grid.
+//
 // Must be called with s.mu held.
-func (s *Session) broadcastResize() {
+func (s *Session) broadcastResize(extra *connWriter) {
 	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
-	for c := range s.conns {
+	send := func(c *connWriter) {
 		viewCols, viewRows := c.cols, c.rows
 		if viewCols <= 0 || viewRows <= 0 {
 			viewCols, viewRows = s.cols, s.rows
@@ -300,6 +325,12 @@ func (s *Session) broadcastResize() {
 		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 			delete(s.conns, c)
 		}
+	}
+	for c := range s.conns {
+		send(c)
+	}
+	if extra != nil {
+		send(extra)
 	}
 }
 
