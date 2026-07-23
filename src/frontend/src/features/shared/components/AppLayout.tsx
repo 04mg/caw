@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Group, Panel, Separator, usePanelRef, useGroupRef } from 'react-resizable-panels'
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import { Toaster, toast } from 'sonner'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
@@ -82,7 +82,6 @@ export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarRef = usePanelRef()
   const folderSidebarRef = usePanelRef()
-  const topGroupRef = useGroupRef()
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
   const sidebarSizeRef = useRef(parseFloat(localStorage.getItem('caw:sidebarSize') || '25'))
@@ -283,7 +282,7 @@ export function AppLayout() {
   // --------------------------------------
   // The left workspace sidebar, main content, and right folder sidebar Panels
   // are ALWAYS mounted inside the top-level <Group>. Collapse is driven through
-  // the imperative groupRef.setLayout() API rather than unmounting the Panels.
+  // the imperative panelRef.resize() API rather than unmounting the Panels.
   //
   // This is required because react-resizable-panels throws
   // "Invalid N panel layout: ..." from its ResizeObserver whenever the Panel
@@ -295,44 +294,52 @@ export function AppLayout() {
   //
   // `collapsible` is left OFF. The 15% drag floor is enforced by the library's
   // own minSize clamping (Z() in the lib hard-clamps to minSize), so dragging
-  // the separator can never push the sidebar below 15% or above 50% — no
-  // snap-back hack needed. When collapsed, minSize and maxSize are both pinned
-  // to the collapsed size so the panel can't be dragged at all (no "gap" the
-  // user can grab to shrink the rail further). The lib re-registers a Panel
-  // whenever its min/max props change, so the constraints update live without
-  // unmounting.
-  const SIDEBAR_COLLAPSED_PCT = 6   // ~44px on a ~730px-wide group
-  const FOLDER_COLLAPSED_PCT = 0
-  const sidebarMinSize = sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : '15%'
-  const sidebarMaxSize = sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : '50%'
+  // the separator can never push the sidebar below 15% or above 50%. When
+  // collapsed, minSize and maxSize are both pinned to the collapsed size in
+  // PIXELS so the panel can't be dragged at all (no "gap" the user can grab to
+  // shrink the rail further). Pixels are used (rather than a percentage) so
+  // the pinned width matches the 44px rail exactly regardless of window width.
+  // The lib re-registers a Panel whenever its min/max props change, so the
+  // constraints update live without unmounting.
+  const SIDEBAR_COLLAPSED_PX = '44px'
   const folderVisible = activeWorkspace && !folderSidebarCollapsed
-  const folderMinSize = folderVisible ? '15%' : `${FOLDER_COLLAPSED_PCT}%`
-  const folderMaxSize = folderVisible ? '50%' : `${FOLDER_COLLAPSED_PCT}%`
+  const sidebarMinSize = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : '15%'
+  const sidebarMaxSize = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : '50%'
+  const folderMinSize = folderVisible ? '15%' : '0%'
+  const folderMaxSize = folderVisible ? '50%' : '0%'
 
-  // Guard so onResize doesn't persist sizes during programmatic setLayout.
+  // Guard so onResize doesn't persist sizes during programmatic resize calls.
   const programmaticLayoutRef = useRef(false)
 
-  // Apply a full layout {sidebar, main, folder-sidebar} atomically via the
-  // groupRef. This is more reliable than per-panel resize() because it sets
-  // all three sizes in one validated pass (K() scales to 100 internally).
-  const applyTopGroupLayout = useCallback((sizes: { sidebar: number; main: number; 'folder-sidebar': number }) => {
-    const group = topGroupRef.current
-    if (!group) return
-    programmaticLayoutRef.current = true
-    group.setLayout(sizes)
-    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [topGroupRef])
-
-  // Drive the sidebar and folder sidebar sizes imperatively whenever the
-  // collapsed state or active workspace changes.
+  // Drive the sidebar Panel's size imperatively. The Panel itself is always
+  // mounted (see the desktop Group below); only its size and content change.
+  // panelRef.resize() accepts px and % strings; the lib clamps to the Panel's
+  // current minSize/maxSize and redistributes the remainder to the main panel.
   useEffect(() => {
-    const group = topGroupRef.current
-    if (!group) return
-    const sidebar = sidebarCollapsed ? SIDEBAR_COLLAPSED_PCT : sidebarSizeRef.current
-    const folder = folderVisible ? folderSidebarSizeRef.current : FOLDER_COLLAPSED_PCT
-    const main = Math.max(0, 100 - sidebar - folder)
-    applyTopGroupLayout({ sidebar, main, 'folder-sidebar': folder })
-  }, [sidebarCollapsed, folderVisible, applyTopGroupLayout, topGroupRef, SIDEBAR_COLLAPSED_PCT, FOLDER_COLLAPSED_PCT])
+    const ref = sidebarRef.current
+    if (!ref) return
+    programmaticLayoutRef.current = true
+    if (sidebarCollapsed) {
+      ref.resize(SIDEBAR_COLLAPSED_PX)
+    } else {
+      ref.resize(`${sidebarSizeRef.current}%`)
+    }
+    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
+  }, [sidebarCollapsed, sidebarRef, SIDEBAR_COLLAPSED_PX])
+
+  // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
+  // when hidden (no workspace or toggled off) and restores to its saved size.
+  useEffect(() => {
+    const ref = folderSidebarRef.current
+    if (!ref) return
+    programmaticLayoutRef.current = true
+    if (folderVisible) {
+      ref.resize(`${folderSidebarSizeRef.current}%`)
+    } else {
+      ref.resize('0%')
+    }
+    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
+  }, [folderVisible, folderSidebarRef])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1798,9 +1805,9 @@ export function AppLayout() {
         <>
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
-              <Group orientation="horizontal" className="flex-1" groupRef={topGroupRef}>
+              <Group orientation="horizontal" className="flex-1">
                 {/* Left Workspace Panel — always mounted; collapse/expand is
-                    driven imperatively via groupRef.setLayout() (see the effect
+                    driven imperatively via sidebarRef.resize() (see the effect
                     near the derived-size block above). Only the Panel content
                     swaps between the 44px collapsed rail and the full sidebar.
                     The Panel count never changes, which prevents the
@@ -1810,7 +1817,7 @@ export function AppLayout() {
                 <Panel
                   id="sidebar"
                   panelRef={sidebarRef}
-                  defaultSize={sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : sidebarDefaultSize}
+                  defaultSize={sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : sidebarDefaultSize}
                   minSize={sidebarMinSize}
                   maxSize={sidebarMaxSize}
                   onResize={(size) => {
@@ -1937,9 +1944,9 @@ export function AppLayout() {
 
                 {/* Right Folder Explorer Panel — always mounted (same reason as
                     the left sidebar above); collapses to 0% imperatively via
-                    groupRef.setLayout() and renders null content when hidden.
-                    The separator is conditionally rendered since its count
-                    does not affect the layout validator. */}
+                    folderSidebarRef.resize("0%") and renders null content when
+                    hidden. The separator is conditionally rendered since its
+                    count does not affect the layout validator. */}
                 {activeWorkspace && !folderSidebarCollapsed && (
                   <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 )}
