@@ -7,7 +7,6 @@ require (
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
-	github.com/gitpod-io/xterm-go v0.0.0-20260602140638-d86eba88b616
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/yuin/goldmark v1.8.4
