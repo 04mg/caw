@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+import { Group, Panel, Separator, useGroupRef, usePanelRef } from 'react-resizable-panels'
 import { Toaster, toast } from 'sonner'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
@@ -84,6 +84,7 @@ export function AppLayout() {
   )
   const sidebarRef = usePanelRef()
   const folderSidebarRef = usePanelRef()
+  const groupRef = useGroupRef()
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
   const sidebarSizeRef = useRef(
@@ -93,14 +94,10 @@ export function AppLayout() {
       return n >= 15 && n <= 50 ? n : 15
     })(),
   )
-  // Tracks the workspace sidebar's current pixel width. We can't rely on
-  // Panel.onResize to capture this because that fires asynchronously (via
-  // ResizeObserver) AFTER programmaticLayoutRef resets, which would record the
-  // sidebar's *enlarged* post-collapse size and break the next collapse. Instead
-  // we read it synchronously via getSize().inPixels right before collapsing the
-  // folder sidebar, then re-pin the sidebar to that exact width afterwards so
-  // the freed space flows into the main (terminals) panel rather than being
-  // absorbed proportionally by the sidebar.
+  // Pixel widths for the sidebar and main panels, updated synchronously from
+  // Panel.onResize. The atomic setLayout driver below works in percentages
+  // (derived from sidebarSizeRef and folderSidebarSizeRef), so these refs are
+  // not currently read but are kept for diagnostics / future use.
   const sidebarPxRef = useRef(0)
   const folderSidebarSizeRef = useRef(
     (() => {
@@ -321,55 +318,73 @@ export function AppLayout() {
   // Guard so onResize doesn't persist sizes during programmatic resize calls.
   const programmaticLayoutRef = useRef(false)
 
-  // Drive the sidebar Panel's size imperatively. The Panel itself is always
-  // mounted (see the desktop Group below); only its size and content change.
-  // panelRef.resize() accepts px and % strings; the lib clamps to the Panel's
-  // current minSize/maxSize and redistributes the remainder to the main panel.
-  useEffect(() => {
-    const ref = sidebarRef.current
-    if (!ref) return
-    programmaticLayoutRef.current = true
-    if (sidebarCollapsed) {
-      ref.resize(SIDEBAR_COLLAPSED_PX)
-    } else {
-      ref.resize(`${sidebarSizeRef.current}%`)
-    }
-    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [sidebarCollapsed, sidebarRef, SIDEBAR_COLLAPSED_PX])
-
-  // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
-  // when hidden (no workspace or toggled off) and restores to its saved size.
+  // ----- Imperative layout driver -------------------------------------------
   //
-  // When collapsing, the library's default preserve-relative-size behavior
-  // grows the workspace sidebar proportionally to absorb the freed space
-  // (groupResizeBehavior="preserve-pixel-size" only applies on window resize,
-  // not on sibling collapse). To force the freed space into the main
-  // (terminals) panel, we snapshot the sidebar's current pixel width
-  // synchronously via getSize() BEFORE collapsing, then re-pin the sidebar to
-  // that exact pixel width AFTER the folder collapse. The main panel — the only
-  // remaining preserve-relative-size panel — receives the difference.
+  // The workspace sidebar (id "sidebar"), terminals panel (id "main"), and
+  // folder sidebar (id "folder-sidebar") live in one top-level <Group>. They
+  // are ALWAYS mounted (never unmounted) — collapse/expand is driven
+  // imperatively. This avoids the "Invalid N panel layout" throw from
+  // react-resizable-panels' ResizeObserver when the cached layout arity
+  // mismatches the live panel constraints (see issue #691).
+  //
+  // We drive every transition through groupRef.setLayout() with an explicit
+  // { panelId: percentage } map that already sums to 100. This is the key
+  // difference from the previous panelRef.resize() approach:
+  //
+  //   panelRef.resize() feeds a *delta* through the library's adjustByDelta
+  //   algorithm (le). When a sibling panel's min/max constraints change (folder
+  //   → 0%), the library's async ResizeObserver re-runs the constraint clamp K,
+  //   which redistributes the freed space to panels in *index order* — the
+  //   sidebar (index 0) grabs it before the main panel (index 1). The prior
+  //   synchronous re-pin via sidebarRef.resize(`${px}px`) ran before that async
+  //   RO pass and was silently overwritten, leaving the workspace sidebar
+  //   enlarged and the terminals panel narrower than before.
+  //
+  //   groupRef.setLayout() sets the ENTIRE layout atomically. K clamps each
+  //   panel's value to its min/max but, since our map already respects those
+  //   bounds AND sums to 100, K is a no-op (no remainder to redistribute). The
+  //   async RO pass then sees an unchanged layout and also no-ops. There is no
+  //   delta to feed to le, so the sidebar can never grab the freed space.
+  //
+  // The sidebar width comes from the persisted sidebarSizeRef (a percentage).
+  // The collapsed rail is derived from the 44px constant converted to a % of the
+  // current group size via panelRef.getSize().inPixels. The folder sidebar uses
+  // folderSidebarSizeRef (a percentage) or 0 when hidden. The main panel absorbs
+  // the remainder so the three values always sum to 100.
   useEffect(() => {
-    const ref = folderSidebarRef.current
-    if (!ref) return
+    const group = groupRef.current
     const sidebarPanel = sidebarRef.current
+    if (!group || !sidebarPanel) return
     programmaticLayoutRef.current = true
-    if (folderVisible) {
-      ref.resize(`${folderSidebarSizeRef.current}%`)
+
+    const groupSize = sidebarPanel.getSize().inPixels // any panel sees the same group
+    const toPct = (px: number) => (groupSize > 0 ? (px / groupSize) * 100 : 0)
+
+    let sidebarPct: number
+    if (sidebarCollapsed) {
+      sidebarPct = toPct(44) // SIDEBAR_COLLAPSED_PX
     } else {
-      // Snapshot the sidebar's pixel width before the folder collapses so we
-      // can restore it precisely afterwards.
-      if (sidebarPanel && !sidebarCollapsed) {
-        sidebarPxRef.current = sidebarPanel.getSize().inPixels
-      }
-      ref.resize('0%')
-      // Re-pin the workspace sidebar to its pre-collapse pixel width so the
-      // main panel absorbs the freed space instead of the sidebar growing.
-      if (sidebarPanel && !sidebarCollapsed && sidebarPxRef.current > 0) {
-        sidebarPanel.resize(`${sidebarPxRef.current}px`)
-      }
+      sidebarPct = sidebarSizeRef.current
     }
+
+    // Convert the persisted folder sidebar % to an absolute % of the group.
+    const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+
+    // Main panel absorbs whatever remains so the three panels always sum to 100.
+    let mainPct = 100 - sidebarPct - folderPct
+    // Guard against floating-point drift producing an invalid layout.
+    if (mainPct < 0) mainPct = 0
+
+    group.setLayout({ sidebar: sidebarPct, main: mainPct, 'folder-sidebar': folderPct })
     setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [folderVisible, folderSidebarRef, sidebarRef, sidebarCollapsed])
+  }, [
+    sidebarCollapsed,
+    folderVisible,
+    folderSidebarSizeRef,
+    sidebarSizeRef,
+    groupRef,
+    sidebarRef,
+  ])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1835,9 +1850,9 @@ export function AppLayout() {
         <>
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
-              <Group orientation="horizontal" className="flex-1">
+              <Group orientation="horizontal" className="flex-1" groupRef={groupRef}>
                 {/* Left Workspace Panel — always mounted; collapse/expand is
-                    driven imperatively via sidebarRef.resize() (see the effect
+                    driven imperatively via groupRef.setLayout() (see the effect
                     near the derived-size block above). Only the Panel content
                     swaps between the 44px collapsed rail and the full sidebar.
                     The Panel count never changes, which prevents the
