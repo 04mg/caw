@@ -84,7 +84,7 @@ export function AppLayout() {
   const folderSidebarRef = usePanelRef()
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
-  const sidebarSizeRef = useRef(parseFloat(localStorage.getItem('caw:sidebarSize') || '25'))
+  const sidebarSizeRef = useRef(25)
   const folderSidebarSizeRef = useRef(20)
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
@@ -170,22 +170,7 @@ export function AppLayout() {
     }
   }, [])
 
-  useEffect(() => {
-    const savedCollapsed = localStorage.getItem('caw:sidebarCollapsed')
-    if (savedCollapsed === '1') setSidebarCollapsed(true)
-
-    const savedFolderCollapsed = localStorage.getItem('caw:folderSidebarCollapsed')
-    if (savedFolderCollapsed === '0') setFolderSidebarCollapsed(false)
-  }, [])
-
-  const sidebarDefaultSize = (() => {
-    const saved = localStorage.getItem('caw:sidebarSize')
-    if (saved) {
-      const n = parseFloat(saved)
-      if (n >= 15 && n <= 50) return `${n}%`
-    }
-    return '25%'
-  })()
+  const sidebarDefaultSize = '25%'
 
   useEffect(() => {
     let done = false
@@ -404,11 +389,7 @@ export function AppLayout() {
 
 
   const toggleFolderSidebar = useCallback(() => {
-    setFolderSidebarCollapsed((v) => {
-      const next = !v
-      localStorage.setItem('caw:folderSidebarCollapsed', next ? '0' : '1') // 0 = false, 1 = true
-      return next
-    })
+    setFolderSidebarCollapsed((v) => !v)
   }, [])
 
   useEffect(() => {
@@ -1435,11 +1416,7 @@ export function AppLayout() {
   }, [activeWorkspace, patchWorkspace])
 
   const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((v) => {
-      const next = !v
-      localStorage.setItem('caw:sidebarCollapsed', next ? '1' : '0')
-      return next
-    })
+    setSidebarCollapsed((v) => !v)
   }, [])
 
   const handleReorderWorkspaces = useCallback((from: number, to: number) => {
@@ -1824,7 +1801,6 @@ export function AppLayout() {
                     if (programmaticLayoutRef.current) return
                     if (size.asPercentage >= 15) {
                       sidebarSizeRef.current = size.asPercentage
-                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
                     }
                   }}
                 >
