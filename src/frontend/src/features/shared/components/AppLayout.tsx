@@ -293,18 +293,23 @@ export function AppLayout() {
   // internal layout store un-updated, and recurs on every sidebar toggle.
   // See https://github.com/bvaughn/react-resizable-panels/issues/691.
   //
-  // `collapsible` is left OFF and `minSize="0%"` on both sidebars so they can
-  // shrink to 0 (folder) / 44px (workspace rail) programmatically. To preserve
-  // the "drag stops at 15%" behavior without the library's auto-collapse, the
-  // sidebar Panel's onResize snaps the panel back to 15% whenever a user drag
-  // drops it below 15% but above the collapsed threshold — see
-  // `applyTopGroupLayout` below.
+  // `collapsible` is left OFF. The 15% drag floor is enforced by the library's
+  // own minSize clamping (Z() in the lib hard-clamps to minSize), so dragging
+  // the separator can never push the sidebar below 15% or above 50% — no
+  // snap-back hack needed. When collapsed, minSize and maxSize are both pinned
+  // to the collapsed size so the panel can't be dragged at all (no "gap" the
+  // user can grab to shrink the rail further). The lib re-registers a Panel
+  // whenever its min/max props change, so the constraints update live without
+  // unmounting.
   const SIDEBAR_COLLAPSED_PCT = 6   // ~44px on a ~730px-wide group
-  const SIDEBAR_MIN_PCT = 15
   const FOLDER_COLLAPSED_PCT = 0
-  const FOLDER_MIN_PCT = 15
+  const sidebarMinSize = sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : '15%'
+  const sidebarMaxSize = sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : '50%'
+  const folderVisible = activeWorkspace && !folderSidebarCollapsed
+  const folderMinSize = folderVisible ? '15%' : `${FOLDER_COLLAPSED_PCT}%`
+  const folderMaxSize = folderVisible ? '50%' : `${FOLDER_COLLAPSED_PCT}%`
 
-  // Guard so the onResize snap-back doesn't fight programmatic setLayout calls.
+  // Guard so onResize doesn't persist sizes during programmatic setLayout.
   const programmaticLayoutRef = useRef(false)
 
   // Apply a full layout {sidebar, main, folder-sidebar} atomically via the
@@ -315,8 +320,6 @@ export function AppLayout() {
     if (!group) return
     programmaticLayoutRef.current = true
     group.setLayout(sizes)
-    // Reset the guard on the next tick — the lib's onLayoutChanged fires
-    // synchronously within setLayout for programmatic changes.
     setTimeout(() => { programmaticLayoutRef.current = false }, 0)
   }, [topGroupRef])
 
@@ -326,10 +329,10 @@ export function AppLayout() {
     const group = topGroupRef.current
     if (!group) return
     const sidebar = sidebarCollapsed ? SIDEBAR_COLLAPSED_PCT : sidebarSizeRef.current
-    const folder = (folderSidebarCollapsed || !activeWorkspace) ? FOLDER_COLLAPSED_PCT : folderSidebarSizeRef.current
+    const folder = folderVisible ? folderSidebarSizeRef.current : FOLDER_COLLAPSED_PCT
     const main = Math.max(0, 100 - sidebar - folder)
     applyTopGroupLayout({ sidebar, main, 'folder-sidebar': folder })
-  }, [sidebarCollapsed, folderSidebarCollapsed, activeWorkspace, applyTopGroupLayout, topGroupRef, SIDEBAR_COLLAPSED_PCT, FOLDER_COLLAPSED_PCT])
+  }, [sidebarCollapsed, folderVisible, applyTopGroupLayout, topGroupRef, SIDEBAR_COLLAPSED_PCT, FOLDER_COLLAPSED_PCT])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1808,27 +1811,13 @@ export function AppLayout() {
                   id="sidebar"
                   panelRef={sidebarRef}
                   defaultSize={sidebarCollapsed ? `${SIDEBAR_COLLAPSED_PCT}%` : sidebarDefaultSize}
-                  minSize="0%"
-                  maxSize="50%"
+                  minSize={sidebarMinSize}
+                  maxSize={sidebarMaxSize}
                   onResize={(size) => {
-                    const pct = size.asPercentage
                     if (programmaticLayoutRef.current) return
-                    if (pct >= SIDEBAR_MIN_PCT) {
-                      sidebarSizeRef.current = pct
-                      localStorage.setItem('caw:sidebarSize', String(pct))
-                    } else if (pct > 0 && pct < SIDEBAR_MIN_PCT && !sidebarCollapsed) {
-                      // Snap back to 15% if the user drags below the floor
-                      // but hasn't actually collapsed (we don't use the lib's
-                      // collapsible flag, so this enforces the min manually).
-                      const group = topGroupRef.current
-                      if (!group) return
-                      const layout = group.getLayout()
-                      const folder = layout['folder-sidebar'] ?? 0
-                      applyTopGroupLayout({
-                        sidebar: SIDEBAR_MIN_PCT,
-                        main: 100 - SIDEBAR_MIN_PCT - folder,
-                        'folder-sidebar': folder,
-                      })
+                    if (size.asPercentage >= 15) {
+                      sidebarSizeRef.current = size.asPercentage
+                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
                     }
                   }}
                 >
@@ -1957,29 +1946,13 @@ export function AppLayout() {
                 <Panel
                   id="folder-sidebar"
                   panelRef={folderSidebarRef}
-                  defaultSize={
-                    activeWorkspace && !folderSidebarCollapsed
-                      ? '20%'
-                      : '0%'
-                  }
-                  minSize="0%"
-                  maxSize="50%"
+                  defaultSize={folderVisible ? '20%' : '0%'}
+                  minSize={folderMinSize}
+                  maxSize={folderMaxSize}
                   onResize={(size) => {
-                    const pct = size.asPercentage
                     if (programmaticLayoutRef.current) return
-                    if (pct >= FOLDER_MIN_PCT) {
-                      folderSidebarSizeRef.current = pct
-                    } else if (pct > 0 && pct < FOLDER_MIN_PCT && !folderSidebarCollapsed) {
-                      // Snap back to 15% if the user drags below the floor
-                      const group = topGroupRef.current
-                      if (!group) return
-                      const layout = group.getLayout()
-                      const sidebar = layout['sidebar'] ?? 0
-                      applyTopGroupLayout({
-                        sidebar,
-                        main: 100 - sidebar - FOLDER_MIN_PCT,
-                        'folder-sidebar': FOLDER_MIN_PCT,
-                      })
+                    if (size.asPercentage >= 15) {
+                      folderSidebarSizeRef.current = size.asPercentage
                     }
                   }}
                 >
