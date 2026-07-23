@@ -136,10 +136,17 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					silentTicks++
 				}
 
-				// Mid-session re-bind for /new and /resume.
-				if silentTicks >= rebindSilenceTicks {
-					lastPtyOut := agent.LastPtyActivity(sessionID)
-					if time.Since(lastPtyOut) < 3*time.Second {
+			// Mid-session re-bind for /new and /resume. Gated on PTY
+			// activity OR user focus: only the watcher whose PTY is producing
+			// output (or whose pane the user is currently driving) switches,
+			// so a sibling Pi in the same cwd writing to its own transcript
+			// can't make this idle, unfocused watcher steal its session. The
+			// focus exemption covers a /new or /resume issued in the focused
+			// pane before the agent emits any PTY output.
+			if silentTicks >= rebindSilenceTicks {
+				focused := agent.IsPtyFocused(sessionID)
+				lastPtyOut := agent.LastPtyActivity(sessionID)
+				if time.Since(lastPtyOut) < 3*time.Second || focused {
 						rebindDir := dir
 						if cwd != "" {
 							cleanCwd := filepath.Clean(cwd)
