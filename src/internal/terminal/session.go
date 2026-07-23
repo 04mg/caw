@@ -95,10 +95,14 @@ type Session struct {
 }
 
 // resizePTY handles a viewer resize request. For a single viewer the PTY is
-// resized directly. With multiple viewers the PTY stays at its current size
-// (set by the first viewer); viewers whose dimensions differ get a
-// VirtualScreen that adapts output. Each viewer maintains independent
-// dimensions — no resize messages are sent between viewers.
+// resized directly to that viewer's dimensions. With multiple viewers the
+// PTY is sized to the smallest viewer (min cols×rows across all connected
+// viewers) so every viewer can render the full PTY content; viewers larger
+// than the PTY receive adapted output via a VirtualScreen and are told to
+// pad the grid (padCols/padRows) to center it within their panel.
+//
+// Each viewer maintains its own dimensions; the PTY is re-driven to the
+// current min whenever the set of viewers or their sizes changes.
 // Must be called with s.mu held.
 func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	if cols <= 0 || rows <= 0 {
@@ -107,11 +111,9 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	source.cols = cols
 	source.rows = rows
 
-	// Total viewers = registered + still-connecting. If more than one
-	// viewer exists (or is about to), keep the PTY stable.
+	// Single viewer — resize PTY directly and drop any VirtualScreens.
 	totalViewers := len(s.conns) + s.pendingResizes
 	if totalViewers <= 1 {
-		// Single viewer — resize PTY directly.
 		if s.cols == cols && s.rows == rows {
 			return
 		}
@@ -123,15 +125,132 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 		return
 	}
 
-	// Multiple viewers — PTY stays at its current size.
-	// Create or update a VirtualScreen for viewers that differ.
-	if cols == s.cols && rows == s.rows {
-		source.vs = nil
-	} else if source.vs == nil {
-		source.vs = NewVirtualScreen(s.cols, s.rows, cols, rows)
-	} else {
-		source.vs.Resize(cols, rows)
+	// Multiple viewers — PTY tracks the smallest viewer so the content
+	// fits every client. Larger viewers get a VirtualScreen that upscales
+	// PTY output to their dimensions, plus cell-based padding so xterm.js
+	// centers the min grid inside the larger panel.
+	minCols, minRows := s.smallestViewerSize()
+	if minCols <= 0 || minRows <= 0 {
+		// No fully-sized viewer yet; keep the PTY as-is.
+		return
 	}
+	if s.cols != minCols || s.rows != minRows {
+		s.cols = minCols
+		s.rows = minRows
+		_ = s.Pty.ptmx.Resize(minCols, minRows)
+	}
+
+	// (Re)create or dispose each viewer's VirtualScreen based on whether
+	// it matches the (now smallest-driven) PTY size.
+	for c := range s.conns {
+		if c.cols <= 0 || c.rows <= 0 {
+			continue
+		}
+		if c.cols == s.cols && c.rows == s.rows {
+			if c.vs != nil {
+				c.vs.Dispose()
+				c.vs = nil
+			}
+			continue
+		}
+		if c.vs == nil {
+			c.vs = NewVirtualScreen(s.cols, s.rows, c.cols, c.rows)
+		} else {
+			c.vs.Resize(c.cols, c.rows)
+		}
+	}
+	s.broadcastResize()
+}
+
+// smallestViewerSize returns the minimum cols and rows across all
+// registered connections that have reported dimensions. Must be called
+// with s.mu held.
+func (s *Session) smallestViewerSize() (int, int) {
+	minCols, minRows := 0, 0
+	for c := range s.conns {
+		if c.cols <= 0 || c.rows <= 0 {
+			continue
+		}
+		if minCols == 0 || c.cols < minCols {
+			minCols = c.cols
+		}
+		if minRows == 0 || c.rows < minRows {
+			minRows = c.rows
+		}
+	}
+	return minCols, minRows
+}
+
+// recomputeResize re-evaluates the PTY size after the set of viewers
+// changes (e.g. a viewer disconnects). With one viewer left the PTY is
+// resized directly to it; with several it is re-driven to the smallest.
+// Must be called with s.mu held.
+func (s *Session) recomputeResize() {
+	totalViewers := len(s.conns) + s.pendingResizes
+	if totalViewers <= 0 {
+		return
+	}
+	if totalViewers == 1 {
+		for c := range s.conns {
+			if c.cols <= 0 || c.rows <= 0 {
+				return
+			}
+			if s.cols == c.cols && s.rows == c.rows {
+				return
+			}
+			s.cols = c.cols
+			s.rows = c.rows
+			_ = s.Pty.ptmx.Resize(c.cols, c.rows)
+			s.cleanupViewerVS()
+			s.broadcastResize()
+			return
+		}
+		return
+	}
+	minCols, minRows := s.smallestViewerSize()
+	if minCols <= 0 || minRows <= 0 {
+		return
+	}
+	if s.cols == minCols && s.rows == minRows {
+		// PTY already at the min; just ensure each viewer's VS state is
+		// consistent (a disconnect may have been the smallest viewer).
+		for c := range s.conns {
+			if c.cols <= 0 || c.rows <= 0 {
+				continue
+			}
+			if c.cols == s.cols && c.rows == s.rows {
+				if c.vs != nil {
+					c.vs.Dispose()
+					c.vs = nil
+				}
+			} else if c.vs == nil {
+				c.vs = NewVirtualScreen(s.cols, s.rows, c.cols, c.rows)
+			} else {
+				c.vs.Resize(c.cols, c.rows)
+			}
+		}
+		s.broadcastResize()
+		return
+	}
+	s.cols = minCols
+	s.rows = minRows
+	_ = s.Pty.ptmx.Resize(minCols, minRows)
+	for c := range s.conns {
+		if c.cols <= 0 || c.rows <= 0 {
+			continue
+		}
+		if c.cols == s.cols && c.rows == s.rows {
+			if c.vs != nil {
+				c.vs.Dispose()
+				c.vs = nil
+			}
+		} else if c.vs == nil {
+			c.vs = NewVirtualScreen(s.cols, s.rows, c.cols, c.rows)
+		} else {
+			c.vs.Resize(c.cols, c.rows)
+		}
+	}
+	s.broadcastResize()
 }
 
 // cleanupViewerVS removes VirtualScreens from all connections whose
@@ -145,18 +264,39 @@ func (s *Session) cleanupViewerVS() {
 	}
 }
 
-// broadcastResize sends the current PTY size to every connected client
-// so each one can fit its local xterm.js to match. Must be called with s.mu held.
+// broadcastResize tells each connected client how big its local xterm.js
+// grid should be, plus cell-based padding (padCols/padRows) so the grid is
+// centered within a panel that is larger than the PTY. The PTY is sized to
+// the smallest viewer, so:
+//   - the smallest viewer receives cols/rows == PTY size and zero padding;
+//   - larger viewers receive their own (larger) cols/rows and positive
+//     padding so xterm.js renders a centered min-grid inside the panel.
+//
+// Must be called with s.mu held.
 func (s *Session) broadcastResize() {
 	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
-	msg, _ := json.Marshal(map[string]any{
-		"type": "resize",
-		"cols": s.cols,
-		"rows": s.rows,
-	})
 	for c := range s.conns {
+		viewCols, viewRows := c.cols, c.rows
+		if viewCols <= 0 || viewRows <= 0 {
+			viewCols, viewRows = s.cols, s.rows
+		}
+		padCols := viewCols - s.cols
+		padRows := viewRows - s.rows
+		if padCols < 0 {
+			padCols = 0
+		}
+		if padRows < 0 {
+			padRows = 0
+		}
+		msg, _ := json.Marshal(map[string]any{
+			"type":    "resize",
+			"cols":    viewCols,
+			"rows":    viewRows,
+			"padCols": padCols,
+			"padRows": padRows,
+		})
 		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 			delete(s.conns, c)
 		}
