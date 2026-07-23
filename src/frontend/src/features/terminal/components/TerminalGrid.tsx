@@ -1,5 +1,4 @@
-import { type ReactNode, Fragment } from 'react'
-import { Panel, Separator } from 'react-resizable-panels'
+import { type ReactNode } from 'react'
 
 import { X, Columns2, Rows2 } from 'lucide-react'
 import { type LayoutNode } from '@/features/shared/utils/layout'
@@ -106,33 +105,22 @@ export function TerminalGrid({
       splitId={node.id}
       orientation={node.orientation}
       onSizesChange={onSizesChange}
+      sizes={sizes}
     >
-      {node.children.map((child, i) => (
-        <Fragment key={childKey(child)}>
-          {i > 0 && (
-            <Separator
-              className={
-                node.orientation === 'horizontal'
-                  ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize'
-                  : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize'
-              }
-            />
-          )}
-          <Panel id={childKey(child)} defaultSize={`${sizes[i]}%`}>
-            <TerminalGrid
-              node={child}
-              activePaneId={activePaneId}
-              onFocus={onFocus}
-              onSplitVert={onSplitVert}
-              onSplitHoriz={onSplitHoriz}
-              onClose={onClose}
-              cwd={cwd}
-              onSizesChange={onSizesChange}
-              gitStatuses={gitStatuses}
-              onOpenDiff={onOpenDiff}
-            />
-          </Panel>
-        </Fragment>
+      {node.children.map((child) => (
+        <TerminalGrid
+          key={childKey(child)}
+          node={child}
+          activePaneId={activePaneId}
+          onFocus={onFocus}
+          onSplitVert={onSplitVert}
+          onSplitHoriz={onSplitHoriz}
+          onClose={onClose}
+          cwd={cwd}
+          onSizesChange={onSizesChange}
+          gitStatuses={gitStatuses}
+          onOpenDiff={onOpenDiff}
+        />
       ))}
     </SplitGroup>
   )
