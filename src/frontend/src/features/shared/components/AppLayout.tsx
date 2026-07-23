@@ -314,9 +314,9 @@ export function AppLayout() {
 
   // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
   // when hidden (no workspace or toggled off) and restores to its saved size.
-  // When collapsing, the workspace sidebar is also re-resized to its current
-  // size so the freed space goes to the main (terminals) panel instead of
-  // being absorbed proportionally by the workspace sidebar.
+  // The workspace sidebar has groupResizeBehavior="preserve-pixel-size", so
+  // when this panel collapses the freed space goes to the main (terminals)
+  // panel instead of being absorbed proportionally by the workspace sidebar.
   useEffect(() => {
     const ref = folderSidebarRef.current
     if (!ref) return
@@ -325,13 +325,9 @@ export function AppLayout() {
       ref.resize(`${folderSidebarSizeRef.current}%`)
     } else {
       ref.resize('0%')
-      const sidebarPanel = sidebarRef.current
-      if (sidebarPanel && !sidebarCollapsed) {
-        sidebarPanel.resize(`${sidebarSizeRef.current}%`)
-      }
     }
     setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [folderVisible, folderSidebarRef, sidebarRef, sidebarCollapsed])
+  }, [folderVisible, folderSidebarRef])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1804,6 +1800,14 @@ export function AppLayout() {
                   defaultSize={sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : sidebarDefaultSize}
                   minSize={sidebarMinSize}
                   maxSize={sidebarMaxSize}
+                  // Keep the workspace sidebar at a fixed pixel width when the
+                  // Group resizes (e.g. the folder sidebar collapsing to 0%),
+                  // so the freed space is absorbed by the main (terminals)
+                  // panel instead of growing the workspace sidebar. Without
+                  // this the default "preserve-relative-size" behavior keeps
+                  // the sidebar's percentage, which grows its pixel width as
+                  // the Group widens.
+                  groupResizeBehavior="preserve-pixel-size"
                   onResize={(size) => {
                     if (programmaticLayoutRef.current) return
                     if (size.asPercentage >= 15) {
