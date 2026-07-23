@@ -79,12 +79,20 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:sidebarCollapsed') === '1',
+  )
   const sidebarRef = usePanelRef()
   const folderSidebarRef = usePanelRef()
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
-  const sidebarSizeRef = useRef(15)
+  const sidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:sidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 15
+    })(),
+  )
   // Tracks the workspace sidebar's current pixel width. We can't rely on
   // Panel.onResize to capture this because that fires asynchronously (via
   // ResizeObserver) AFTER programmaticLayoutRef resets, which would record the
@@ -94,12 +102,20 @@ export function AppLayout() {
   // the freed space flows into the main (terminals) panel rather than being
   // absorbed proportionally by the sidebar.
   const sidebarPxRef = useRef(0)
-  const folderSidebarSizeRef = useRef(20)
+  const folderSidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:folderSidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 20
+    })(),
+  )
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
 
-  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:folderSidebarCollapsed') !== '0',
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
@@ -179,7 +195,7 @@ export function AppLayout() {
     }
   }, [])
 
-  const sidebarDefaultSize = '15%'
+  const sidebarDefaultSize = `${sidebarSizeRef.current}%`
 
   useEffect(() => {
     let done = false
@@ -418,7 +434,11 @@ export function AppLayout() {
 
 
   const toggleFolderSidebar = useCallback(() => {
-    setFolderSidebarCollapsed((v) => !v)
+    setFolderSidebarCollapsed((v) => {
+      const next = !v
+      localStorage.setItem('caw:folderSidebarCollapsed', next ? '1' : '0')
+      return next
+    })
   }, [])
 
   useEffect(() => {
@@ -1445,7 +1465,11 @@ export function AppLayout() {
   }, [activeWorkspace, patchWorkspace])
 
   const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((v) => !v)
+    setSidebarCollapsed((v) => {
+      const next = !v
+      localStorage.setItem('caw:sidebarCollapsed', next ? '1' : '0')
+      return next
+    })
   }, [])
 
   const handleReorderWorkspaces = useCallback((from: number, to: number) => {
@@ -1831,6 +1855,7 @@ export function AppLayout() {
                     if (programmaticLayoutRef.current) return
                     if (size.asPercentage >= 15) {
                       sidebarSizeRef.current = size.asPercentage
+                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
                     }
                     sidebarPxRef.current = size.inPixels
                   }}
@@ -1854,12 +1879,11 @@ export function AppLayout() {
                   <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 )}
 
-                {/* Main Terminals / Editors Content. defaultSize is set so the
-                    group's initial layout sums to 100 (sidebar 15% + main 85% +
-                    folder 0%) on first paint, so the sidebar renders exactly at
-                    its 15% minimum on load instead of being renormalized into a
-                    larger size. */}
-                <Panel id="main" defaultSize="85%">
+                {/* Main Terminals / Editors Content. defaultSize complements the
+                    sidebars so the group's initial layout sums to 100 (sidebar +
+                    main + folder) on first paint, avoiding renormalization that
+                    would shift the sidebar from its saved size. */}
+                <Panel id="main" defaultSize={`${100 - sidebarSizeRef.current}%`}>
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1964,13 +1988,14 @@ export function AppLayout() {
                 <Panel
                   id="folder-sidebar"
                   panelRef={folderSidebarRef}
-                  defaultSize={folderVisible ? '20%' : '0%'}
+                  defaultSize={folderVisible ? `${folderSidebarSizeRef.current}%` : '0%'}
                   minSize={folderMinSize}
                   maxSize={folderMaxSize}
                   onResize={(size) => {
                     if (programmaticLayoutRef.current) return
                     if (size.asPercentage >= 15) {
                       folderSidebarSizeRef.current = size.asPercentage
+                      localStorage.setItem('caw:folderSidebarSize', String(size.asPercentage))
                     }
                   }}
                 >
