@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import { applyDrag, clampSizes } from './clampSizes'
+import { applyDrag } from './clampSizes'
 import { resolveSizes, type SizeInput } from './pxToPct'
 
 interface DragState {
@@ -8,6 +8,13 @@ interface DragState {
   containerPx: number
   axis: 'x' | 'y'
   startClient: number
+  // Snapshot of the sizes/constraints (resolved to % of the container at the
+  // moment of pointerdown). The cumulative drag delta is applied to this
+  // baseline, NOT to the live `sizes` prop, so that state round-trips between
+  // pointermove frames don't compound the delta.
+  startSizesPct: number[]
+  startMinPct: number[]
+  startMaxPct: number[]
 }
 
 interface UseSplitResizeArgs {
@@ -22,10 +29,10 @@ interface UseSplitResizeArgs {
 // captures the pointer, tracks movement, and emits clamped sizes via
 // onSizesChange. Movement is throttled to animation frames for smoothness.
 //
-// The hook measures the container lazily: it reads the parent element's
-// bounding rect at pointerdown and again on container resize (the caller is
-// responsible for re-emitting sizes when the container resizes; this hook only
-// handles the drag interaction itself).
+// The sizes/constraints are snapshotted at pointerdown (resolved to % against
+// the container measured at that instant) so the cumulative delta is applied to
+// a stable baseline. This avoids compounding the delta when the parent stores
+// sizes in state and feeds the new array back into the hook between frames.
 export function useSplitResize({
   orientation,
   sizes,
@@ -53,22 +60,26 @@ export function useSplitResize({
     }
   }, [onSizesChange])
 
+  const computeNext = useCallback(
+    (drag: DragState, clientPos: number): number[] => {
+      const deltaPx = drag.axis === 'x' ? clientPos - drag.startClient : clientPos - drag.startClient
+      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 : 0
+      return applyDrag(drag.startSizesPct, drag.startMinPct, drag.startMaxPct, drag.index, deltaPct)
+    },
+    [],
+  )
+
   const onPointerMove = useCallback(
     (e: PointerEvent) => {
       const drag = dragRef.current
       if (!drag) return
-      const deltaPx =
-        drag.axis === 'x' ? e.clientX - drag.startClient : e.clientY - drag.startClient
-      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 : 0
-
-      const currentPct = resolveSizes(sizes, drag.containerPx)
-      const next = applyDrag(currentPct, resolveSizes(minSizes, drag.containerPx), resolveSizes(maxSizes, drag.containerPx), drag.index, deltaPct)
+      const next = computeNext(drag, drag.axis === 'x' ? e.clientX : e.clientY)
       pendingPctRef.current = next
       if (rafRef.current == null) {
         rafRef.current = requestAnimationFrame(flush)
       }
     },
-    [sizes, minSizes, maxSizes, flush],
+    [computeNext, flush],
   )
 
   const onPointerUp = useCallback(
@@ -83,14 +94,9 @@ export function useSplitResize({
       dragRef.current = null
       clearRaf()
       // Emit final sizes synchronously so persistence sees the last position.
-      const deltaPx =
-        drag.axis === 'x' ? e.clientX - drag.startClient : e.clientY - drag.startClient
-      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 : 0
-      const currentPct = resolveSizes(sizes, drag.containerPx)
-      const next = applyDrag(currentPct, resolveSizes(minSizes, drag.containerPx), resolveSizes(maxSizes, drag.containerPx), drag.index, deltaPct)
-      onSizesChange(next)
+      onSizesChange(computeNext(drag, drag.axis === 'x' ? e.clientX : e.clientY))
     },
-    [sizes, minSizes, maxSizes, onSizesChange, onPointerMove, clearRaf],
+    [onPointerMove, clearRaf, onSizesChange, computeNext],
   )
 
   const onSeparatorPointerDown = useCallback(
@@ -113,6 +119,9 @@ export function useSplitResize({
         containerPx,
         axis,
         startClient,
+        startSizesPct: resolveSizes(sizes, containerPx),
+        startMinPct: resolveSizes(minSizes, containerPx),
+        startMaxPct: resolveSizes(maxSizes, containerPx),
       }
 
       separatorEl.setPointerCapture(e.pointerId)
@@ -120,12 +129,8 @@ export function useSplitResize({
       window.addEventListener('pointerup', onPointerUp)
       window.addEventListener('pointercancel', onPointerUp)
     },
-    [orientation, onPointerMove, onPointerUp],
+    [orientation, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
   )
 
   return { onSeparatorPointerDown, dragRef }
 }
-
-// Re-export for callers that need to clamp a proposed layout (e.g. when the
-// container resizes and the persisted px-based constraints must be re-clamped).
-export { clampSizes }

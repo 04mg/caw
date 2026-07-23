@@ -86,18 +86,33 @@ export function SplitLayout({
     return clampSizes(raw, resolvedMin, resolvedMax)
   }, [sizes, containerPx, resolvedMin, resolvedMax])
 
-  // Keep the parent informed whenever the effective (clamped) sizes change due
-  // to container resize or constraint changes. We skip the very first emit so
-  // that the initial mount does not echo the prop back (which would be a
-  // no-op but could trigger unnecessary state churn).
-  const mountedRef = useRef(false)
+  // Keep the parent informed when the effective (clamped) sizes change due to
+  // a container resize or constraint change — but ONLY when the clamped values
+  // actually differ from what we last emitted. This breaks the feedback loop
+  // that would otherwise occur when the parent stores sizes in state: a state
+  // update produces a new `sizes` array reference, which recomputes
+  // `resolvedSizes` (also a new reference), which would re-fire this effect and
+  // re-emit, causing React error #185 (maximum update depth exceeded).
+  //
+  // Drag interactions emit their own onSizesChange from useSplitResize, so this
+  // effect only handles the container-resize / constraint-change re-clamp path.
+  const lastEmittedRef = useRef<number[] | null>(null)
   useLayoutEffect(() => {
-    if (!mountedRef.current) {
-      mountedRef.current = true
-      return
+    // Skip until we have a real container measurement; emitting with
+    // containerPx=0 would produce garbage percentages.
+    if (containerPx <= 0) return
+
+    const last = lastEmittedRef.current
+    if (last && last.length === resolvedSizes.length) {
+      let same = true
+      for (let i = 0; i < last.length; i++) {
+        if (Math.abs(last[i] - resolvedSizes[i]) > 0.01) { same = false; break }
+      }
+      if (same) return
     }
+    lastEmittedRef.current = resolvedSizes
     onSizesChange?.(resolvedSizes)
-  }, [resolvedSizes, onSizesChange])
+  }, [resolvedSizes, containerPx, onSizesChange])
 
   // Measure the container and track resizes.
   useEffect(() => {
