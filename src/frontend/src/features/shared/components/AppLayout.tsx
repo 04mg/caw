@@ -85,9 +85,14 @@ export function AppLayout() {
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
   const sidebarSizeRef = useRef(15)
-  // Tracks the workspace sidebar's pixel width so we can re-pin it when the
-  // folder sidebar collapses, forcing the freed space into the terminals
-  // panel instead of letting the library grow the sidebar proportionally.
+  // Tracks the workspace sidebar's current pixel width. We can't rely on
+  // Panel.onResize to capture this because that fires asynchronously (via
+  // ResizeObserver) AFTER programmaticLayoutRef resets, which would record the
+  // sidebar's *enlarged* post-collapse size and break the next collapse. Instead
+  // we read it synchronously via getSize().inPixels right before collapsing the
+  // folder sidebar, then re-pin the sidebar to that exact width afterwards so
+  // the freed space flows into the main (terminals) panel rather than being
+  // absorbed proportionally by the sidebar.
   const sidebarPxRef = useRef(0)
   const folderSidebarSizeRef = useRef(20)
   const skipPersistRef = useRef(false)
@@ -318,20 +323,31 @@ export function AppLayout() {
 
   // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
   // when hidden (no workspace or toggled off) and restores to its saved size.
-  // When collapsing, re-pin the workspace sidebar to its current pixel width
-  // so the freed space goes to the main (terminals) panel instead of being
-  // absorbed proportionally by the workspace sidebar (the default
-  // preserve-relative-size behavior would grow the sidebar's pixel width as
-  // the Group widens).
+  //
+  // When collapsing, the library's default preserve-relative-size behavior
+  // grows the workspace sidebar proportionally to absorb the freed space
+  // (groupResizeBehavior="preserve-pixel-size" only applies on window resize,
+  // not on sibling collapse). To force the freed space into the main
+  // (terminals) panel, we snapshot the sidebar's current pixel width
+  // synchronously via getSize() BEFORE collapsing, then re-pin the sidebar to
+  // that exact pixel width AFTER the folder collapse. The main panel — the only
+  // remaining preserve-relative-size panel — receives the difference.
   useEffect(() => {
     const ref = folderSidebarRef.current
     if (!ref) return
+    const sidebarPanel = sidebarRef.current
     programmaticLayoutRef.current = true
     if (folderVisible) {
       ref.resize(`${folderSidebarSizeRef.current}%`)
     } else {
+      // Snapshot the sidebar's pixel width before the folder collapses so we
+      // can restore it precisely afterwards.
+      if (sidebarPanel && !sidebarCollapsed) {
+        sidebarPxRef.current = sidebarPanel.getSize().inPixels
+      }
       ref.resize('0%')
-      const sidebarPanel = sidebarRef.current
+      // Re-pin the workspace sidebar to its pre-collapse pixel width so the
+      // main panel absorbs the freed space instead of the sidebar growing.
       if (sidebarPanel && !sidebarCollapsed && sidebarPxRef.current > 0) {
         sidebarPanel.resize(`${sidebarPxRef.current}px`)
       }
@@ -1803,7 +1819,8 @@ export function AppLayout() {
                     The Panel count never changes, which prevents the
                     "Invalid N panel layout" throw from react-resizable-panels'
                     ResizeObserver when the cached layout arity mismatches the
-                    live panel constraints. */}
+                    live panel constraints. The min/max in pixels while
+                    collapsed keep it pinned to the 44px rail and undraggable. */}
                 <Panel
                   id="sidebar"
                   panelRef={sidebarRef}
@@ -1837,8 +1854,12 @@ export function AppLayout() {
                   <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 )}
 
-                {/* Main Terminals / Editors Content */}
-                <Panel id="main" defaultSize="55%">
+                {/* Main Terminals / Editors Content. defaultSize is set so the
+                    group's initial layout sums to 100 (sidebar 15% + main 85% +
+                    folder 0%) on first paint, so the sidebar renders exactly at
+                    its 15% minimum on load instead of being renormalized into a
+                    larger size. */}
+                <Panel id="main" defaultSize="85%">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
