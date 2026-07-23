@@ -70,22 +70,25 @@ func envOrDefault(key, fallback string) string {
 
 func showHelp() {
 	fmt.Print(embed.IconTxt)
-	fmt.Println("Usage: caw [command]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  (no args)        Start the server")
-	fmt.Println("  update           Update caw to the latest release")
-	fmt.Println("  version          Print the current version")
-	fmt.Println("  help             Show this help message")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  -h, --help       Show help")
-	fmt.Println("  -v, --version    Print version")
-	fmt.Println()
-	fmt.Println("Environment:")
-	fmt.Println("  HOST             Bind address (default: localhost)")
-	fmt.Println("  PORT             Bind port (default: 8080)")
+	fmt.Print(helpText)
 }
+
+const helpText = `Usage: caw [command]
+
+Commands:
+  (no args)        Start the server
+  update           Update caw to the latest release
+  version          Print the current version
+  help             Show this help message
+
+Flags:
+  -h, --help       Show help
+  -v, --version    Print version
+
+Environment:
+  HOST             Bind address (default: localhost)
+  PORT             Bind port (default: 8080)
+`
 
 func printVersion() {
 	fmt.Printf("caw version %s\n", Version)
