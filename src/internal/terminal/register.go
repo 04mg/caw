@@ -89,10 +89,6 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 
 	defer func() {
 		sess.mu.Lock()
-		if wc.vs != nil {
-			wc.vs.Dispose()
-			wc.vs = nil
-		}
 		if _, ok := sess.conns[wc]; ok {
 			delete(sess.conns, wc)
 			// A viewer left — the PTY may now be able to grow to the
@@ -135,35 +131,14 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		copy(scrollback, sess.scrollback)
 		syncSeq := sess.syncMessage()
 
-		// Ensure VirtualScreen exists if viewer dimensions differ from
-		// the PTY. All vs operations must be under sess.mu to avoid
-		// races with resizePTY running in the message handler.
-		if wc.cols > 0 && wc.rows > 0 && (wc.cols != sess.cols || wc.rows != sess.rows) {
-			if wc.vs == nil {
-				wc.vs = NewVirtualScreen(sess.cols, sess.rows, wc.cols, wc.rows)
-			}
-		}
-
 		var scrollbackMsg []byte
 		if len(scrollback) > 0 {
-			if wc.vs != nil {
-				// VirtualScreen: process scrollback through the terminal
-				// emulator and serialize adapted output for this viewer.
-				adapted := wc.vs.Process(scrollback)
-				if len(adapted) > 0 {
-					scrollbackMsg, _ = json.Marshal(map[string]any{
-						"type": "output",
-						"data": string(adapted),
-					})
-				}
-			} else {
-				stripped := stripAlternateScreen(scrollback)
-				if len(stripped) > 0 {
-					scrollbackMsg, _ = json.Marshal(map[string]any{
-						"type": "output",
-						"data": string(stripped),
-					})
-				}
+			stripped := stripAlternateScreen(scrollback)
+			if len(stripped) > 0 {
+				scrollbackMsg, _ = json.Marshal(map[string]any{
+					"type": "output",
+					"data": string(stripped),
+				})
 			}
 		}
 

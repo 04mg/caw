@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -410,7 +410,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
-      <div ref={elRef} className="h-full w-full overflow-hidden" />
+      <div ref={elRef} className="h-full w-full overflow-hidden" style={{ backgroundColor: getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button
