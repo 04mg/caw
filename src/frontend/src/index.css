@@ -320,6 +320,19 @@ html, body, #root {
 
 .voice-bubble-scroll::-webkit-scrollbar { display: none; }
 
+/* Kanban board: scrollable columns/strip with no visible scrollbar.
+   Keeps the board navigable when many cards are present while hiding
+   the thin track so the columns stay visually clean. */
+.kanban-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.kanban-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .voice-bubble-scroll-fade {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
