@@ -111,7 +111,13 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	source.cols = cols
 	source.rows = rows
 
-	// Single viewer — resize PTY directly and drop any VirtualScreens.
+	// Single viewer — resize the PTY directly and drop any VirtualScreens.
+	// The frontend already fit its local xterm.js to the new dimensions and
+	// sent us the size; we only need to drive the PTY. Echoing a resize back
+	// here would be redundant and can race with the user's next resize: a
+	// stale echo arriving after a further shrink/grow snaps xterm.js back to
+	// the old size and reflows the buffer, corrupting scrollback. So, unlike
+	// the multi-viewer path, we do NOT broadcastResize here.
 	totalViewers := len(s.conns) + s.pendingResizes
 	if totalViewers <= 1 {
 		if s.cols == cols && s.rows == rows {
@@ -121,7 +127,6 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 		s.rows = rows
 		_ = s.Pty.ptmx.Resize(cols, rows)
 		s.cleanupViewerVS()
-		s.broadcastResize(source)
 		return
 	}
 
@@ -216,6 +221,11 @@ func (s *Session) recomputeResize() {
 				return
 			}
 			if s.cols == c.cols && s.rows == c.rows {
+				// PTY already matches the remaining viewer. Still
+				// broadcast so the viewer clears any padding a
+				// previous multi-viewer layout applied.
+				s.cleanupViewerVS()
+				s.broadcastResize(nil)
 				return
 			}
 			s.cols = c.cols
@@ -295,14 +305,20 @@ func (s *Session) cleanupViewerVS() {
 // extra is an optional viewer that has reported dimensions but isn't in
 // s.conns yet (e.g. a freshly-connected client whose resizePTY ran before
 // sendScrollback registered it). It still needs its resize/padding message
-// so its frontend learns the padCols/padRows to center the grid.
+// so its frontend learns the padCols/padRows to center the grid. If extra
+// is already in s.conns it is skipped to avoid a duplicate send.
 //
 // Must be called with s.mu held.
 func (s *Session) broadcastResize(extra *connWriter) {
 	if s.cols <= 0 || s.rows <= 0 {
 		return
 	}
+	sent := make(map[*connWriter]bool, len(s.conns)+1)
 	send := func(c *connWriter) {
+		if sent[c] {
+			return
+		}
+		sent[c] = true
 		viewCols, viewRows := c.cols, c.rows
 		if viewCols <= 0 || viewRows <= 0 {
 			viewCols, viewRows = s.cols, s.rows
