@@ -85,6 +85,10 @@ export function AppLayout() {
   // Tracks the user's last chosen sidebar width (in %) so the imperative
   // expand() call restores it. Updated from the sidebar Panel's onResize.
   const sidebarSizeRef = useRef(15)
+  // Tracks the workspace sidebar's pixel width so we can re-pin it when the
+  // folder sidebar collapses, forcing the freed space into the terminals
+  // panel instead of letting the library grow the sidebar proportionally.
+  const sidebarPxRef = useRef(0)
   const folderSidebarSizeRef = useRef(20)
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
@@ -314,9 +318,11 @@ export function AppLayout() {
 
   // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
   // when hidden (no workspace or toggled off) and restores to its saved size.
-  // The workspace sidebar has groupResizeBehavior="preserve-pixel-size", so
-  // when this panel collapses the freed space goes to the main (terminals)
-  // panel instead of being absorbed proportionally by the workspace sidebar.
+  // When collapsing, re-pin the workspace sidebar to its current pixel width
+  // so the freed space goes to the main (terminals) panel instead of being
+  // absorbed proportionally by the workspace sidebar (the default
+  // preserve-relative-size behavior would grow the sidebar's pixel width as
+  // the Group widens).
   useEffect(() => {
     const ref = folderSidebarRef.current
     if (!ref) return
@@ -325,9 +331,13 @@ export function AppLayout() {
       ref.resize(`${folderSidebarSizeRef.current}%`)
     } else {
       ref.resize('0%')
+      const sidebarPanel = sidebarRef.current
+      if (sidebarPanel && !sidebarCollapsed && sidebarPxRef.current > 0) {
+        sidebarPanel.resize(`${sidebarPxRef.current}px`)
+      }
     }
     setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [folderVisible, folderSidebarRef])
+  }, [folderVisible, folderSidebarRef, sidebarRef, sidebarCollapsed])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1800,19 +1810,12 @@ export function AppLayout() {
                   defaultSize={sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : sidebarDefaultSize}
                   minSize={sidebarMinSize}
                   maxSize={sidebarMaxSize}
-                  // Keep the workspace sidebar at a fixed pixel width when the
-                  // Group resizes (e.g. the folder sidebar collapsing to 0%),
-                  // so the freed space is absorbed by the main (terminals)
-                  // panel instead of growing the workspace sidebar. Without
-                  // this the default "preserve-relative-size" behavior keeps
-                  // the sidebar's percentage, which grows its pixel width as
-                  // the Group widens.
-                  groupResizeBehavior="preserve-pixel-size"
                   onResize={(size) => {
                     if (programmaticLayoutRef.current) return
                     if (size.asPercentage >= 15) {
                       sidebarSizeRef.current = size.asPercentage
                     }
+                    sidebarPxRef.current = size.inPixels
                   }}
                 >
                   <WorkspacePanel
