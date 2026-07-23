@@ -149,7 +149,7 @@ export function WorkspacePanel({
   if (collapsed) {
     return (
       <div
-        className="flex flex-col bg-background border-r border-border overflow-hidden shrink-0 workspace-panel"
+        className="flex h-full flex-col bg-background border-r border-border overflow-hidden shrink-0 workspace-panel"
         style={{ width: 44 }}
         onContextMenu={(e) => {
           e.preventDefault()
