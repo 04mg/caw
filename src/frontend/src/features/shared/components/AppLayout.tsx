@@ -584,7 +584,7 @@ export function AppLayout() {
 
       const wsDetails = findDetails(agentStatus.sessionId)
       const raw = agentStatus.title || ''
-      const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw || 'Unnamed Session'
+      const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw
 
       // Play notification sound
       if (soundEnabledRef.current) {
@@ -650,10 +650,12 @@ export function AppLayout() {
                 ) : 'Finished'}
               </span>
 
-              {/* Chat title subtext */}
-              <span className="text-[11px] text-foreground/60 truncate leading-snug">
-                {truncatedTitle}
-              </span>
+              {/* Chat title subtext — only rendered when a title exists */}
+              {truncatedTitle && (
+                <span className="text-[11px] text-foreground/60 truncate leading-snug">
+                  {truncatedTitle}
+                </span>
+              )}
 
               {/* Footnote: workspace • branch */}
               <span className="text-[9px] text-muted-foreground/50 truncate mt-0.5 leading-tight">
