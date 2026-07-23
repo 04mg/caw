@@ -81,6 +81,10 @@ export function AppLayout() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarRef = usePanelRef()
+  const folderSidebarRef = usePanelRef()
+  // Tracks the user's last chosen sidebar width (in %) so the imperative
+  // expand() call restores it. Updated from the sidebar Panel's onResize.
+  const sidebarSizeRef = useRef(parseFloat(localStorage.getItem('caw:sidebarSize') || '25'))
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
@@ -273,19 +277,55 @@ export function AppLayout() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
 
-  // Derived sizes so that the visible panels in the top-level Group always
-  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
-  // error when the sum of Panel defaultSizes does not equal 100%, which can
-  // happen when the left sidebar and/or right folder sidebar are
-  // conditionally mounted/unmounted on collapse.
+  // Top-level Group panel sizing strategy
+  // --------------------------------------
+  // The left workspace sidebar, main content, and right folder sidebar Panels
+  // are ALWAYS mounted inside the top-level <Group>. Collapse is driven through
+  // the imperative panelRef.resize() API rather than unmounting the Panels.
+  //
+  // This is required because react-resizable-panels throws
+  // "Invalid N panel layout: ..." from its ResizeObserver whenever the Panel
+  // count changes mid-layout (the cached layout has a different arity than the
+  // current panel constraints). The throw originates inside a ResizeObserver
+  // callback so it bypasses React's ErrorBoundary, leaves the library's
+  // internal layout store un-updated, and recurs on every sidebar toggle.
+  // See https://github.com/bvaughn/react-resizable-panels/issues/691.
+  //
+  // `collapsible` is intentionally left OFF on both sidebars so that dragging
+  // the separator stops hard at `minSize` (15%) instead of auto-collapsing
+  // below it. The collapsed size is reached by calling `resize("44px")` /
+  // `resize("0%")` programmatically and pinning `minSize` to the collapsed
+  // size while collapsed, so the lib clamps the panel there without needing
+  // the `collapsible` flag.
   const folderSidebarDefaultSize = '20%'
-  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
-  const visibleFolderSidebarSize =
-    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
-  const mainPanelDefaultSize = Math.max(
-    0,
-    100 - visibleSidebarSize - visibleFolderSidebarSize,
-  )
+  const sidebarMinSize = sidebarCollapsed ? '44px' : '15%'
+  const folderSidebarMinSize =
+    folderSidebarCollapsed || !activeWorkspace ? '0%' : '15%'
+
+  // Drive the sidebar Panel's size imperatively. The Panel itself is always
+  // mounted (see the desktop Group below); only its size and content change.
+  useEffect(() => {
+    const ref = sidebarRef.current
+    if (!ref) return
+    if (sidebarCollapsed) {
+      ref.resize('44px')
+    } else {
+      ref.resize(`${sidebarSizeRef.current}%`)
+    }
+  }, [sidebarCollapsed, sidebarRef])
+
+  // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
+  // when hidden (no workspace or toggled off) and restores to its default
+  // when shown.
+  useEffect(() => {
+    const ref = folderSidebarRef.current
+    if (!ref) return
+    if (folderSidebarCollapsed || !activeWorkspace) {
+      ref.resize('0%')
+    } else {
+      ref.resize(folderSidebarDefaultSize)
+    }
+  }, [folderSidebarCollapsed, activeWorkspace, folderSidebarRef])
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -1752,8 +1792,27 @@ export function AppLayout() {
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
               <Group orientation="horizontal" className="flex-1">
-                {/* Left Workspace Panel */}
-                {sidebarCollapsed ? (
+                {/* Left Workspace Panel — always mounted; collapse/expand is
+                    driven imperatively via sidebarRef.resize() (see the effect
+                    near the derived-size block above). Only the Panel content
+                    swaps between the 44px collapsed rail and the full sidebar.
+                    The Panel count never changes, which prevents the
+                    "Invalid N panel layout" throw from react-resizable-panels'
+                    ResizeObserver when the cached layout arity mismatches the
+                    live panel constraints. */}
+                <Panel
+                  id="sidebar"
+                  panelRef={sidebarRef}
+                  defaultSize={sidebarCollapsed ? '44px' : sidebarDefaultSize}
+                  minSize={sidebarMinSize}
+                  maxSize="50%"
+                  onResize={(size) => {
+                    if (size.asPercentage >= 15) {
+                      sidebarSizeRef.current = size.asPercentage
+                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
+                    }
+                  }}
+                >
                   <WorkspacePanel
                     workspaces={workspaces}
                     activeWorkspaceId={activeWorkspaceId}
@@ -1762,47 +1821,19 @@ export function AppLayout() {
                     onDeleteWorkspace={handleDeleteWorkspace}
                     onEditWorkspace={handleEditWorkspace}
                     onReorderWorkspaces={handleReorderWorkspaces}
-                    collapsed={true}
+                    collapsed={sidebarCollapsed}
                     onToggle={toggleSidebar}
                     pickerOpen={pickerOpen}
                     onPickerOpenChange={setPickerOpen}
                     onOpenSettings={() => setSettingsOpen(true)}
                   />
-                ) : (
-                  <>
-                    <Panel
-                      id="sidebar"
-                      panelRef={sidebarRef}
-                      defaultSize={sidebarDefaultSize}
-                      minSize="15%"
-                      maxSize="50%"
-                      onResize={(size) => {
-                        if (size.asPercentage >= 15) {
-                          localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                        }
-                      }}
-                    >
-                      <WorkspacePanel
-                        workspaces={workspaces}
-                        activeWorkspaceId={activeWorkspaceId}
-                        onSelectWorkspace={setActiveWorkspaceId}
-                        onAddWorkspace={handleAddWorkspace}
-                        onDeleteWorkspace={handleDeleteWorkspace}
-                        onEditWorkspace={handleEditWorkspace}
-                        onReorderWorkspaces={handleReorderWorkspaces}
-                        collapsed={false}
-                        onToggle={toggleSidebar}
-                        pickerOpen={pickerOpen}
-                        onPickerOpenChange={setPickerOpen}
-                        onOpenSettings={() => setSettingsOpen(true)}
-                      />
-                    </Panel>
-                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                  </>
+                </Panel>
+                {!sidebarCollapsed && (
+                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 )}
 
                 {/* Main Terminals / Editors Content */}
-                <Panel defaultSize={`${mainPanelDefaultSize}%`}>
+                <Panel id="main" defaultSize="55%">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1896,28 +1927,37 @@ export function AppLayout() {
                   )}
                 </Panel>
 
-                {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
+                {/* Right Folder Explorer Panel — always mounted (same reason as
+                    the left sidebar above); collapses to 0% imperatively via
+                    folderSidebarRef.resize("0%") and renders null content when
+                    hidden. The separator is conditionally rendered since its
+                    count does not affect the layout validator. */}
                 {activeWorkspace && !folderSidebarCollapsed && (
-                  <>
-                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                    <Panel
-                      id="folder-sidebar"
-                      defaultSize="20%"
-                      minSize="15%"
-                      maxSize="50%"
-                    >
-                      <FolderSidebar
-                        workspacePath={currentWorkspacePath}
-                        mainWorkspacePath={activeWorkspace.path || ''}
-                        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
-                        gitStatuses={gitStatuses}
-                        gitIgnored={gitIgnored}
-                        onRefresh={fetchGitStatus}
-                        onClose={() => setFolderSidebarCollapsed(true)}
-                      />
-                    </Panel>
-                  </>
+                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
                 )}
+                <Panel
+                  id="folder-sidebar"
+                  panelRef={folderSidebarRef}
+                  defaultSize={
+                    activeWorkspace && !folderSidebarCollapsed
+                      ? folderSidebarDefaultSize
+                      : '0%'
+                  }
+                  minSize={folderSidebarMinSize}
+                  maxSize="50%"
+                >
+                  {activeWorkspace && !folderSidebarCollapsed ? (
+                    <FolderSidebar
+                      workspacePath={currentWorkspacePath}
+                      mainWorkspacePath={activeWorkspace.path || ''}
+                      onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                      gitStatuses={gitStatuses}
+                      gitIgnored={gitIgnored}
+                      onRefresh={fetchGitStatus}
+                      onClose={() => setFolderSidebarCollapsed(true)}
+                    />
+                  ) : null}
+                </Panel>
               </Group>
             </div>
             {(agentBoardOpen || kanbanClosing) && (
