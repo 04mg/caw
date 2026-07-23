@@ -73,7 +73,8 @@ func (s *Store) migrate() {
 		leaf_id    TEXT PRIMARY KEY,
 		agent_id   TEXT NOT NULL DEFAULT '',
 		cwd        TEXT NOT NULL DEFAULT '',
-		started_at TEXT NOT NULL DEFAULT ''
+		started_at TEXT NOT NULL DEFAULT '',
+		external_session_id TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS push_subscriptions (
 		endpoint   TEXT PRIMARY KEY,
@@ -88,6 +89,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN agent_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN tab_groups_json TEXT DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE agent_sessions ADD COLUMN external_session_id TEXT NOT NULL DEFAULT ''")
 }
 
 func (s *Store) Get() AppState {

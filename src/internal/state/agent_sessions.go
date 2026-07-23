@@ -66,6 +66,43 @@ func (s *Store) GetAgentSession(leafID string) (agentID, cwd string, ok bool) {
 	return agentID, cwd, true
 }
 
+// GetExternalSessionID returns the agent's own internal session id previously
+// recorded for this leaf (e.g. the OpenCode session row id or the Codex
+// rollout UUID), or "" if none is recorded. Used by resumeCmdForAgent to
+// reattach to the exact session that was running before Caw quit, instead of
+// always resuming the most recent one in the cwd — which matters when multiple
+// agent panes share the same worktree.
+func (s *Store) GetExternalSessionID(leafID string) string {
+	if leafID == "" {
+		return ""
+	}
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+	var sid string
+	err := s.db.QueryRow("SELECT external_session_id FROM agent_sessions WHERE leaf_id = ?", leafID).Scan(&sid)
+	if err != nil {
+		return ""
+	}
+	return sid
+}
+
+// SetExternalSessionID records the agent's own internal session id for a leaf.
+// Called by the status watcher once it binds to an agent session (OpenCode
+// session row, Codex rollout file, etc.). Subsequent calls overwrite the
+// value, so a mid-session /new or /resume that rebinds to a different agent
+// session updates the record and the next Caw reopen resumes the right one.
+func (s *Store) SetExternalSessionID(leafID, externalSessionID string) {
+	if leafID == "" || externalSessionID == "" {
+		return
+	}
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	_, _ = s.db.Exec(
+		"UPDATE agent_sessions SET external_session_id = ? WHERE leaf_id = ?",
+		externalSessionID, leafID,
+	)
+}
+
 // ClearAgentSession removes the agent-session record for a leaf. Called when
 // the user explicitly closes the terminal pane (kill), so that reopening the
 // same layout leaf would start a fresh agent rather than resuming a session

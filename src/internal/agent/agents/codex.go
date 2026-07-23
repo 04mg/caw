@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,20 @@ type CodexWatcher struct{}
 
 func init() {
 	agent.RegisterStatusWatcher("codex", &CodexWatcher{})
+}
+
+// codexUUIDRe matches a UUID embedded in a Codex rollout filename, e.g.
+// "rollout-2025-01-02T15_04_05-<uuid>.jsonl" or
+// "rollout-test-codex-<uuid>.jsonl". The session id codex resume accepts is
+// this UUID; extracting it lets us resume the exact session a pane was
+// running instead of always "--last" (which breaks when multiple Codex panes
+// share the same cwd).
+var codexUUIDRe = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
+
+// codexSessionIDFromPath returns the Codex session UUID contained in a rollout
+// transcript filename, or "" if no UUID is present.
+func codexSessionIDFromPath(path string) string {
+	return codexUUIDRe.FindString(filepath.Base(path))
 }
 
 type CodexLogLine struct {
@@ -119,19 +134,22 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 				if err != nil {
 					continue
 				}
-				for _, c := range candidates {
-					if ClaimSession(agentID, cwd, c.Path) {
-						watchedFilePath = c.Path
-						lastFileSize = 0
-						lastCheck = time.Now()
-						lastActivity = c.ModTime
-						silentTicks = 0
-						if notifyCh != nil {
-							notifier.Watch(watchedFilePath)
-						}
-						break
+			for _, c := range candidates {
+				if ClaimSession(agentID, cwd, c.Path) {
+					watchedFilePath = c.Path
+					lastFileSize = 0
+					lastCheck = time.Now()
+					lastActivity = c.ModTime
+					silentTicks = 0
+					if notifyCh != nil {
+						notifier.Watch(watchedFilePath)
 					}
+					if sid := codexSessionIDFromPath(c.Path); sid != "" {
+						agent.RecordExternalSession(sessionID, sid)
+					}
+					break
 				}
+			}
 			}
 			if watchedFilePath != "" {
 				if !readWatched() {
@@ -164,6 +182,9 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 							silentTicks = 0
 							if notifyCh != nil {
 								notifier.Watch(watchedFilePath)
+							}
+							if sid := codexSessionIDFromPath(newKey); sid != "" {
+								agent.RecordExternalSession(sessionID, sid)
 							}
 						}
 					}
