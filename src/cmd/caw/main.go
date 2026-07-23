@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,13 +14,50 @@ import (
 var Version = "dev"
 
 func main() {
-	if handleSubcommands() {
+	args := os.Args[1:]
+
+	// No args -> start the server.
+	if len(args) == 0 {
+		startServer()
 		return
 	}
 
+	// Subcommands.
+	switch args[0] {
+	case "version":
+		printVersion()
+		return
+	case "update":
+		runUpdate()
+		return
+	case "help":
+		showHelp()
+		return
+	}
+
+	// Flags. The flag package prints help automatically for -h/--help.
+	fs := flag.NewFlagSet("caw", flag.ExitOnError)
+	fs.Usage = showHelp
+	var version bool
+	fs.BoolVar(&version, "v", false, "print version and exit")
+	fs.BoolVar(&version, "version", false, "print version and exit")
+	if err := fs.Parse(args); err != nil {
+		return
+	}
+	if version {
+		printVersion()
+		return
+	}
+	if fs.NArg() > 0 {
+		showHelp()
+		return
+	}
+	startServer()
+}
+
+func startServer() {
 	host := envOrDefault("HOST", "localhost")
 	port := envOrDefault("PORT", "8080")
-
 	server.New().ListenAndServe(host, port)
 }
 
@@ -30,46 +68,27 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func handleSubcommands() bool {
-	if len(os.Args) < 2 {
-		return false
-	}
-
-	switch os.Args[1] {
-	case "version", "-v", "--version":
-		printVersion()
-		return true
-	case "update", "--update":
-		runUpdate()
-		return true
-	case "help", "-h", "--help":
-		showHelp()
-		return true
-	default:
-		showHelp()
-		return true
-	}
-}
-
 func showHelp() {
 	fmt.Print(embed.IconTxt)
-	fmt.Println("Usage: caw [command]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  (no args)        Start the server")
-	fmt.Println("  update           Update caw to the latest release")
-	fmt.Println("  version          Print the current version")
-	fmt.Println("  help             Show this help message")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  -h, --help       Show help")
-	fmt.Println("  -v, --version    Print version")
-	fmt.Println("  --update         Update caw to the latest release")
-	fmt.Println()
-	fmt.Println("Environment:")
-	fmt.Println("  HOST             Bind address (default: localhost)")
-	fmt.Println("  PORT             Bind port (default: 8080)")
+	fmt.Print(helpText)
 }
+
+const helpText = `Usage: caw [command]
+
+Commands:
+  (no args)        Start the server
+  update           Update caw to the latest release
+  version          Print the current version
+  help             Show this help message
+
+Flags:
+  -h, --help       Show help
+  -v, --version    Print version
+
+Environment:
+  HOST             Bind address (default: localhost)
+  PORT             Bind port (default: 8080)
+`
 
 func printVersion() {
 	fmt.Printf("caw version %s\n", Version)
