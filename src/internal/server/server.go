@@ -53,6 +53,7 @@ func New() *Server {
 	git.RegisterMuxChannel(mux, gitSvc)
 	push.EnsureVAPIDKeys(s.store)
 	agent.SetPushStore(s.store)
+	agent.SetStateStore(s.store)
 	agent.SetStatusMux(mux)
 	s.gitSvc = gitSvc
 	return s
