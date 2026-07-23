@@ -118,6 +118,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				if openCodeSessionID != "" {
 					silentTicks = 0
 					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
+					agent.RecordExternalSession(sessionID, openCodeSessionID)
 				}
 			}
 		}
@@ -211,6 +212,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 							silentTicks = 0
 							otherSessionActive = false
 							lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
+							agent.RecordExternalSession(sessionID, openCodeSessionID)
 						}
 					} else {
 						otherSessionActive = false
