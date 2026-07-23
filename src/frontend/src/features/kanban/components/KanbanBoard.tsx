@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
   CircleSmall,
@@ -198,16 +198,18 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   }
 
   // Group agent statuses by Column
-  const groupedAgents: Record<ColumnId, AgentStatus[]> = {
-    idle: [],
-    needs_input: [],
-    working: [],
-  }
-
-  Object.values(statuses).forEach((agent) => {
-    const colId = getColumnForStatus(agent.status)
-    groupedAgents[colId].push(agent)
-  })
+  const groupedAgents: Record<ColumnId, AgentStatus[]> = useMemo(() => {
+    const grouped: Record<ColumnId, AgentStatus[]> = {
+      idle: [],
+      needs_input: [],
+      working: [],
+    }
+    Object.values(statuses).forEach((agent) => {
+      const colId = getColumnForStatus(agent.status)
+      grouped[colId].push(agent)
+    })
+    return grouped
+  }, [statuses])
 
   // Keep a stable ordering based on the backend-assigned opening sequence
   // (falling back to timestamp) so the cards don't reshuffle every time the
@@ -245,16 +247,17 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         }, LAYOUT_ANIM_MS)
       }
     })
+    const timers = colExitingTimers.current
     return () => {
-      ;(Object.keys(colExitingTimers.current) as ColumnId[]).forEach((colId) => {
-        if (colExitingTimers.current[colId]) {
-          clearTimeout(colExitingTimers.current[colId]!)
-          colExitingTimers.current[colId] = null
+      ;(Object.keys(timers) as ColumnId[]).forEach((colId) => {
+        if (timers[colId]) {
+          clearTimeout(timers[colId]!)
+          timers[colId] = null
         }
       })
       setColExiting({ idle: false, working: false, needs_input: false })
     }
-  }, [groupedAgents.idle.length, groupedAgents.working.length, groupedAgents.needs_input.length])
+  }, [groupedAgents])
 
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
