@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github-dark.css'
 
@@ -9,13 +11,37 @@ interface MarkdownPreviewViewProps {
   filePath: string
 }
 
+// Allow className on all elements so rehype-highlight can tag <code> with
+// language classes after sanitization, and so raw HTML keeps styling.
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className'],
+    code: [...(defaultSchema.attributes?.['code'] ?? []), 'className'],
+    pre: [...(defaultSchema.attributes?.['pre'] ?? []), 'className'],
+    img: [...(defaultSchema.attributes?.['img'] ?? []), 'src', 'alt', 'title', 'width', 'height'],
+    a: [...(defaultSchema.attributes?.['a'] ?? []), 'href', 'title', 'target', 'rel'],
+    td: [...(defaultSchema.attributes?.['td'] ?? []), 'align', 'colSpan', 'rowSpan'],
+    th: [...(defaultSchema.attributes?.['th'] ?? []), 'align', 'colSpan', 'rowSpan'],
+    table: [...(defaultSchema.attributes?.['table'] ?? []), 'align'],
+    div: [...(defaultSchema.attributes?.['div'] ?? []), 'className', 'align'],
+    span: [...(defaultSchema.attributes?.['span'] ?? []), 'className', 'style'],
+  },
+}
+
 export function MarkdownPreviewView({ content, filePath }: MarkdownPreviewViewProps) {
   const filename = filePath.split('/').pop() ?? filePath
 
   const plugins = useMemo(
     () => ({
       remarkPlugins: [remarkGfm],
-      rehypePlugins: [[rehypeHighlight, { detect: true, ignoreMissing: true }]],
+      // Order: parse raw HTML -> sanitize -> highlight code blocks.
+      rehypePlugins: [
+        rehypeRaw,
+        [rehypeSanitize, sanitizeSchema],
+        [rehypeHighlight, { detect: true, ignoreMissing: true }],
+      ] as never,
     }),
     [],
   )
@@ -33,7 +59,7 @@ export function MarkdownPreviewView({ content, filePath }: MarkdownPreviewViewPr
       <div className="flex-1 min-h-0 overflow-auto markdown-body px-8 py-6 text-sm leading-relaxed text-foreground">
         <ReactMarkdown
           remarkPlugins={plugins.remarkPlugins}
-          rehypePlugins={plugins.rehypePlugins as never}
+          rehypePlugins={plugins.rehypePlugins}
           components={{
             h1: ({ children }) => (
               <h1 className="text-2xl font-bold mt-6 mb-4 pb-2 border-b border-border">{children}</h1>
