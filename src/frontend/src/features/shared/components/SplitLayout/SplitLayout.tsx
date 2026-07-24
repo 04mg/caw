@@ -71,20 +71,37 @@ export function SplitLayout({
   // constraints to percentages and to re-clamp on resize.
   const [containerPx, setContainerPx] = useState(0)
 
+  // Total px consumed by visible separators. Panels share the remaining space
+  // via flexGrow, so the separator width is always reserved. Computed early so
+  // px→% conversions use the panel space, not the full container.
+  const separatorPx = useMemo(() => {
+    const n = Math.max(0, Math.min(sizes.length, children.length) - 1)
+    let total = 0
+    for (let i = 0; i < n; i++) {
+      if (separatorHidden?.[i] !== true) total += 10 // w-2.5 / h-2.5
+    }
+    return total
+  }, [sizes.length, children.length, separatorHidden])
+
+  // The panel space is the container minus the separators. px-based sizes and
+  // constraints (e.g. "44px") are resolved against this, so 44px maps to the
+  // right fraction of the space the panels actually occupy.
+  const panelSpacePx = Math.max(0, containerPx - separatorPx)
+
   // Resolved constraints in pure percentages, recomputed whenever inputs or the
   // container size change.
   const resolvedMin = useMemo(
-    () => resolveSizes(pad(minSizes, children.length, 0), containerPx),
-    [minSizes, children.length, containerPx],
+    () => resolveSizes(pad(minSizes, children.length, 0), panelSpacePx),
+    [minSizes, children.length, panelSpacePx],
   )
   const resolvedMax = useMemo(
-    () => resolveSizes(pad(maxSizes, children.length, 100), containerPx),
-    [maxSizes, children.length, containerPx],
+    () => resolveSizes(pad(maxSizes, children.length, 100), panelSpacePx),
+    [maxSizes, children.length, panelSpacePx],
   )
   const resolvedSizes = useMemo(() => {
-    const raw = resolveSizes(sizes, containerPx)
+    const raw = resolveSizes(sizes, panelSpacePx)
     return clampSizes(raw, resolvedMin, resolvedMax)
-  }, [sizes, containerPx, resolvedMin, resolvedMax])
+  }, [sizes, panelSpacePx, resolvedMin, resolvedMax])
 
   // Keep the parent informed when the effective (clamped) sizes change due to
   // a container resize or constraint change — but ONLY when the clamped values
@@ -134,6 +151,7 @@ export function SplitLayout({
     minSizes: resolvedMin,
     maxSizes: resolvedMax,
     onSizesChange: onSizesChange ?? noop,
+    separatorPx,
   })
 
   const isHorizontal = orientation === 'horizontal'
@@ -156,15 +174,15 @@ export function SplitLayout({
   const count = panelNodes.length
 
   const elements: ReactNode[] = []
+
   for (let i = 0; i < count; i++) {
     if (i > 0) {
       const sepIndex = i - 1
       const hidden = separatorHidden?.[sepIndex] === true
       if (!hidden) {
-        // The separator is a wide invisible hit area (so the user doesn't have
-        // to point exactly at the 1px line) wrapping a thin visual bar. The
-        // visual bar uses the caller's className for color/hover styling; the
-        // hit area is transparent and carries the pointer handlers.
+        // The separator is a 10px invisible hit area wrapping a 1px visual
+        // bar centered inside it. The hit area carries the pointer handlers;
+        // the bar uses the caller's className for color/hover styling.
         const hitClass = isHorizontal ? 'w-2.5' : 'h-2.5'
         const barClass = isHorizontal
           ? 'w-px h-full'
@@ -190,9 +208,13 @@ export function SplitLayout({
       <div
         key={`panel-${i}`}
         style={{
-          flexGrow: 0,
+          // Use flexGrow proportional to the panel's percentage, with
+          // flexBasis 0 so the panels share the space left after the
+          // separators. This avoids overflow when the percentages sum to 100
+          // AND the separators take extra pixels.
+          flexGrow: resolvedSizes[i],
           flexShrink: 0,
-          flexBasis: `${resolvedSizes[i]}%`,
+          flexBasis: 0,
           minWidth: 0,
           minHeight: 0,
           overflow: 'hidden',
