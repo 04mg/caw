@@ -297,12 +297,11 @@ export function AppLayout() {
   const folderMinSize = folderVisible ? '15%' : '0%'
   const folderMaxSize = folderVisible ? '50%' : '0%'
 
-  // Declarative layout: the three panel sizes are derived directly from the
-  // current collapse state and the persisted sizes. SplitLayout re-clamps
-  // these against min/max and emits the normalized values via onSizesChange
-  // (which persists sidebar/folder widths). Main is given the remainder so
-  // the three values sum to 100 and the sidebars stay at their persisted
-  // widths rather than being shifted by the redistribution algorithm.
+  // Declarative layout: the three panel sizes are derived from the current
+  // collapse state and the live sizes. SplitLayout re-clamps these against
+  // min/max and emits normalized values via onSizesChange (which persists
+  // sidebar/folder widths AND updates the live state so the panels move on
+  // drag). Main is given the remainder so the three values sum to 100.
   const topLevelSizes = useMemo(() => {
     if (sidebarCollapsed) {
       // Sidebar pinned to 44px; main absorbs everything, folder takes its
@@ -316,9 +315,30 @@ export function AppLayout() {
     return [`${sidebarPct}%`, `${mainPct}%`, folderVisible ? `${folderPct}%` : '0%']
   }, [sidebarCollapsed, folderVisible])
 
+  // Live sizes in pure percentages — the source of truth that SplitLayout
+  // renders. Updated on drag so the panels move in real time. Re-synced only
+  // when the structural layout changes (collapse toggle or folder visibility
+  // flip), NOT when the ref values change (which happens during drag — the
+  // sync would fight the drag and snap the panel back).
+  const [liveSizes, setLiveSizes] = useState<number[]>([])
+  const lastStructKey = useRef('')
+  const structKey = `${sidebarCollapsed ? '1' : '0'}|${folderVisible ? '1' : '0'}`
+  if (structKey !== lastStructKey.current) {
+    lastStructKey.current = structKey
+    if (sidebarCollapsed) {
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([0, Math.max(0, 100 - folderPct), folderPct])
+    } else {
+      const sidebarPct = sidebarSizeRef.current
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([sidebarPct, Math.max(0, 100 - sidebarPct - folderPct), folderPct])
+    }
+  }
+
   const handleTopLevelSizesChange = useCallback(
     (next: number[]) => {
       // next is [sidebarPct, mainPct, folderPct] in pure percentages.
+      setLiveSizes(next)
       const sidebarPct = next[0]
       const folderPct = next[2]
       if (!sidebarCollapsed && sidebarPct >= 15) {
@@ -1800,7 +1820,7 @@ export function AppLayout() {
               <SplitLayout
                 orientation="horizontal"
                 className="flex-1 h-full w-full"
-                sizes={topLevelSizes}
+                sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
                 maxSizes={[sidebarMaxSize, '100%', folderMaxSize]}
                 separatorHidden={[sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
