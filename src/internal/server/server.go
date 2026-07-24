@@ -67,10 +67,7 @@ func (s *Server) Handler() http.Handler {
 	state.RegisterHTTP(api, s.store, s.mux)
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
 	agent.Register(api)
-
-	httpx.RegisterAPIGin(api, func(rg *gin.RouterGroup) {
-		workspace.Register(rg)
-	})
+	workspace.Register(api)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", api))
