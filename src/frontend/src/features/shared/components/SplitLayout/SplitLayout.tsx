@@ -161,21 +161,28 @@ export function SplitLayout({
       const sepIndex = i - 1
       const hidden = separatorHidden?.[sepIndex] === true
       if (!hidden) {
+        // The separator is a wide invisible hit area (so the user doesn't have
+        // to point exactly at the 1px line) wrapping a thin visual bar. The
+        // visual bar uses the caller's className for color/hover styling; the
+        // hit area is transparent and carries the pointer handlers.
+        const hitClass = isHorizontal ? 'w-2.5' : 'h-2.5'
+        const barClass = isHorizontal
+          ? 'w-px h-full'
+          : 'h-px w-full'
         elements.push(
           <div
             key={`sep-${sepIndex}`}
             ref={(el) => { separatorRefs.current[sepIndex] = el }}
             onPointerDown={handleSeparatorPointerDown(sepIndex)}
-            className={separatorClassName}
+            className={`relative flex items-center justify-center shrink-0 grow-0 ${hitClass}`}
             style={{
-              flexShrink: 0,
-              flexGrow: 0,
               touchAction: 'none',
-              ...(isHorizontal
-                ? { height: '100%', cursor: 'col-resize' }
-                : { width: '100%', cursor: 'row-resize' }),
+              cursor: isHorizontal ? 'col-resize' : 'row-resize',
+              ...(isHorizontal ? { height: '100%' } : { width: '100%' }),
             }}
-          />,
+          >
+            <div className={separatorClassName ? `${separatorClassName} ${barClass}` : barClass} />
+          </div>,
         )
       }
     }
