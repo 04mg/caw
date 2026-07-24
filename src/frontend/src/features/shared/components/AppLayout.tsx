@@ -1824,7 +1824,7 @@ export function AppLayout() {
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
                 maxSizes={[sidebarMaxSize, '100%', folderMaxSize]}
                 separatorHidden={[sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
-                separatorClassName="bg-border hover:bg-ring hover:w-[3px] transition-all"
+                separatorClassName="bg-border group-hover:bg-ring group-hover:w-[3px] transition-all"
                 onSizesChange={handleTopLevelSizesChange}
               >
                 {/* Left Workspace Panel — always mounted; collapse/expand is
