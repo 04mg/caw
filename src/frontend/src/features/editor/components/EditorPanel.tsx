@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react'
-import { Save, AlertCircle, RefreshCw, Check, GitBranch } from 'lucide-react'
+import { Save, AlertCircle, RefreshCw, Check, GitBranch, Eye, Code } from 'lucide-react'
 import { Button } from '@/components/button'
 import { getFileCategory, isBinaryContent } from '../utils/fileType'
 import { BinaryFileView } from './BinaryFileView'
 import { ImagePreviewView } from './ImagePreviewView'
+import { MarkdownPreviewView } from './MarkdownPreviewView'
 import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
 import { pathsEqual } from '@/features/shared/utils/path'
 import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
@@ -72,12 +73,16 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   // Initial value for the model the first time a path is seen. After that,
   // Monaco keeps the model alive across unmounts and we must NOT overwrite it.
   const [initialValue, setInitialValue] = useState<string | undefined>(undefined)
+  // Toggle between source editor and rendered markdown preview for .md files.
+  const [view, setView] = useState<'editor' | 'preview'>('editor')
+  const isMarkdown = !!filePath && filePath.toLowerCase().endsWith('.md')
 
   // Reset binary override when file changes
   useEffect(() => {
     setForceOpenBinary(false)
     setIsBinaryRuntime(false)
     setInitialValue(undefined)
+    setView('editor')
   }, [filePath])
 
   const originalContentRef = useRef('')
@@ -395,6 +400,36 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
                 <AlertCircle className="h-3 w-3" /> Save failed
               </span>
             )}
+            {isMarkdown && (
+              <div className="flex items-center rounded-md border border-border overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setView('editor')}
+                  title="Edit source"
+                  className={`flex items-center gap-1 px-2 h-6 text-[11px] font-medium transition-colors ${
+                    view === 'editor'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  <Code className="h-3.5 w-3.5" />
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('preview')}
+                  title="Preview rendered markdown"
+                  className={`flex items-center gap-1 px-2 h-6 text-[11px] font-medium transition-colors border-l border-border ${
+                    view === 'preview'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Preview
+                </button>
+              </div>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -484,32 +519,43 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
             }}
           />
         ) : initialValue !== undefined ? (
-          <Editor
-            key={filePath}
-            height="100%"
-            path={monacoPath}
-            language={getLanguage(filePath)}
-            theme={isDarkTheme ? 'caw-dark' : 'light'}
-            beforeMount={(monaco) => {
-              defineCawDarkTheme(monaco)
-              monacoRef.current = monaco
-            }}
-            defaultValue={initialValue}
-            saveViewState
-            keepCurrentModel
-            onChange={handleEditorChange}
-            onMount={(editor, monaco) => {
-              editorRef.current = editor
-              monacoRef.current = monaco
-            }}
-            options={{
-              fontSize: 12,
-              fontFamily: 'JetBrainsMono Nerd Font, Courier New, monospace',
-              minimap: { enabled: true },
-              automaticLayout: true,
-              scrollbar: { vertical: 'visible', horizontal: 'visible' },
-            }}
-          />
+          <div className="absolute inset-0 flex">
+            {/* Monaco editor — kept mounted (hidden) when preview is shown so
+                the undo stack, cursor and scroll state are preserved. */}
+            <div className={view === 'editor' ? 'h-full w-full' : 'hidden'}>
+              <Editor
+                key={filePath}
+                height="100%"
+                path={monacoPath}
+                language={getLanguage(filePath)}
+                theme={isDarkTheme ? 'caw-dark' : 'light'}
+                beforeMount={(monaco) => {
+                  defineCawDarkTheme(monaco)
+                  monacoRef.current = monaco
+                }}
+                defaultValue={initialValue}
+                saveViewState
+                keepCurrentModel
+                onChange={handleEditorChange}
+                onMount={(editor, monaco) => {
+                  editorRef.current = editor
+                  monacoRef.current = monaco
+                }}
+                options={{
+                  fontSize: 12,
+                  fontFamily: 'JetBrainsMono Nerd Font, Courier New, monospace',
+                  minimap: { enabled: true },
+                  automaticLayout: true,
+                  scrollbar: { vertical: 'visible', horizontal: 'visible' },
+                }}
+              />
+            </div>
+            {isMarkdown && (
+              <div className={view === 'preview' ? 'h-full w-full' : 'hidden'}>
+                <MarkdownPreviewView content={editedContent} filePath={filePath!} />
+              </div>
+            )}
+          </div>
         ) : null}
       </div>
     </div>
