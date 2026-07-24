@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
-  CircleSmall,
   Clock, 
   Terminal,
   ChevronRight,
@@ -33,7 +32,6 @@ type ColumnId = 'idle' | 'needs_input' | 'working'
 interface Column {
   id: ColumnId
   title: string
-  icon: any
   colorClass: string
   glowClass: string
 }
@@ -42,21 +40,18 @@ const COLUMNS: Column[] = [
   {
     id: 'idle',
     title: 'Idle',
-    icon: CircleSmall,
     colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
     glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
   },
   {
     id: 'working',
     title: 'Working',
-    icon: CircleSmall,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
   },
   {
     id: 'needs_input',
     title: 'Needs Input',
-    icon: CircleSmall,
     colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
     glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
@@ -406,21 +401,18 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     {
       id: 'idle',
       title: 'Idle',
-      icon: CircleSmall,
       colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
       glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
     },
     {
       id: 'working',
       title: 'Working',
-      icon: CircleSmall,
       colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
       glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
     },
     {
       id: 'needs_input',
       title: 'Needs Input',
-      icon: CircleSmall,
       colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
       glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
     },
@@ -449,17 +441,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
-          const ColIcon = col.icon
           return (
             <div key={col.id} data-testid={`kanban-column-${col.id}`} className="flex flex-col shrink-0 gap-3 rounded-xl p-3 bg-secondary/5">
               <div className="flex items-center justify-between pb-2 border-b border-border/20">
-                <div className="flex items-center gap-2">
-                  <ColIcon className="w-4 h-4 text-foreground" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-foreground/90">
-                    {col.title}
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground/90">
+                  {col.title}
+                </span>
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
                   {agents.length}
                 </span>
               </div>
@@ -470,7 +458,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
-                      <ColIcon className="w-3.5 h-3.5 text-foreground" />
+                      <span className="block w-3.5 h-3.5" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
@@ -492,7 +480,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2 kanban-scroll">
         {COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
-          const ColIcon = col.icon
 
           return (
             <div 
@@ -502,13 +489,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             >
               {/* Column Header */}
               <div className="flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0">
-                <div className="flex items-center gap-2">
-                  <ColIcon className="w-4 h-4 text-foreground" />
-                  <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
-                    {col.title}
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
+                  {col.title}
+                </span>
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
                   {agents.length}
                 </span>
               </div>
@@ -520,9 +504,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   agents.map(renderCard)
                 ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
-                    <div className="p-2.5 rounded-full bg-muted/40">
-                      <ColIcon className="w-4 h-4 text-foreground" />
-                    </div>
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
