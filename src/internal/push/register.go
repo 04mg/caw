@@ -1,7 +1,7 @@
 package push
 
 import (
-	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/state"
@@ -11,64 +11,72 @@ type Handler struct {
 	store *state.Store
 }
 
-func Register(rg *gin.RouterGroup, store *state.Store) {
+func Register(mux *http.ServeMux, store *state.Store) {
 	h := &Handler{store: store}
-	rg.GET("/push/vapid-public-key", h.GetVAPIDPublicKey)
-	rg.POST("/push/subscribe", h.Subscribe)
-	rg.DELETE("/push/subscribe", h.Unsubscribe)
-	rg.GET("/push/prefs", h.GetPrefs)
-	rg.PUT("/push/prefs", h.SavePrefs)
+	mux.HandleFunc("GET /push/vapid-public-key", h.GetVAPIDPublicKey)
+	mux.HandleFunc("POST /push/subscribe", h.Subscribe)
+	mux.HandleFunc("DELETE /push/subscribe", h.Unsubscribe)
+	mux.HandleFunc("GET /push/prefs", h.GetPrefs)
+	mux.HandleFunc("PUT /push/prefs", h.SavePrefs)
 }
 
-func (h *Handler) GetVAPIDPublicKey(c *gin.Context) {
-	httpx.OK(c, gin.H{"publicKey": PublicKey()})
+type vapidPublicKeyResponse struct {
+	PublicKey string `json:"publicKey"`
 }
 
-type subscribeRequest struct {
-	Endpoint string            `json:"endpoint" binding:"required"`
-	Keys     subscribeKeysReq  `json:"keys" binding:"required"`
+func (h *Handler) GetVAPIDPublicKey(w http.ResponseWriter, r *http.Request) {
+	httpx.RespondJSON(w, vapidPublicKeyResponse{PublicKey: PublicKey()})
 }
 
 type subscribeKeysReq struct {
-	P256dh string `json:"p256dh" binding:"required"`
-	Auth   string `json:"auth" binding:"required"`
+	P256dh string `json:"p256dh" validate:"required"`
+	Auth   string `json:"auth" validate:"required"`
 }
 
-func (h *Handler) Subscribe(c *gin.Context) {
+type subscribeRequest struct {
+	Endpoint string           `json:"endpoint" validate:"required"`
+	Keys     subscribeKeysReq `json:"keys" validate:"required"`
+}
+
+type okResponse struct {
+	OK bool `json:"ok"`
+}
+
+func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	var req subscribeRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if err := h.store.AddPushSubscription(req.Endpoint, req.Keys.P256dh, req.Keys.Auth); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.Created(c, gin.H{"ok": true})
+	httpx.RespondCreated(w, okResponse{OK: true})
 }
 
 type unsubscribeRequest struct {
-	Endpoint string `json:"endpoint" binding:"required"`
+	Endpoint string `json:"endpoint" validate:"required"`
 }
 
-func (h *Handler) Unsubscribe(c *gin.Context) {
+func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 	var req unsubscribeRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if err := h.store.RemovePushSubscription(req.Endpoint); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.NoContent(c)
+	httpx.RespondNoContent(w)
 }
 
-func (h *Handler) GetPrefs(c *gin.Context) {
+func (h *Handler) GetPrefs(w http.ResponseWriter, r *http.Request) {
 	prefs, err := h.store.GetPushPrefs()
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, prefs)
+	httpx.RespondJSON(w, prefs)
 }
 
 type savePrefsRequest struct {
@@ -77,15 +85,15 @@ type savePrefsRequest struct {
 	Finished   *bool `json:"finished"`
 }
 
-func (h *Handler) SavePrefs(c *gin.Context) {
+func (h *Handler) SavePrefs(w http.ResponseWriter, r *http.Request) {
 	var req savePrefsRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 
 	prefs, err := h.store.GetPushPrefs()
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
 	if req.Enabled != nil {
@@ -99,8 +107,8 @@ func (h *Handler) SavePrefs(c *gin.Context) {
 	}
 
 	if err := h.store.SavePushPrefs(prefs); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, prefs)
+	httpx.RespondJSON(w, prefs)
 }
