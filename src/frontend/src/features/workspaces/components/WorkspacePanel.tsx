@@ -243,7 +243,7 @@ export function WorkspacePanel({
 
   return (
     <div
-      className="flex h-full flex-col bg-background select-none workspace-panel"
+      className="flex h-full flex-col bg-background select-none workspace-panel border-r border-border"
       onContextMenu={(e) => {
         e.preventDefault()
         setGeneralContextMenu({ x: e.clientX, y: e.clientY })
