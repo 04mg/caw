@@ -115,6 +115,10 @@ func (h *Handler) Files(w http.ResponseWriter, r *http.Request) {
 			h.fileDownload(w, r)
 			return
 		}
+		if r.URL.Query().Get("inline") == "true" {
+			h.fileInline(w, r)
+			return
+		}
 		h.fileRead(w, r)
 		return
 	}
@@ -190,6 +194,31 @@ func (h *Handler) fileDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.WriteHeader(http.StatusOK)
 	w.Write(buf.Bytes())
+}
+
+// fileInline serves a single file with its detected Content-Type and no
+// Content-Disposition header, so it can be embedded in <img>, <video>,
+// <source srcset>, etc. Only works for files (not directories).
+func (h *Handler) fileInline(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		httpx.RespondBadRequest(w, err.Error())
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		httpx.RespondNotFound(w, err.Error())
+		return
+	}
+	if info.IsDir() {
+		httpx.RespondBadRequest(w, "cannot inline a directory")
+		return
+	}
+	// Detect Content-Type from content (sniff first 512 bytes). Falls back
+	// to extension-based detection via ServeFile, which also sets the
+	// Content-Type from the extension when sniffing is inconclusive.
+	http.ServeFile(w, r, abs)
 }
 
 func (h *Handler) FileWrite(w http.ResponseWriter, r *http.Request) {
