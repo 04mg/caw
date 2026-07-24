@@ -1,7 +1,7 @@
 package quota
 
 import (
-	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/state"
@@ -91,64 +91,64 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func (h *Handler) Quotas(c *gin.Context) {
+func (h *Handler) Quotas(w http.ResponseWriter, r *http.Request) {
 	res, err := h.svc.Quotas()
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, res)
+	httpx.RespondJSON(w, res)
 }
 
-func (h *Handler) Settings(c *gin.Context) {
+func (h *Handler) Settings(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.svc.Settings()
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, settings)
+	httpx.RespondJSON(w, settings)
 }
 
-func (h *Handler) SaveSettings(c *gin.Context) {
+func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 	var req map[string]map[string]string
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if err := h.svc.SaveSettings(req); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]bool{"ok": true})
+	httpx.RespondJSON(w, map[string]bool{"ok": true})
 }
 
-func (h *Handler) DeviceCode(c *gin.Context) {
+func (h *Handler) DeviceCode(w http.ResponseWriter, r *http.Request) {
 	dc, err := h.svc.InitiateDeviceLogin()
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, dc)
+	httpx.RespondJSON(w, dc)
 }
 
-func (h *Handler) PollToken(c *gin.Context) {
-	deviceCode := c.Param("device_code")
+func (h *Handler) PollToken(w http.ResponseWriter, r *http.Request) {
+	deviceCode := r.PathValue("device_code")
 	if deviceCode == "" {
-		httpx.BadRequest(c, "device_code required")
+		httpx.RespondBadRequest(w, "device_code required")
 		return
 	}
 	tr, err := h.svc.PollDeviceToken(deviceCode)
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, tr)
+	httpx.RespondJSON(w, tr)
 }
 
-func Register(rg *gin.RouterGroup, store *state.Store) {
+func Register(mux *http.ServeMux, store *state.Store) {
 	h := NewHandler(NewService(store))
-	rg.GET("/quotas", h.Quotas)
-	rg.GET("/quotas/settings", h.Settings)
-	rg.PUT("/quotas/settings", h.SaveSettings)
-	rg.POST("/quotas/copilot/device-codes", h.DeviceCode)
-	rg.GET("/quotas/copilot/device-codes/:device_code", h.PollToken)
+	mux.HandleFunc("GET /quotas", h.Quotas)
+	mux.HandleFunc("GET /quotas/settings", h.Settings)
+	mux.HandleFunc("PUT /quotas/settings", h.SaveSettings)
+	mux.HandleFunc("POST /quotas/copilot/device-codes", h.DeviceCode)
+	mux.HandleFunc("GET /quotas/copilot/device-codes/{device_code}", h.PollToken)
 }
