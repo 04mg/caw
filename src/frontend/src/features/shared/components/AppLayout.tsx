@@ -300,12 +300,20 @@ export function AppLayout() {
   // Declarative layout: the three panel sizes are derived directly from the
   // current collapse state and the persisted sizes. SplitLayout re-clamps
   // these against min/max and emits the normalized values via onSizesChange
-  // (which persists sidebar/folder widths). The main panel absorbs the
-  // remainder so the three values always sum to 100.
+  // (which persists sidebar/folder widths). Main is given the remainder so
+  // the three values sum to 100 and the sidebars stay at their persisted
+  // widths rather than being shifted by the redistribution algorithm.
   const topLevelSizes = useMemo(() => {
-    const sidebarPct = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : `${sidebarSizeRef.current}%`
-    const folderPct = folderVisible ? `${folderSidebarSizeRef.current}%` : '0%'
-    return [sidebarPct, '0%', folderPct]
+    if (sidebarCollapsed) {
+      // Sidebar pinned to 44px; main absorbs everything, folder takes its
+      // persisted share (or 0 when hidden).
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      return [SIDEBAR_COLLAPSED_PX, `${Math.max(0, 100 - folderPct)}%`, folderVisible ? `${folderSidebarSizeRef.current}%` : '0%']
+    }
+    const sidebarPct = sidebarSizeRef.current
+    const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+    const mainPct = Math.max(0, 100 - sidebarPct - folderPct)
+    return [`${sidebarPct}%`, `${mainPct}%`, folderVisible ? `${folderPct}%` : '0%']
   }, [sidebarCollapsed, folderVisible])
 
   const handleTopLevelSizesChange = useCallback(
@@ -1795,8 +1803,8 @@ export function AppLayout() {
                 sizes={topLevelSizes}
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
                 maxSizes={[sidebarMaxSize, '100%', folderMaxSize]}
-                separatorHidden={[!sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
-                separatorClassName="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize shrink-0"
+                separatorHidden={[sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
+                separatorClassName="bg-border hover:bg-ring hover:w-[3px] transition-all"
                 onSizesChange={handleTopLevelSizesChange}
               >
                 {/* Left Workspace Panel — always mounted; collapse/expand is

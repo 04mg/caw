@@ -31,11 +31,7 @@ export function SplitGroup({
       sizes={resolvedSizes}
       onSizesChange={(next) => onSizesChange(splitId, next)}
       className="h-full w-full"
-      separatorClassName={
-        orientation === 'horizontal'
-          ? 'w-px bg-border hover:bg-ring transition-colors cursor-col-resize'
-          : 'h-px bg-border hover:bg-ring transition-colors cursor-row-resize'
-      }
+      separatorClassName="bg-border hover:bg-ring transition-colors"
     >
       {childArray}
     </SplitLayout>
