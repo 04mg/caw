@@ -59,45 +59,42 @@ func New() *Server {
 	return s
 }
 
-func (s *Server) Engine() *gin.Engine {
-	r := gin.New()
-	httpx.InstallErrorMiddleware(r)
+func (s *Server) Handler() http.Handler {
+	api := http.NewServeMux()
+	git.RegisterWithService(api, s.gitSvc)
 
-	api := r.Group("/api")
-	{
-		terminal.Register(api, s.store, &ws.TerminalUpgrader)
-		state.RegisterHTTP(api, s.store, s.mux)
-		workspace.Register(api)
-		git.RegisterWithService(api, s.gitSvc)
-		agent.Register(api)
-		quota.Register(api, s.store)
-		push.Register(api, s.store)
-	}
-
-	r.GET("/ws", func(c *gin.Context) {
-		s.mux.HandleMuxWS(c.Writer, c.Request)
-	})
-	r.GET("/ws/state", func(c *gin.Context) {
-		state.HandleStateWS(c.Writer, c.Request, s.store, s.hub)
-	})
-	r.GET("/ws/workspaces/files", gin.WrapF(workspace.HandleFilesWS))
-	r.GET("/ws/agents/statuses", func(c *gin.Context) {
-		agent.HandleStatusWS(c.Writer, c.Request, agent.StatusHub())
-	})
-	r.GET("/ws/terminals/:id", func(c *gin.Context) {
-		terminal.HandleTerminalWS(c.Writer, c.Request, c.Param("id"), &ws.TerminalUpgrader)
+	httpx.RegisterAPIGin(api, func(rg *gin.RouterGroup) {
+		terminal.Register(rg, s.store, &ws.TerminalUpgrader)
+		state.RegisterHTTP(rg, s.store, s.mux)
+		workspace.Register(rg)
+		agent.Register(rg)
+		quota.Register(rg, s.store)
+		push.Register(rg, s.store)
 	})
 
-	r.NoRoute(func(c *gin.Context) {
-		http.FileServer(http.FS(s.frontendFS)).ServeHTTP(c.Writer, c.Request)
+	mux := http.NewServeMux()
+	mux.Handle("/api/", http.StripPrefix("/api", api))
+
+	mux.HandleFunc("GET /ws", s.mux.HandleMuxWS)
+	mux.HandleFunc("GET /ws/state", func(w http.ResponseWriter, r *http.Request) {
+		state.HandleStateWS(w, r, s.store, s.hub)
+	})
+	mux.HandleFunc("GET /ws/workspaces/files", workspace.HandleFilesWS)
+	mux.HandleFunc("GET /ws/agents/statuses", func(w http.ResponseWriter, r *http.Request) {
+		agent.HandleStatusWS(w, r, agent.StatusHub())
+	})
+	mux.HandleFunc("GET /ws/terminals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		terminal.HandleTerminalWS(w, r, r.PathValue("id"), &ws.TerminalUpgrader)
 	})
 
-	return r
+	mux.HandleFunc("/", httpx.SPAHandler(s.frontendFS))
+
+	return httpx.Chain(mux, httpx.Recovery, httpx.Logger)
 }
 
 func (s *Server) ListenAndServe(host, port string) {
 	addr := host + ":" + port
 	fmt.Print(embed.IconTxt)
 	fmt.Printf("\033[38;2;255;150;150m└─\033[0m \033[38;2;255;150;150mlistening on \033[1;4m%s\033[0m\n", addr)
-	log.Fatal(http.ListenAndServe(addr, s.Engine()))
+	log.Fatal(http.ListenAndServe(addr, s.Handler()))
 }
