@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
 	"github.com/04mg/caw/internal/httpx"
@@ -20,23 +19,23 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func (h *Handler) GetWorkspaces(c *gin.Context) {
-	httpx.OK(c, h.svc.Get())
+func (h *Handler) GetWorkspaces(w http.ResponseWriter, r *http.Request) {
+	httpx.RespondJSON(w, h.svc.Get())
 }
 
-func (h *Handler) PutWorkspaces(c *gin.Context) {
+func (h *Handler) PutWorkspaces(w http.ResponseWriter, r *http.Request) {
 	var s AppState
-	if !httpx.Bind(c, &s) {
+	if !httpx.BindRequest(w, r, &s) {
 		return
 	}
 	h.svc.Set(s)
-	httpx.OK(c, map[string]bool{"ok": true})
+	httpx.RespondJSON(w, map[string]bool{"ok": true})
 }
 
-func RegisterHTTP(rg *gin.RouterGroup, store *Store, mux *ws.Multiplexer) {
-	h := NewHandler(NewService(store, mux))
-	rg.GET("/workspaces", h.GetWorkspaces)
-	rg.POST("/workspaces", h.PutWorkspaces)
+func RegisterHTTP(mux *http.ServeMux, store *Store, muxWS *ws.Multiplexer) {
+	h := NewHandler(NewService(store, muxWS))
+	mux.HandleFunc("GET /workspaces", h.GetWorkspaces)
+	mux.HandleFunc("POST /workspaces", h.PutWorkspaces)
 }
 
 // RegisterMuxChannel wires the "state" channel into the multiplexer.
