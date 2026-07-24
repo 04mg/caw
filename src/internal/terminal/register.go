@@ -79,9 +79,6 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 	stopPing := ws.StartKeepalive(c, ws.PingWriter(wc.WriteMessage))
 	defer stopPing()
 
-	// Track this connection as pending until sendScrollback registers it
-	// in sess.conns. This prevents resizePTY from treating this connection
-	// as the only viewer while another connection is still connecting.
 	sess.mu.Lock()
 	sess.pendingResizes++
 	sess.mu.Unlock()
@@ -90,35 +87,17 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		sess.mu.Lock()
 		if _, ok := sess.conns[wc]; ok {
 			delete(sess.conns, wc)
-			// A viewer left — the PTY may now be able to grow to the
-			// remaining smallest viewer (or the single remaining viewer's
-			// full size). Recompute before broadcasting so larger viewers
-			// stop receiving downscaled output and the released mobile
-			// viewer no longer pins the PTY small.
 			sess.recomputeResize()
 		} else {
-			// sendScrollback hasn't run yet — undo the pending count.
 			sess.pendingResizes--
 		}
 		sess.mu.Unlock()
 		wc.Close()
 	}()
 
-	// firstResize is signaled when the client sends its first resize
-	// message (sent in ws.onopen on the frontend). We wait for it (with
-	// a 2s timeout) before sending scrollback so the replay renders with
-	// the correct cols/rows, eliminating the garbled-characters-on-load
-	// bug that required a manual resize to fix.
 	firstResize := make(chan struct{}, 1)
 	scrolled := false
 
-	// sendScrollback sends the buffered scrollback and sync-mode sequences
-	// to this client and registers it in sess.conns so it starts receiving
-	// live output. Must be called at most once. The client is registered
-	// in sess.conns AFTER the scrollback is written, so ReadLoop's live
-	// output cannot interleave with the replay. The connWriter mutex still
-	// serializes any concurrent writes, but the ordering guarantee ensures
-	// the client sees scrollback before new output.
 	sendScrollback := func() {
 		if scrolled {
 			return
@@ -141,15 +120,10 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			}
 		}
 
-		// Register the client only after scrollback is fully written so
-		// that live output from ReadLoop doesn't interleave with the
-		// replay. Decrement pendingResizes now that this connection is
-		// fully established.
 		sess.pendingResizes--
 		sess.conns[wc] = true
 		sess.mu.Unlock()
 
-		// Send messages outside the lock to avoid holding it during I/O.
 		if len(scrollbackMsg) > 0 {
 			wc.WriteMessage(websocket.TextMessage, scrollbackMsg)
 		}
@@ -162,10 +136,6 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		}
 	}
 
-	// Wait for the first resize from the client, with a timeout fallback.
-	// If the client doesn't send a resize within 2s (e.g. older frontend
-	// or a headless client), fall back to sending scrollback with the
-	// session's current dimensions.
 	go func() {
 		select {
 		case <-firstResize:
@@ -205,17 +175,11 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			sess.mu.Lock()
 			sess.resizePTY(cols, rows, wc)
 			sess.mu.Unlock()
-			// Signal the first resize so sendScrollback runs with the
-			// client's actual dimensions.
 			select {
 			case firstResize <- struct{}{}:
 			default:
 			}
 		case "focus":
-			// Frontend reports that this pane gained or lost the user's
-			// focus. Forward to the agent status package via OnPtyFocus so
-			// the idle-timeout and re-bind heuristics can account for which
-			// terminal the user is currently driving.
 			focused, _ := msg["focused"].(bool)
 			if OnPtyFocus != nil {
 				OnPtyFocus(id, focused)
