@@ -64,10 +64,10 @@ func (s *Server) Handler() http.Handler {
 	git.RegisterWithService(api, s.gitSvc)
 	quota.Register(api, s.store)
 	push.Register(api, s.store)
+	state.RegisterHTTP(api, s.store, s.mux)
 
 	httpx.RegisterAPIGin(api, func(rg *gin.RouterGroup) {
 		terminal.Register(rg, s.store, &ws.TerminalUpgrader)
-		state.RegisterHTTP(rg, s.store, s.mux)
 		workspace.Register(rg)
 		agent.Register(rg)
 	})
