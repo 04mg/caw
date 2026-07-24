@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github-dark.css'
+import { MermaidBlock } from './MermaidBlock'
 
 interface MarkdownPreviewViewProps {
   content: string
@@ -30,8 +31,25 @@ const sanitizeSchema = {
   },
 }
 
+// Detect dark theme the same way EditorPanel does.
+function useIsDark() {
+  const [dark, setDark] = useState(!window.document.documentElement.classList.contains('light'))
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setDark(!window.document.documentElement.classList.contains('light'))
+    })
+    observer.observe(window.document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    })
+    return () => observer.disconnect()
+  }, [])
+  return dark
+}
+
 export function MarkdownPreviewView({ content, filePath }: MarkdownPreviewViewProps) {
   const filename = filePath.split('/').pop() ?? filePath
+  const isDark = useIsDark()
 
   const plugins = useMemo(
     () => ({
@@ -111,12 +129,21 @@ export function MarkdownPreviewView({ content, filePath }: MarkdownPreviewViewPr
               <th className="border border-border px-3 py-1.5 text-left font-semibold">{children}</th>
             ),
             td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
-            pre: ({ children }) => (
-              <pre className="my-4 overflow-x-auto rounded-md border border-border bg-[#0d1117] p-3 text-xs font-mono leading-relaxed">
-                {children}
-              </pre>
-            ),
+            pre: ({ children }) => {
+              // If this <pre> wraps a mermaid code block, the <code> child
+              // already renders <MermaidBlock>; fall back to a styled <pre>.
+              return (
+                <pre className="my-4 overflow-x-auto rounded-md border border-border bg-[#0d1117] p-3 text-xs font-mono leading-relaxed">
+                  {children}
+                </pre>
+              )
+            },
             code: ({ className, children, ...props }) => {
+              const isMermaid = className?.includes('language-mermaid')
+              if (isMermaid) {
+                const text = String(children).replace(/\n$/, '')
+                return <MermaidBlock code={text} isDark={isDark} />
+              }
               const isInline = !className
               if (isInline) {
                 return (
