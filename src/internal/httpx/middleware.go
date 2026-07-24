@@ -1,7 +1,10 @@
 package httpx
 
 import (
+	"bufio"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -37,6 +40,20 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 		sw.status = http.StatusOK
 	}
 	return sw.ResponseWriter.Write(b)
+}
+
+func (sw *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := sw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
+	}
+	return hj.Hijack()
+}
+
+func (sw *statusWriter) Flush() {
+	if fl, ok := sw.ResponseWriter.(http.Flusher); ok {
+		fl.Flush()
+	}
 }
 
 func Logger(next http.Handler) http.Handler {
