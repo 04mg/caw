@@ -38,12 +38,6 @@ func RegisterHTTP(mux *http.ServeMux, store *Store, muxWS *ws.Multiplexer) {
 	mux.HandleFunc("POST /workspaces", h.PutWorkspaces)
 }
 
-// RegisterMuxChannel wires the "state" channel into the multiplexer.
-// On subscribe, the current state is sent to the client. Inbound messages
-// are treated as state updates and broadcast to other subscribers. The
-// broadcast is skipped if the normalized state JSON is identical to the
-// last broadcast, preventing redundant full-state fan-out when multiple
-// clients persist the same state in quick succession.
 var (
 	lastStateJSON []byte
 	lastStateMu   sync.Mutex
@@ -81,8 +75,6 @@ func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
 	)
 }
 
-// HandleStateWS is the legacy /ws/state endpoint kept for backward
-// compatibility. New clients should use /ws with channel "state".
 func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws.Hub) {
 	c, err := ws.DefaultUpgrader.Upgrade(w, r, nil)
 	if err != nil {
