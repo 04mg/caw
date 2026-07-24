@@ -36,6 +36,7 @@ interface TabGroupViewProps {
   onClosePane: (paneId: string) => void
   onSizesChange: (splitId: string, sizes: number[]) => void
   onOpenDiff?: (filePath?: string) => void
+  onOpenFile?: (filePath: string) => void
   onOpenSettings?: () => void
   onToggleFolderSidebar?: () => void
 }
@@ -64,6 +65,7 @@ export function TabGroupView({
   onClosePane,
   onSizesChange,
   onOpenDiff,
+  onOpenFile,
   onOpenSettings,
   onToggleFolderSidebar,
 }: TabGroupViewProps): ReactNode {
@@ -191,6 +193,7 @@ export function TabGroupView({
             onSizesChange={onSizesChange}
             gitStatuses={gitStatuses}
             onOpenDiff={onOpenDiff}
+            onOpenFile={onOpenFile}
           />
         ) : workspace.layouts.length > 0 ? (
           <div className="flex flex-col h-full w-full items-center justify-center text-center gap-2 select-none text-muted-foreground text-xs p-6">

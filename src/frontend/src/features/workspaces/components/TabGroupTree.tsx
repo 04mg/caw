@@ -34,6 +34,7 @@ interface TabGroupTreeProps {
   onSizesChange: (splitId: string, sizes: number[]) => void
   onGroupSizesChange: (splitId: string, sizes: number[]) => void
   onOpenDiff?: (filePath?: string) => void
+  onOpenFile?: (filePath: string) => void
   onOpenSettings?: () => void
   onToggleFolderSidebar?: () => void
 }
@@ -63,6 +64,7 @@ export function TabGroupTree({
   onSizesChange,
   onGroupSizesChange,
   onOpenDiff,
+  onOpenFile,
   onOpenSettings,
   onToggleFolderSidebar,
 }: TabGroupTreeProps): ReactNode {
@@ -92,6 +94,7 @@ export function TabGroupTree({
         onClosePane={onClosePane}
         onSizesChange={onSizesChange}
         onOpenDiff={onOpenDiff}
+        onOpenFile={onOpenFile}
         onOpenSettings={onOpenSettings}
         onToggleFolderSidebar={onToggleFolderSidebar}
       />
@@ -141,6 +144,7 @@ export function TabGroupTree({
             onSizesChange={onSizesChange}
             onGroupSizesChange={onGroupSizesChange}
             onOpenDiff={onOpenDiff}
+            onOpenFile={onOpenFile}
             onOpenSettings={onOpenSettings}
             onToggleFolderSidebar={onToggleFolderSidebar}
           />

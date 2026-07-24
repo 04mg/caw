@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 // Render a Mermaid diagram. Mermaid is dynamically imported so the heavy
 // library is only loaded when a ```mermaid block is present.
-export function MermaidBlock({ code, isDark }: { code: string; isDark: boolean }) {
+// Memoized so parent re-renders (e.g. clicking inside the preview) do not
+// trigger a re-render of an unchanged diagram.
+export const MermaidBlock = memo(function MermaidBlock({ code, isDark }: { code: string; isDark: boolean }) {
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2)}`)
@@ -16,7 +18,6 @@ export function MermaidBlock({ code, isDark }: { code: string; isDark: boolean }
           startOnLoad: false,
           theme: isDark ? 'dark' : 'default',
           securityLevel: 'strict',
-          fontFamily: 'inherit',
         })
         const result = await mermaid.render(idRef.current, code)
         if (!cancelled) {
@@ -34,7 +35,7 @@ export function MermaidBlock({ code, isDark }: { code: string; isDark: boolean }
 
   if (error) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs font-mono leading-relaxed text-destructive">
+      <pre className="my-4 overflow-x-auto text-xs font-mono leading-relaxed text-destructive">
         <code>{code}</code>
       </pre>
     )
@@ -42,13 +43,8 @@ export function MermaidBlock({ code, isDark }: { code: string; isDark: boolean }
 
   return svg ? (
     <div
-      className="my-4 overflow-x-auto rounded-md border border-border bg-background p-4 [&_svg]:max-w-full"
-      // mermaid output is our own rendered SVG, not user-controlled HTML
+      className="my-4 overflow-x-auto flex justify-center [&_svg]:max-w-full"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
-  ) : (
-    <div className="my-4 flex items-center justify-center p-4 text-xs text-muted-foreground border border-border rounded-md">
-      Rendering diagram...
-    </div>
-  )
-}
+  ) : null
+})
