@@ -401,34 +401,25 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
               </span>
             )}
             {isMarkdown && (
-              <div className="flex items-center rounded-md border border-border overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setView('editor')}
-                  title="Edit source"
-                  className={`flex items-center gap-1 px-2 h-6 text-[11px] font-medium transition-colors ${
-                    view === 'editor'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
-                  }`}
-                >
-                  <Code className="h-3.5 w-3.5" />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setView('preview')}
-                  title="Preview rendered markdown"
-                  className={`flex items-center gap-1 px-2 h-6 text-[11px] font-medium transition-colors border-l border-border ${
-                    view === 'preview'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
-                  }`}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  Preview
-                </button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[11px] font-medium"
+                onClick={() => setView((v) => (v === 'editor' ? 'preview' : 'editor'))}
+                title={view === 'editor' ? 'Preview rendered markdown' : 'Edit source'}
+              >
+                {view === 'editor' ? (
+                  <>
+                    <Eye className="h-3.5 w-3.5 mr-1" />
+                    Preview
+                  </>
+                ) : (
+                  <>
+                    <Code className="h-3.5 w-3.5 mr-1" />
+                    Edit
+                  </>
+                )}
+              </Button>
             )}
             <Button
               variant="ghost"
