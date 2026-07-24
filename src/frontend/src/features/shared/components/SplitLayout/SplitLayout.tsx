@@ -71,22 +71,9 @@ export function SplitLayout({
   // constraints to percentages and to re-clamp on resize.
   const [containerPx, setContainerPx] = useState(0)
 
-  // Total px consumed by visible separators. Panels share the remaining space
-  // via flexGrow, so the separator width is always reserved. Computed early so
-  // px→% conversions use the panel space, not the full container.
-  const separatorPx = useMemo(() => {
-    const n = Math.max(0, Math.min(sizes.length, children.length) - 1)
-    let total = 0
-    for (let i = 0; i < n; i++) {
-      if (separatorHidden?.[i] !== true) total += 10 // w-2.5 / h-2.5
-    }
-    return total
-  }, [sizes.length, children.length, separatorHidden])
-
-  // The panel space is the container minus the separators. px-based sizes and
-  // constraints (e.g. "44px") are resolved against this, so 44px maps to the
-  // right fraction of the space the panels actually occupy.
-  const panelSpacePx = Math.max(0, containerPx - separatorPx)
+  // Separators are absolutely positioned and don't take flex space, so the
+  // panel space equals the full container. px→% conversions use containerPx.
+  const panelSpacePx = containerPx
 
   // Resolved constraints in pure percentages, recomputed whenever inputs or the
   // container size change.
@@ -151,7 +138,6 @@ export function SplitLayout({
     minSizes: resolvedMin,
     maxSizes: resolvedMax,
     onSizesChange: onSizesChange ?? noop,
-    separatorPx,
   })
 
   const isHorizontal = orientation === 'horizontal'
@@ -175,46 +161,49 @@ export function SplitLayout({
 
   const elements: ReactNode[] = []
 
+  // Cumulative offset (in %) of each panel's left/top edge, used to position
+  // the absolute separators at the panel boundaries.
+  let cumulativePct = 0
+
   for (let i = 0; i < count; i++) {
-    if (i > 0) {
-      const sepIndex = i - 1
-      const hidden = separatorHidden?.[sepIndex] === true
-      if (!hidden) {
-        // The separator is a 10px invisible hit area wrapping a 1px visual
-        // bar centered inside it. The hit area carries the pointer handlers;
-        // the bar uses the caller's className for color/hover styling.
-        const hitClass = isHorizontal ? 'w-2.5' : 'h-2.5'
-        const barClass = isHorizontal
-          ? 'w-px h-full'
-          : 'h-px w-full'
-        elements.push(
-          <div
-            key={`sep-${sepIndex}`}
-            ref={(el) => { separatorRefs.current[sepIndex] = el }}
-            onPointerDown={handleSeparatorPointerDown(sepIndex)}
-            className={`relative flex items-center justify-center shrink-0 grow-0 ${hitClass}`}
-            style={{
-              touchAction: 'none',
-              cursor: isHorizontal ? 'col-resize' : 'row-resize',
-              ...(isHorizontal ? { height: '100%' } : { width: '100%' }),
-            }}
-          >
-            <div className={separatorClassName ? `${separatorClassName} ${barClass}` : barClass} />
-          </div>,
-        )
-      }
+    const sepIndex = i - 1
+    const hidden = separatorHidden?.[sepIndex] === true
+    if (i > 0 && !hidden) {
+      // Separator is absolutely positioned at the boundary between panel i-1
+      // and panel i. It overlays the flex layout so panels can use flexBasis %
+      // summing to 100 without overflow. The hit area is 10px wide centered
+      // on the boundary; the visual bar is 1px.
+      const hitClass = isHorizontal ? 'w-2.5' : 'h-2.5'
+      const barClass = isHorizontal
+        ? 'w-px h-full'
+        : 'h-px w-full'
+      elements.push(
+        <div
+          key={`sep-${sepIndex}`}
+          ref={(el) => { separatorRefs.current[sepIndex] = el }}
+          onPointerDown={handleSeparatorPointerDown(sepIndex)}
+          className={`absolute flex items-center justify-center ${hitClass}`}
+          style={{
+            touchAction: 'none',
+            cursor: isHorizontal ? 'col-resize' : 'row-resize',
+            ...(isHorizontal
+              ? { top: 0, bottom: 0, left: `${cumulativePct}%`, transform: 'translateX(-50%)', height: '100%' }
+              : { left: 0, right: 0, top: `${cumulativePct}%`, transform: 'translateY(-50%)', width: '100%' }),
+          }}
+        >
+          <div className={separatorClassName ? `${separatorClassName} ${barClass}` : barClass} />
+        </div>,
+      )
     }
     elements.push(
       <div
         key={`panel-${i}`}
         style={{
-          // Use flexGrow proportional to the panel's percentage, with
-          // flexBasis 0 so the panels share the space left after the
-          // separators. This avoids overflow when the percentages sum to 100
-          // AND the separators take extra pixels.
-          flexGrow: resolvedSizes[i],
+          // flexBasis % so panels share the full container. Separators are
+          // absolutely positioned and don't take flex space.
+          flexGrow: 0,
           flexShrink: 0,
-          flexBasis: 0,
+          flexBasis: `${resolvedSizes[i]}%`,
           minWidth: 0,
           minHeight: 0,
           overflow: 'hidden',
@@ -224,6 +213,7 @@ export function SplitLayout({
         {panelNodes[i]}
       </div>,
     )
+    cumulativePct += resolvedSizes[i]
   }
 
   return (
@@ -232,6 +222,7 @@ export function SplitLayout({
       className={className}
       style={{
         display: 'flex',
+        position: 'relative',
         flexDirection: isHorizontal ? 'row' : 'column',
         ...style,
       }}

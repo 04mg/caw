@@ -319,7 +319,7 @@ export function FolderSidebar({
   }, [workspacePath, triggerRefresh, onRefresh])
 
   return (
-    <div className="flex h-full flex-col bg-background select-none border-l border-border explorer-sidebar">
+    <div className="flex h-full flex-col bg-background select-none explorer-sidebar">
       {!noHeader && (
         <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
           <Button

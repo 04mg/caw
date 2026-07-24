@@ -149,7 +149,7 @@ export function WorkspacePanel({
   if (collapsed) {
     return (
       <div
-        className="flex h-full w-full flex-col bg-background border-r border-border overflow-hidden workspace-panel"
+        className="flex h-full w-full flex-col bg-background overflow-hidden workspace-panel"
         onContextMenu={(e) => {
           e.preventDefault()
           setGeneralContextMenu({ x: e.clientX, y: e.clientY })
@@ -243,7 +243,7 @@ export function WorkspacePanel({
 
   return (
     <div
-      className="flex h-full flex-col bg-background select-none workspace-panel border-r border-border"
+      className="flex h-full flex-col bg-background select-none workspace-panel"
       onContextMenu={(e) => {
         e.preventDefault()
         setGeneralContextMenu({ x: e.clientX, y: e.clientY })
