@@ -62,13 +62,13 @@ func New() *Server {
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	git.RegisterWithService(api, s.gitSvc)
+	quota.Register(api, s.store)
 
 	httpx.RegisterAPIGin(api, func(rg *gin.RouterGroup) {
 		terminal.Register(rg, s.store, &ws.TerminalUpgrader)
 		state.RegisterHTTP(rg, s.store, s.mux)
 		workspace.Register(rg)
 		agent.Register(rg)
-		quota.Register(rg, s.store)
 		push.Register(rg, s.store)
 	})
 
