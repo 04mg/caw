@@ -127,6 +127,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       })
       ro.observe(el)
       resizeObsRef.current = ro
+
+      // Force a resize on the first mount. waitForLayout inside
+      // attachTerminal resolves as soon as the container has non-zero
+      // dimensions, but the final layout often hasn't settled yet (sidebar
+      // transitions, flex sizing, panel drag handles still animating). The
+      // initial fit() / WS resize therefore runs against stale intermediate
+      // dimensions and the terminal renders garbled until something else
+      // triggers a ResizeObserver callback (collapsing a sidebar, etc.).
+      // Double-rAF defers the re-fit past the browser's layout + paint pass
+      // so proposeDimensions reads the final, settled container size.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          flushResize()
+        })
+      })
     })()
 
     return () => {
