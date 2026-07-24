@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
   CircleSmall,
@@ -96,6 +96,8 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // completes (200ms) rather than overlapping with the departing card.
   const prevEmptyRef = useRef<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
   const [showEmpty, setShowEmpty] = useState<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
+  const [colExiting, setColExiting] = useState<Record<ColumnId, boolean>>({ idle: false, working: false, needs_input: false })
+  const colExitingTimers = useRef<Record<ColumnId, ReturnType<typeof setTimeout> | null>>({ idle: null, working: null, needs_input: null })
 
   const agentsEmpty = useCallback((colId: ColumnId, count: number) => {
     const wasEmpty = prevEmptyRef.current[colId]
@@ -196,16 +198,18 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   }
 
   // Group agent statuses by Column
-  const groupedAgents: Record<ColumnId, AgentStatus[]> = {
-    idle: [],
-    needs_input: [],
-    working: [],
-  }
-
-  Object.values(statuses).forEach((agent) => {
-    const colId = getColumnForStatus(agent.status)
-    groupedAgents[colId].push(agent)
-  })
+  const groupedAgents: Record<ColumnId, AgentStatus[]> = useMemo(() => {
+    const grouped: Record<ColumnId, AgentStatus[]> = {
+      idle: [],
+      needs_input: [],
+      working: [],
+    }
+    Object.values(statuses).forEach((agent) => {
+      const colId = getColumnForStatus(agent.status)
+      grouped[colId].push(agent)
+    })
+    return grouped
+  }, [statuses])
 
   // Keep a stable ordering based on the backend-assigned opening sequence
   // (falling back to timestamp) so the cards don't reshuffle every time the
@@ -226,6 +230,34 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   useEffect(() => { return agentsEmpty('idle', groupedAgents.idle.length) }, [agentsEmpty, groupedAgents.idle.length])
   useEffect(() => { return agentsEmpty('working', groupedAgents.working.length) }, [agentsEmpty, groupedAgents.working.length])
   useEffect(() => { return agentsEmpty('needs_input', groupedAgents.needs_input.length) }, [agentsEmpty, groupedAgents.needs_input.length])
+
+  // Track when a column transitions from non-empty to empty so we can suppress
+  // the "No agents" placeholder while the layout animation (400ms) is still
+  // in progress. Without this the empty state and the departing card overlap.
+  useEffect(() => {
+    const LAYOUT_ANIM_MS = 400
+    ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
+      const wasEmpty = prevEmptyRef.current[colId]
+      if (!wasEmpty && groupedAgents[colId].length === 0) {
+        if (colExitingTimers.current[colId]) clearTimeout(colExitingTimers.current[colId]!)
+        setColExiting(prev => ({ ...prev, [colId]: true }))
+        colExitingTimers.current[colId] = setTimeout(() => {
+          setColExiting(prev => ({ ...prev, [colId]: false }))
+          colExitingTimers.current[colId] = null
+        }, LAYOUT_ANIM_MS)
+      }
+    })
+    const timers = colExitingTimers.current
+    return () => {
+      ;(Object.keys(timers) as ColumnId[]).forEach((colId) => {
+        if (timers[colId]) {
+          clearTimeout(timers[colId]!)
+          timers[colId] = null
+        }
+      })
+      setColExiting({ idle: false, working: false, needs_input: false })
+    }
+  }, [groupedAgents])
 
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
@@ -435,7 +467,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated && showEmpty[col.id] ? (
+                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
                       <ColIcon className="w-3.5 h-3.5 text-foreground" />
@@ -486,7 +518,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated && showEmpty[col.id] ? (
+                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
                     <div className="p-2.5 rounded-full bg-muted/40">
                       <ColIcon className="w-4 h-4 text-foreground" />

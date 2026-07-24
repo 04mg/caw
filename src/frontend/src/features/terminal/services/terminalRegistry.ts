@@ -153,6 +153,14 @@ function getTerminalTheme(): 'dark' | 'light' {
   return (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
 }
 
+// Returns the terminal background color for the current theme, used to paint
+// the container behind the xterm.js grid so the padded area (when a larger
+// viewer centers a smaller PTY grid) shows a clean background instead of
+// ghost content from the previous larger grid.
+export function getTerminalBackground(): string {
+  return getTerminalTheme() === 'light' ? '#fff' : '#000'
+}
+
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
@@ -240,6 +248,12 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
 // Margins are applied to the .xterm element itself, not its parent, so
 // the FitAddon's proposeDimensions (which reads the parent's CSS width)
 // is unaffected — no feedback loop between padding and fitting.
+//
+// xterm.js renders into a canvas/DOM that spans the full container; when
+// the grid shrinks below the container, stale cells from the previous
+// (larger) grid remain visible in the padded area. We clear the viewport
+// after resizing so the padded area shows a clean background instead of
+// ghost content from the old PTY layout.
 function applyPadding(inst: TerminalInstance) {
   const el = inst.term.element
   if (!el) return
@@ -253,7 +267,12 @@ function applyPadding(inst: TerminalInstance) {
   const cell = (inst.term as any)._core?._renderService?.dimensions?.css?.cell
   const cellW = cell?.width ?? 0
   const cellH = cell?.height ?? 0
-  if (cellW <= 0 || cellH <= 0) return
+  if (cellW <= 0 || cellH <= 0) {
+    // Renderer dimensions aren't ready yet (e.g. right after open or a
+    // resize). Retry on the next frame once xterm.js has recomputed them.
+    requestAnimationFrame(() => applyPadding(inst))
+    return
+  }
   const left = Math.floor(inst._padCols / 2) * cellW
   const right = Math.ceil(inst._padCols / 2) * cellW
   const top = Math.floor(inst._padRows / 2) * cellH
@@ -514,7 +533,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         }
         inst._padCols = Number(msg.padCols) || 0
         inst._padRows = Number(msg.padRows) || 0
-        applyPadding(inst)
+        // Re-apply padding on the next frame: term.resize() updates the
+        // renderer dimensions asynchronously, and applyPadding reads them
+        // to compute pixel-exact margins.
+        requestAnimationFrame(() => applyPadding(inst))
       } else if (msg.type === 'exit') {
         inst.exited = true
         onTerminalExit?.(inst.leafId)
@@ -570,10 +592,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
 
 // waitForLayout resolves when the container element has non-zero width
 // and height (i.e. the layout engine has applied final dimensions).
-// react-resizable-panels applies sizes asynchronously, so calling term.open
-// + fit.fit immediately after mount produces wrong cols/rows and garbled
-// rendering. We wait for the layout to settle, with a 500ms fallback so
-// we never block forever on a hidden/offscreen panel.
+// Flex-basis percentages apply synchronously, but xterm's cols/rows math
+// still benefits from a microtask delay until the browser paints. We wait
+// for the layout to settle, with a 500ms fallback so we never block
+// forever on a hidden/offscreen panel.
 function waitForLayout(el: HTMLElement): Promise<void> {
   return new Promise((resolve) => {
     const rect = el.getBoundingClientRect()

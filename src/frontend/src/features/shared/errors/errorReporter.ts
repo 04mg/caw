@@ -84,17 +84,6 @@ function buildContext(extra: Record<string, unknown> = {}): Record<string, unkno
     }
   }
 
-  try {
-    const lsSidebar = localStorage.getItem('caw:sidebarCollapsed')
-    const lsFolder = localStorage.getItem('caw:folderSidebarCollapsed')
-    const lsSize = localStorage.getItem('caw:sidebarSize')
-    if (lsSidebar !== null) ctx.cawSidebarCollapsed = lsSidebar
-    if (lsFolder !== null) ctx.cawFolderSidebarCollapsed = lsFolder
-    if (lsSize !== null) ctx.cawSidebarSize = lsSize
-  } catch {
-    // localStorage may be unavailable (private mode, sandbox)
-  }
-
   ctx.recentEventLog = eventLog.slice(-20)
   ctx.recentConsoleErrors = consoleErrors.slice(-10)
 
