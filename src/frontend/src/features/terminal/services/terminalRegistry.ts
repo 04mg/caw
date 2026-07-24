@@ -65,6 +65,14 @@ export interface TerminalInstance {
    * backend doesn't lose focus state across socket drops.
    */
   _focused: boolean
+  /**
+   * @internal True after releaseTerminal intentionally drops this client's
+   * hold on a terminal (mobile switched to another terminal). Prevents the
+   * ws.onclose auto-reconnect from silently re-attaching and re-pinning
+   * the backend PTY to mobile dimensions. A later attachTerminal call
+   * re-opens the terminal and reconnects.
+   */
+  _released: boolean
 }
 
 const registry = new Map<string, TerminalInstance>()
@@ -96,7 +104,7 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: 
 }
 
 const darkTerminalTheme = {
-  background: '#0a0a0a',
+  background: '#000',
   foreground: '#f0f0f0',
   cursor: '#f0f0f0',
   selectionBackground: '#264f78',
@@ -119,7 +127,7 @@ const darkTerminalTheme = {
 }
 
 const lightTerminalTheme = {
-  background: '#ffffff',
+  background: '#fff',
   foreground: '#1a1a1a',
   cursor: '#1a1a1a',
   selectionBackground: '#b0d4f1',
@@ -143,6 +151,14 @@ const lightTerminalTheme = {
 
 function getTerminalTheme(): 'dark' | 'light' {
   return (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
+}
+
+// Returns the terminal background color for the current theme, used to paint
+// the container behind the xterm.js grid so the padded area (when a larger
+// viewer centers a smaller PTY grid) shows a clean background instead of
+// ghost content from the previous larger grid.
+export function getTerminalBackground(): string {
+  return getTerminalTheme() === 'light' ? '#fff' : '#000'
 }
 
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
@@ -232,6 +248,12 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
 // Margins are applied to the .xterm element itself, not its parent, so
 // the FitAddon's proposeDimensions (which reads the parent's CSS width)
 // is unaffected — no feedback loop between padding and fitting.
+//
+// xterm.js renders into a canvas/DOM that spans the full container; when
+// the grid shrinks below the container, stale cells from the previous
+// (larger) grid remain visible in the padded area. We clear the viewport
+// after resizing so the padded area shows a clean background instead of
+// ghost content from the old PTY layout.
 function applyPadding(inst: TerminalInstance) {
   const el = inst.term.element
   if (!el) return
@@ -245,7 +267,12 @@ function applyPadding(inst: TerminalInstance) {
   const cell = (inst.term as any)._core?._renderService?.dimensions?.css?.cell
   const cellW = cell?.width ?? 0
   const cellH = cell?.height ?? 0
-  if (cellW <= 0 || cellH <= 0) return
+  if (cellW <= 0 || cellH <= 0) {
+    // Renderer dimensions aren't ready yet (e.g. right after open or a
+    // resize). Retry on the next frame once xterm.js has recomputed them.
+    requestAnimationFrame(() => applyPadding(inst))
+    return
+  }
   const left = Math.floor(inst._padCols / 2) * cellW
   const right = Math.ceil(inst._padCols / 2) * cellW
   const top = Math.floor(inst._padRows / 2) * cellH
@@ -506,7 +533,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         }
         inst._padCols = Number(msg.padCols) || 0
         inst._padRows = Number(msg.padRows) || 0
-        applyPadding(inst)
+        // Re-apply padding on the next frame: term.resize() updates the
+        // renderer dimensions asynchronously, and applyPadding reads them
+        // to compute pixel-exact margins.
+        requestAnimationFrame(() => applyPadding(inst))
       } else if (msg.type === 'exit') {
         inst.exited = true
         onTerminalExit?.(inst.leafId)
@@ -521,6 +551,13 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       // clients, so reconnecting later resumes the same session.
       // Actual process exit is reported separately via the "exit" message.
       inst.ws = null
+      // If this terminal was intentionally released (mobile switched to
+      // another terminal), do NOT auto-reconnect — that would re-pin the
+      // backend PTY to mobile dimensions. A later attachTerminal call
+      // (switching back to this terminal) re-opens it explicitly.
+      if (inst._released) {
+        return
+      }
       // Auto-reconnect after a short delay, mirroring the pattern used
       // by the other WS clients in the app (workspaceStore, agentStatusStore,
       // fileTreeWs). Without this, every keystroke is silently dropped
@@ -555,10 +592,10 @@ function connectWs(inst: TerminalInstance, backendId: string) {
 
 // waitForLayout resolves when the container element has non-zero width
 // and height (i.e. the layout engine has applied final dimensions).
-// react-resizable-panels applies sizes asynchronously, so calling term.open
-// + fit.fit immediately after mount produces wrong cols/rows and garbled
-// rendering. We wait for the layout to settle, with a 500ms fallback so
-// we never block forever on a hidden/offscreen panel.
+// Flex-basis percentages apply synchronously, but xterm's cols/rows math
+// still benefits from a microtask delay until the browser paints. We wait
+// for the layout to settle, with a 500ms fallback so we never block
+// forever on a hidden/offscreen panel.
 function waitForLayout(el: HTMLElement): Promise<void> {
   return new Promise((resolve) => {
     const rect = el.getBoundingClientRect()
@@ -601,6 +638,10 @@ export async function attachTerminal(
     // The terminal is being re-attached to the DOM, so live output can
     // once again be rendered directly to xterm.js.
     existing._detached = false
+    // A previous releaseTerminal call (mobile tab switch) set this flag to
+    // suppress auto-reconnect. We're now explicitly re-attaching, so clear
+    // it so a future socket drop reconnects normally.
+    existing._released = false
     // Wait for the container to have real dimensions before opening
     // xterm.js, so fit.fit() computes correct cols/rows and the terminal
     // doesn't render garbled output that requires a manual resize.
@@ -659,7 +700,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -733,6 +774,10 @@ export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  // Mark as intentionally released so ws.onclose does not auto-reconnect
+  // and re-pin the backend PTY (used by the mobile single-active-terminal
+  // model). A later attachTerminal call clears this flag and reconnects.
+  inst._released = true
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)

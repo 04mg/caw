@@ -86,6 +86,14 @@ var (
 	// pushStore is set by SetPushStore at server startup so that agent status
 	// transitions can trigger web push notifications.
 	pushStore *state.Store
+	// stateStore is set by SetStateStore at server startup. It is the same
+	// *state.Store as pushStore in practice, but is used by
+	// RecordExternalSession to persist the agent's own internal session id
+	// (OpenCode session row, Codex rollout UUID, ...) so a Caw reopen can
+	// resume the exact session instead of the most recent one in the cwd.
+	// Kept as a separate field so the resume-by-id code path doesn't depend
+	// on push being configured.
+	stateStore *state.Store
 	// ptyActivity tracks the last time each leaf/session id received bytes
 	// from its PTY. Updated via OnPtyActivity from terminal.ReadLoop and read
 	// by watchers to correlate lazily-created internal agent sessions to the
@@ -118,6 +126,24 @@ func SetStatusMux(m *ws.Multiplexer) { statusMux = m }
 // transitions can dispatch web push notifications. Called once from
 // server.New().
 func SetPushStore(s *state.Store) { pushStore = s }
+
+// SetStateStore wires the state store used by RecordExternalSession. Called
+// once from server.New(). In practice the same *state.Store as the push store.
+func SetStateStore(s *state.Store) { stateStore = s }
+
+// RecordExternalSession persists the agent's own internal session id for the
+// given Caw leaf/session. Watchers call this once they bind to an agent
+// session (OpenCode session row id, Codex rollout UUID, ...), and again on
+// any mid-session re-bind caused by /new or /resume. On the next Caw reopen,
+// resumeCmdForAgent reads this id back and launches the agent against the
+// exact session instead of "--continue"/"--last", so multiple agent panes
+// sharing a cwd each resume their own conversation.
+func RecordExternalSession(sessionID, externalSessionID string) {
+	if stateStore == nil || sessionID == "" || externalSessionID == "" {
+		return
+	}
+	stateStore.SetExternalSessionID(sessionID, externalSessionID)
+}
 
 func init() {
 	terminal.OnSessionStart = handleSessionStart
@@ -200,6 +226,38 @@ func IsPtyFocused(sessionID string) bool {
 	ptyFocusMu.RLock()
 	defer ptyFocusMu.RUnlock()
 	return ptyFocus[sessionID]
+}
+
+// SetPtyActivityForTest records (or clears) the last-activity timestamp for a
+// leaf/session id. It is intended only for tests that need to simulate PTY
+// output without a real terminal; production code drives ptyActivity via
+// terminal.OnPtyActivity (wired in init()).
+func SetPtyActivityForTest(sessionID string, at time.Time) {
+	ptyActivityMu.Lock()
+	if at.IsZero() {
+		delete(ptyActivity, sessionID)
+	} else {
+		ptyActivity[sessionID] = at
+	}
+	ptyActivityMu.Unlock()
+}
+
+// SetPtyFocusForTest records (or clears) whether a leaf/session id currently
+// has the user's focus. It is intended only for tests; production code drives
+// ptyFocus via terminal.OnPtyFocus (wired in init()).
+func SetPtyFocusForTest(sessionID string, focused bool) {
+	ptyFocusMu.Lock()
+	if focused {
+		for k := range ptyFocus {
+			if k != sessionID {
+				delete(ptyFocus, k)
+			}
+		}
+		ptyFocus[sessionID] = true
+	} else {
+		delete(ptyFocus, sessionID)
+	}
+	ptyFocusMu.Unlock()
 }
 
 // RegisterStatusWatcher allows status providers to register themselves

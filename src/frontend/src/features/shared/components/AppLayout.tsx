@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { SplitLayout } from '@/features/shared/components/SplitLayout'
 import { Toaster, toast } from 'sonner'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
@@ -79,13 +79,33 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const sidebarRef = usePanelRef()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:sidebarCollapsed') === '1',
+  )
+  // Tracks the user's last chosen sidebar width (in %) so that re-expanding
+  // the collapsed sidebar restores it. Updated declaratively from the
+  // SplitLayout onSizesChange callback.
+  const sidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:sidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 15
+    })(),
+  )
+  const folderSidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:folderSidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 20
+    })(),
+  )
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
 
-  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:folderSidebarCollapsed') !== '0',
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
@@ -166,34 +186,33 @@ export function AppLayout() {
   }, [])
 
   useEffect(() => {
-    const savedCollapsed = localStorage.getItem('caw:sidebarCollapsed')
-    if (savedCollapsed === '1') setSidebarCollapsed(true)
-
-    const savedFolderCollapsed = localStorage.getItem('caw:folderSidebarCollapsed')
-    if (savedFolderCollapsed === '0') setFolderSidebarCollapsed(false)
-  }, [])
-
-  const sidebarDefaultSize = (() => {
-    const saved = localStorage.getItem('caw:sidebarSize')
-    if (saved) {
-      const n = parseFloat(saved)
-      if (n >= 15 && n <= 50) return `${n}%`
-    }
-    return '25%'
-  })()
-
-  useEffect(() => {
     let done = false
     loadState().then((s) => {
       if (done) return
       skipPersistRef.current = true
       loadedRef.current = true
       const parsedWorkspaces = s.workspaces.map((w) => {
+        // Seed a local focus entry for every workspace on initial load so
+        // each client keeps its own selection independent of the shared
+        // backend state. The backend's activeTabIndex/activePaneId are only
+        // used as the fresh-load default here; afterwards selection is
+        // driven entirely by local user interaction.
+        localFocusRef.current[w.id] = {
+          tabIndex: Math.max(0, Math.min(w.activeTabIndex, w.layouts.length - 1)),
+          paneId: w.activePaneId,
+        }
         const { tree, activeGroupId } = ensureTabGroups(w)
         return { ...w, tabGroups: tree, activeGroupId }
       })
       setWorkspaces(parsedWorkspaces)
-      setActiveWorkspaceId(s.activeWorkspaceId)
+      // Selection is per-client: prefer the local focus we just seeded,
+      // falling back to the backend's last-writer value only to pick the
+      // initial workspace. Other devices switching workspaces must never
+      // clobber this client's active workspace.
+      const initialWs = s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
+        ? s.activeWorkspaceId
+        : (parsedWorkspaces[0]?.id ?? null)
+      setActiveWorkspaceId(initialWs)
       setLoaded(true)
     })
     return () => { done = true }
@@ -223,6 +242,17 @@ export function AppLayout() {
         for (const id of prevLeafIds) if (!nextLeafIds.has(id)) releaseTerminal(id)
 
         return remote.workspaces.map((rw) => {
+          // Selection is per-client. Seed a local focus entry for
+          // workspaces this client has never visited (e.g. one created on
+          // another device), so it doesn't inherit the other device's
+          // selection. For workspaces already known, keep this client's
+          // own tab/pane focus.
+          if (!localFocusRef.current[rw.id]) {
+            localFocusRef.current[rw.id] = {
+              tabIndex: Math.max(0, Math.min(rw.activeTabIndex, rw.layouts.length - 1)),
+              paneId: rw.activePaneId,
+            }
+          }
           const { tree, activeGroupId } = ensureTabGroups(rw)
           const focus = localFocusRef.current[rw.id]
           if (focus) {
@@ -231,25 +261,96 @@ export function AppLayout() {
           return { ...rw, tabGroups: tree, activeGroupId }
         })
       })
-      setActiveWorkspaceId(remote.activeWorkspaceId)
+      // Intentionally do NOT call setActiveWorkspaceId here. Each client
+      // keeps its own active workspace; adopting the remote value would
+      // make one device's workspace switch ripple to every other device.
+      // If the client's current workspace was removed remotely, fall back
+      // to the first remaining one below.
+      setActiveWorkspaceId((cur) => {
+        if (cur && remote.workspaces.some((w) => w.id === cur)) return cur
+        return remote.workspaces[0]?.id ?? null
+      })
     })
     return unsub
   }, [])
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
 
-  // Derived sizes so that the visible panels in the top-level Group always
-  // sum to 100%. react-resizable-panels throws an "invalid panel layout"
-  // error when the sum of Panel defaultSizes does not equal 100%, which can
-  // happen when the left sidebar and/or right folder sidebar are
-  // conditionally mounted/unmounted on collapse.
-  const folderSidebarDefaultSize = '20%'
-  const visibleSidebarSize = sidebarCollapsed ? 0 : parseFloat(sidebarDefaultSize)
-  const visibleFolderSidebarSize =
-    activeWorkspace && !folderSidebarCollapsed ? parseFloat(folderSidebarDefaultSize) : 0
-  const mainPanelDefaultSize = Math.max(
-    0,
-    100 - visibleSidebarSize - visibleFolderSidebarSize,
+  // Top-level SplitLayout sizing strategy
+  // -------------------------------------
+  // The left workspace sidebar, main content, and right folder sidebar live in
+  // one top-level <SplitLayout>. Collapse is driven declaratively by changing
+  // the `sizes`/`minSizes`/`maxSizes` props rather than via imperative refs,
+  // which eliminates the "Invalid N panel layout" ResizeObserver throw that
+  // plagued react-resizable-panels (issue #691) — the panel count never
+  // changes, and there is no async constraint-clamp pass to fight with.
+  //
+  // When the sidebar is collapsed, both its min and max are pinned to 44px so
+  // the separator can't be dragged (the panel is "fixed"). Same for the
+  // folder sidebar at 0% when hidden. Pixels are used (rather than a
+  // percentage) so the pinned width matches the 44px rail exactly regardless
+  // of window width.
+  const SIDEBAR_COLLAPSED_PX = '44px'
+  const folderVisible = activeWorkspace && !folderSidebarCollapsed
+  const sidebarMinSize = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : '15%'
+  const sidebarMaxSize = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : '50%'
+  const folderMinSize = folderVisible ? '15%' : '0%'
+  const folderMaxSize = folderVisible ? '50%' : '0%'
+
+  // Declarative layout: the three panel sizes are derived from the current
+  // collapse state and the live sizes. SplitLayout re-clamps these against
+  // min/max and emits normalized values via onSizesChange (which persists
+  // sidebar/folder widths AND updates the live state so the panels move on
+  // drag). Main is given the remainder so the three values sum to 100.
+  const topLevelSizes = useMemo(() => {
+    if (sidebarCollapsed) {
+      // Sidebar pinned to 44px; main absorbs everything, folder takes its
+      // persisted share (or 0 when hidden).
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      return [SIDEBAR_COLLAPSED_PX, `${Math.max(0, 100 - folderPct)}%`, folderVisible ? `${folderSidebarSizeRef.current}%` : '0%']
+    }
+    const sidebarPct = sidebarSizeRef.current
+    const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+    const mainPct = Math.max(0, 100 - sidebarPct - folderPct)
+    return [`${sidebarPct}%`, `${mainPct}%`, folderVisible ? `${folderPct}%` : '0%']
+  }, [sidebarCollapsed, folderVisible])
+
+  // Live sizes in pure percentages — the source of truth that SplitLayout
+  // renders. Updated on drag so the panels move in real time. Re-synced only
+  // when the structural layout changes (collapse toggle or folder visibility
+  // flip), NOT when the ref values change (which happens during drag — the
+  // sync would fight the drag and snap the panel back).
+  const [liveSizes, setLiveSizes] = useState<number[]>([])
+  const lastStructKey = useRef('')
+  const structKey = `${sidebarCollapsed ? '1' : '0'}|${folderVisible ? '1' : '0'}`
+  if (structKey !== lastStructKey.current) {
+    lastStructKey.current = structKey
+    if (sidebarCollapsed) {
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([0, Math.max(0, 100 - folderPct), folderPct])
+    } else {
+      const sidebarPct = sidebarSizeRef.current
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([sidebarPct, Math.max(0, 100 - sidebarPct - folderPct), folderPct])
+    }
+  }
+
+  const handleTopLevelSizesChange = useCallback(
+    (next: number[]) => {
+      // next is [sidebarPct, mainPct, folderPct] in pure percentages.
+      setLiveSizes(next)
+      const sidebarPct = next[0]
+      const folderPct = next[2]
+      if (!sidebarCollapsed && sidebarPct >= 15) {
+        sidebarSizeRef.current = sidebarPct
+        localStorage.setItem('caw:sidebarSize', String(sidebarPct))
+      }
+      if (folderVisible && folderPct >= 15) {
+        folderSidebarSizeRef.current = folderPct
+        localStorage.setItem('caw:folderSidebarSize', String(folderPct))
+      }
+    },
+    [sidebarCollapsed, folderVisible],
   )
 
   const layouts = activeWorkspace?.layouts ?? []
@@ -317,7 +418,7 @@ export function AppLayout() {
   const toggleFolderSidebar = useCallback(() => {
     setFolderSidebarCollapsed((v) => {
       const next = !v
-      localStorage.setItem('caw:folderSidebarCollapsed', next ? '0' : '1') // 0 = false, 1 = true
+      localStorage.setItem('caw:folderSidebarCollapsed', next ? '1' : '0')
       return next
     })
   }, [])
@@ -549,7 +650,7 @@ export function AppLayout() {
 
       const wsDetails = findDetails(agentStatus.sessionId)
       const raw = agentStatus.title || ''
-      const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw || 'Unnamed Session'
+      const truncatedTitle = raw.length > 60 ? raw.substring(0, 57) + '…' : raw
 
       // Play notification sound
       if (soundEnabledRef.current) {
@@ -615,10 +716,12 @@ export function AppLayout() {
                 ) : 'Finished'}
               </span>
 
-              {/* Chat title subtext */}
-              <span className="text-[11px] text-foreground/60 truncate leading-snug">
-                {truncatedTitle}
-              </span>
+              {/* Chat title subtext — only rendered when a title exists */}
+              {truncatedTitle && (
+                <span className="text-[11px] text-foreground/60 truncate leading-snug">
+                  {truncatedTitle}
+                </span>
+              )}
 
               {/* Footnote: workspace • branch */}
               <span className="text-[9px] text-muted-foreground/50 truncate mt-0.5 leading-tight">
@@ -1408,6 +1511,7 @@ export function AppLayout() {
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
         onOpenDiff={openDiff}
+        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -1643,7 +1747,7 @@ export function AppLayout() {
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
-                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} />
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} onOpenFile={(path) => openFile(path, currentWorkspacePath)} />
                     ) : (
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
@@ -1714,58 +1818,39 @@ export function AppLayout() {
         <>
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
-              <Group orientation="horizontal" className="flex-1">
-                {/* Left Workspace Panel */}
-                {sidebarCollapsed ? (
-                  <WorkspacePanel
-                    workspaces={workspaces}
-                    activeWorkspaceId={activeWorkspaceId}
-                    onSelectWorkspace={setActiveWorkspaceId}
-                    onAddWorkspace={handleAddWorkspace}
-                    onDeleteWorkspace={handleDeleteWorkspace}
-                    onEditWorkspace={handleEditWorkspace}
-                    onReorderWorkspaces={handleReorderWorkspaces}
-                    collapsed={true}
-                    onToggle={toggleSidebar}
-                    pickerOpen={pickerOpen}
-                    onPickerOpenChange={setPickerOpen}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                  />
-                ) : (
-                  <>
-                    <Panel
-                      id="sidebar"
-                      panelRef={sidebarRef}
-                      defaultSize={sidebarDefaultSize}
-                      minSize="15%"
-                      maxSize="50%"
-                      onResize={(size) => {
-                        if (size.asPercentage >= 15) {
-                          localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                        }
-                      }}
-                    >
-                      <WorkspacePanel
-                        workspaces={workspaces}
-                        activeWorkspaceId={activeWorkspaceId}
-                        onSelectWorkspace={setActiveWorkspaceId}
-                        onAddWorkspace={handleAddWorkspace}
-                        onDeleteWorkspace={handleDeleteWorkspace}
-                        onEditWorkspace={handleEditWorkspace}
-                        onReorderWorkspaces={handleReorderWorkspaces}
-                        collapsed={false}
-                        onToggle={toggleSidebar}
-                        pickerOpen={pickerOpen}
-                        onPickerOpenChange={setPickerOpen}
-                        onOpenSettings={() => setSettingsOpen(true)}
-                      />
-                    </Panel>
-                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                  </>
-                )}
+              <SplitLayout
+                orientation="horizontal"
+                className="flex-1 h-full w-full"
+                sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
+                minSizes={[sidebarMinSize, '0%', folderMinSize]}
+                maxSizes={[sidebarMaxSize, '100%', folderMaxSize]}
+                separatorHidden={[sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
+                separatorClassName="bg-border group-hover:bg-ring transition-colors"
+                onSizesChange={handleTopLevelSizesChange}
+              >
+                {/* Left Workspace Panel — always mounted; collapse/expand is
+                    driven declaratively by changing sizes/min/max. Only the
+                    content swaps between the 44px collapsed rail and the full
+                    sidebar. The panel count never changes, which avoids the
+                    "Invalid N panel layout" throw that react-resizable-panels'
+                    ResizeObserver emitted (issue #691). */}
+                <WorkspacePanel
+                  workspaces={workspaces}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSelectWorkspace={setActiveWorkspaceId}
+                  onAddWorkspace={handleAddWorkspace}
+                  onDeleteWorkspace={handleDeleteWorkspace}
+                  onEditWorkspace={handleEditWorkspace}
+                  onReorderWorkspaces={handleReorderWorkspaces}
+                  collapsed={sidebarCollapsed}
+                  onToggle={toggleSidebar}
+                  pickerOpen={pickerOpen}
+                  onPickerOpenChange={setPickerOpen}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
 
-                {/* Main Terminals / Editors Content */}
-                <Panel defaultSize={`${mainPanelDefaultSize}%`}>
+                {/* Main Terminals / Editors Content. */}
+                <div className="h-full w-full min-w-0 min-h-0">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1797,6 +1882,7 @@ export function AppLayout() {
                             onSizesChange={handleSizesChange}
                             onGroupSizesChange={handleGroupSizesChange}
                             onOpenDiff={openDiff}
+                            onOpenFile={(path) => openFile(path, currentWorkspacePath)}
                             onOpenSettings={() => setSettingsOpen(true)}
                             onToggleFolderSidebar={toggleFolderSidebar}
                           />
@@ -1857,31 +1943,25 @@ export function AppLayout() {
                       {terminalBody}
                     </div>
                   )}
-                </Panel>
+                </div>
 
-                {/* Right Folder Explorer Panel (only if expanded and workspace is active) */}
-                {activeWorkspace && !folderSidebarCollapsed && (
-                  <>
-                    <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                    <Panel
-                      id="folder-sidebar"
-                      defaultSize="20%"
-                      minSize="15%"
-                      maxSize="50%"
-                    >
-                      <FolderSidebar
-                        workspacePath={currentWorkspacePath}
-                        mainWorkspacePath={activeWorkspace.path || ''}
-                        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
-                        gitStatuses={gitStatuses}
-                        gitIgnored={gitIgnored}
-                        onRefresh={fetchGitStatus}
-                        onClose={() => setFolderSidebarCollapsed(true)}
-                      />
-                    </Panel>
-                  </>
-                )}
-              </Group>
+                {/* Right Folder Explorer Panel — always mounted (same reason
+                    as the left sidebar above); collapses to 0% declaratively
+                    and renders null content when hidden. */}
+                <div className="h-full w-full min-w-0 min-h-0">
+                  {activeWorkspace && !folderSidebarCollapsed ? (
+                    <FolderSidebar
+                      workspacePath={currentWorkspacePath}
+                      mainWorkspacePath={activeWorkspace.path || ''}
+                      onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                      gitStatuses={gitStatuses}
+                      gitIgnored={gitIgnored}
+                      onRefresh={fetchGitStatus}
+                      onClose={() => setFolderSidebarCollapsed(true)}
+                    />
+                  ) : null}
+                </div>
+              </SplitLayout>
             </div>
             {(agentBoardOpen || kanbanClosing) && (
               <div

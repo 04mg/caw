@@ -118,6 +118,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				if openCodeSessionID != "" {
 					silentTicks = 0
 					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
+					agent.RecordExternalSession(sessionID, openCodeSessionID)
 				}
 			}
 		}
@@ -211,6 +212,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 							silentTicks = 0
 							otherSessionActive = false
 							lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
+							agent.RecordExternalSession(sessionID, openCodeSessionID)
 						}
 					} else {
 						otherSessionActive = false
@@ -243,9 +245,9 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 }
 
 // findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the
-// opencode.db (filtered by directory=cwd when possible and started after
-// watcherStart) and returns the id of the earliest one (oldest first) that is
-// not already claimed by another watcher of the same agent type+cwd.
+// opencode.db (filtered by directory=cwd when possible) and returns the id of
+// the earliest one (oldest first) that is not already claimed by another
+// watcher of the same agent type+cwd.
 //
 // Subagent sessions (those with a non-empty parent_id) are always excluded:
 // subagents run internally inside the parent's PTY and have their own message
@@ -261,6 +263,20 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 // the agent process in this PTY is the one that created the session. This
 // prevents watcher 1 from claiming a session that was created by watcher 2's
 // agent just because watcher 1 polled first.
+//
+// Recency handling differs from the file-based watchers (claude, codex, ...).
+// Those filter by file mtime, which advances when a reattached old session
+// receives a new message — so a /sessions reattach in a fresh agent launch is
+// found naturally. OpenCode stores every session in a single shared SQLite DB,
+// so there is no per-session file mtime; filtering by session.time_created
+// (a row column set once at creation) would permanently exclude any session
+// the user reattaches to via /sessions. Instead we use session.time_updated:
+// a session whose time_updated advanced past the watcher start time was
+// recently interacted with (the user sent a message or reattached via
+// /sessions), so it is claimable. A stale old session that hasn't been touched
+// since a previous Caw run has time_updated well before the watcher started and
+// is skipped — this prevents a fresh OpenCode launch from spuriously binding
+// to a leftover session just because the TUI rendered PTY bytes on startup.
 func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
@@ -304,13 +320,29 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 	}
 
 	for _, r := range candidates {
-		// On resume, skip the recency filter — the session may predate the
-		// watcher (the agent reattaches to an old session). On fresh start,
-		// only match sessions started after the watcher launched.
+		// On resume, skip the recency filter entirely — the session may
+		// predate the watcher (the agent reattaches to an old session).
+		// On fresh start:
+		//   - A session created after the watcher launched is claimable with
+		//     no extra gate (it was just created, most likely by this agent).
+		//   - An older session is claimable only when it was recently
+		//     updated (time_updated after watcherStart) — i.e. the user just
+		//     interacted with it or reattached to it via /sessions. A stale
+		//     old session that hasn't been touched since a previous Caw run
+		//     is skipped, preventing a fresh OpenCode launch from spuriously
+		//     binding to a leftover session just because the TUI rendered
+		//     PTY bytes on startup. We deliberately do NOT gate on PTY
+		//     activity alone: the OpenCode TUI emits control sequences on
+		//     connect regardless of whether the user sent a message, so a
+		//     PTY-activity gate would let every new instance claim the next
+		//     stale session in the cwd and show its old title/status in Idle.
 		if !resume {
 			sessionCreated := time.UnixMilli(r.timeCreated)
 			if !sessionCreated.After(watcherStart) {
-				continue
+				sessionUpdated := time.UnixMilli(r.timeUpdated)
+				if !sessionUpdated.After(watcherStart) {
+					continue
+				}
 			}
 		}
 		if ClaimSession(agentID, cwd, r.id) {

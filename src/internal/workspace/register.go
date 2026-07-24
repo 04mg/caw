@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/04mg/caw/internal/httpx"
 )
 
@@ -24,128 +22,140 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func (h *Handler) OpenDir(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+type pathResponse struct {
+	Path string `json:"path"`
+}
+
+type statusResponse struct {
+	Status string `json:"status"`
+}
+
+func (h *Handler) OpenDir(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	abs, err := h.svc.OpenDir(path)
+	abs, err := h.svc.OpenDir(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, map[string]string{"path": abs})
+	httpx.RespondJSON(w, pathResponse{Path: abs})
 }
 
-func (h *Handler) FileTree(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) FileTree(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	node, err := h.svc.FileTree(path)
+	node, err := h.svc.FileTree(p)
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, node)
+	httpx.RespondJSON(w, node)
 }
 
-func (h *Handler) Contents(c *gin.Context) {
-	if c.Query("dirs_only") == "true" {
-		h.listDir(c)
+func (h *Handler) Contents(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("dirs_only") == "true" {
+		h.listDir(w, r)
 		return
 	}
-	h.listAll(c)
+	h.listAll(w, r)
 }
 
-func (h *Handler) listDir(c *gin.Context) {
-	children, err := h.svc.ListDir(c.Query("path"))
+func (h *Handler) listDir(w http.ResponseWriter, r *http.Request) {
+	children, err := h.svc.ListDir(r.URL.Query().Get("path"))
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, children)
+	httpx.RespondJSON(w, children)
 }
 
-func (h *Handler) listAll(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) listAll(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	children, err := h.svc.ListAll(path)
+	children, err := h.svc.ListAll(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, children)
+	httpx.RespondJSON(w, children)
 }
 
-func (h *Handler) SearchDirs(c *gin.Context) {
-	results, err := h.svc.SearchDirs(c.Query("q"), c.Query("root"))
+func (h *Handler) SearchDirs(w http.ResponseWriter, r *http.Request) {
+	results, err := h.svc.SearchDirs(r.URL.Query().Get("q"), r.URL.Query().Get("root"))
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, results)
+	httpx.RespondJSON(w, results)
 }
 
-func (h *Handler) Files(c *gin.Context) {
-	q := c.Query("q")
-	path := c.Query("path")
+func (h *Handler) Files(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	path := r.URL.Query().Get("path")
 	if q != "" {
-		results, err := h.svc.SearchAll(q, c.Query("root"))
+		results, err := h.svc.SearchAll(q, r.URL.Query().Get("root"))
 		if err != nil {
-			httpx.BadRequest(c, err.Error())
+			httpx.RespondBadRequest(w, err.Error())
 			return
 		}
-		httpx.OK(c, results)
+		httpx.RespondJSON(w, results)
 		return
 	}
 	if path != "" {
-		if c.Query("download") == "true" {
-			h.fileDownload(c)
+		if r.URL.Query().Get("download") == "true" {
+			h.fileDownload(w, r)
 			return
 		}
-		h.fileRead(c)
+		if r.URL.Query().Get("inline") == "true" {
+			h.fileInline(w, r)
+			return
+		}
+		h.fileRead(w, r)
 		return
 	}
-	httpx.BadRequest(c, "query parameter q or path required")
+	httpx.RespondBadRequest(w, "query parameter q or path required")
 }
 
-func (h *Handler) fileRead(c *gin.Context) {
-	path := c.Query("path")
-	resp, err := h.svc.ReadFile(path)
+func (h *Handler) fileRead(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	resp, err := h.svc.ReadFile(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, resp)
+	httpx.RespondJSON(w, resp)
 }
 
-func (h *Handler) fileDownload(c *gin.Context) {
-	path := c.Query("path")
-	abs, err := filepath.Abs(path)
+func (h *Handler) fileDownload(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	abs, err := filepath.Abs(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		httpx.NotFound(c, err.Error())
+		httpx.RespondNotFound(w, err.Error())
 		return
 	}
 	if !info.IsDir() {
-		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
-		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
-		c.File(abs)
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		http.ServeFile(w, r, abs)
 		return
 	}
 	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
+	zw := zip.NewWriter(&buf)
 	base := filepath.Base(abs)
 	err = filepath.Walk(abs, func(p string, fi os.FileInfo, err error) error {
 		if err != nil {
@@ -156,10 +166,10 @@ func (h *Handler) fileDownload(c *gin.Context) {
 			return err
 		}
 		if fi.IsDir() {
-			_, err = w.Create(base + "/" + rel + "/")
+			_, err = zw.Create(base + "/" + rel + "/")
 			return err
 		}
-		f, err := w.Create(base + "/" + rel)
+		f, err := zw.Create(base + "/" + rel)
 		if err != nil {
 			return err
 		}
@@ -172,208 +182,234 @@ func (h *Handler) fileDownload(c *gin.Context) {
 		return err
 	})
 	if err != nil {
-		w.Close()
-		httpx.InternalErr(c, err)
+		zw.Close()
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	if err := w.Close(); err != nil {
-		httpx.InternalErr(c, err)
+	if err := zw.Close(); err != nil {
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, base))
-	c.Header("Content-Type", "application/zip")
-	c.Data(http.StatusOK, "application/zip", buf.Bytes())
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, base))
+	w.Header().Set("Content-Type", "application/zip")
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf.Bytes())
 }
 
-func (h *Handler) FileWrite(c *gin.Context) {
+// fileInline serves a single file with its detected Content-Type and no
+// Content-Disposition header, so it can be embedded in <img>, <video>,
+// <source srcset>, etc. Only works for files (not directories).
+func (h *Handler) fileInline(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		httpx.RespondBadRequest(w, err.Error())
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		httpx.RespondNotFound(w, err.Error())
+		return
+	}
+	if info.IsDir() {
+		httpx.RespondBadRequest(w, "cannot inline a directory")
+		return
+	}
+	// Detect Content-Type from content (sniff first 512 bytes). Falls back
+	// to extension-based detection via ServeFile, which also sets the
+	// Content-Type from the extension when sniffing is inconclusive.
+	http.ServeFile(w, r, abs)
+}
+
+func (h *Handler) FileWrite(w http.ResponseWriter, r *http.Request) {
 	var req WriteRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if req.Path == "" {
-		httpx.BadRequest(c, "path required")
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
 	if err := h.svc.WriteFile(req); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) FileDelete(c *gin.Context) {
+func (h *Handler) FileDelete(w http.ResponseWriter, r *http.Request) {
 	var req DeleteRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
-		req.Path = c.Query("path")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
+		req.Path = r.URL.Query().Get("path")
 	}
 	if req.Path == "" {
-		httpx.BadRequest(c, "path required")
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
 	if err := h.svc.Delete(req.Path); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) FileRename(c *gin.Context) {
+func (h *Handler) FileRename(w http.ResponseWriter, r *http.Request) {
 	var req RenameRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if req.OldPath == "" || req.NewPath == "" {
-		httpx.BadRequest(c, "oldPath and newPath required")
+		httpx.RespondBadRequest(w, "oldPath and newPath required")
 		return
 	}
 	if err := h.svc.Rename(req); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) FileCreateDispatch(c *gin.Context) {
-	contentType := c.GetHeader("Content-Type")
+func (h *Handler) FileCreateDispatch(w http.ResponseWriter, r *http.Request) {
+	contentType := r.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		h.fileUpload(c)
+		h.fileUpload(w, r)
 		return
 	}
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	var data map[string]any
 	if err := json.Unmarshal(bodyBytes, &data); err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
 
 	if _, ok := data["destPath"]; ok {
-		h.fileCopy(c)
+		h.fileCopy(w, r)
 		return
 	}
 	if _, ok := data["targetDir"]; ok {
-		h.filePaste(c)
+		h.filePaste(w, r)
 		return
 	}
-	h.fileCreate(c)
+	h.fileCreate(w, r)
 }
 
-func (h *Handler) fileUpload(c *gin.Context) {
-	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
-		httpx.BadRequest(c, err.Error())
+func (h *Handler) fileUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	targetDir := c.PostForm("targetDir")
+	targetDir := r.PostFormValue("targetDir")
 	if targetDir == "" {
-		httpx.BadRequest(c, "targetDir required")
+		httpx.RespondBadRequest(w, "targetDir required")
 		return
 	}
-	file, header, err := c.Request.FormFile("file")
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
 	defer file.Close()
 	content, err := io.ReadAll(file)
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
 	if err := h.svc.Upload(targetDir, header.Filename, content); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) fileCopy(c *gin.Context) {
+func (h *Handler) fileCopy(w http.ResponseWriter, r *http.Request) {
 	var req CopyRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if req.SourcePath == "" || req.DestPath == "" {
-		httpx.BadRequest(c, "sourcePath and destPath required")
+		httpx.RespondBadRequest(w, "sourcePath and destPath required")
 		return
 	}
 	if err := h.svc.Copy(req); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) fileCreate(c *gin.Context) {
+func (h *Handler) fileCreate(w http.ResponseWriter, r *http.Request) {
 	var req CreateRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if req.Path == "" || req.Type == "" {
-		httpx.BadRequest(c, "path and type required")
+		httpx.RespondBadRequest(w, "path and type required")
 		return
 	}
 	if err := h.svc.Create(req); err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) filePaste(c *gin.Context) {
+func (h *Handler) filePaste(w http.ResponseWriter, r *http.Request) {
 	var req PasteRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	if req.SourcePath == "" || req.TargetDir == "" {
-		httpx.BadRequest(c, "sourcePath and targetDir required")
+		httpx.RespondBadRequest(w, "sourcePath and targetDir required")
 		return
 	}
 	if err := h.svc.Paste(req); err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func (h *Handler) History(c *gin.Context) {
+func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
 	}
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	switch req.Action {
 	case "undo":
 		if err := h.svc.Undo(); err != nil {
-			httpx.BadRequest(c, err.Error())
+			httpx.RespondBadRequest(w, err.Error())
 			return
 		}
 	case "redo":
 		if err := h.svc.Redo(); err != nil {
-			httpx.BadRequest(c, err.Error())
+			httpx.RespondBadRequest(w, err.Error())
 			return
 		}
 	default:
-		httpx.BadRequest(c, "invalid action: must be 'undo' or 'redo'")
+		httpx.RespondBadRequest(w, "invalid action: must be 'undo' or 'redo'")
 		return
 	}
-	httpx.OK(c, map[string]string{"status": "ok"})
+	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
-func Register(rg *gin.RouterGroup) {
+func Register(mux *http.ServeMux) {
 	h := NewHandler(NewService())
-	rg.GET("/workspaces/details", h.OpenDir)
-	rg.GET("/workspaces/trees", h.FileTree)
-	rg.GET("/workspaces/contents", h.Contents)
-	rg.GET("/workspaces/directories", h.SearchDirs)
-	rg.GET("/workspaces/files", h.Files)
-	rg.PUT("/workspaces/files", h.FileWrite)
-	rg.DELETE("/workspaces/files", h.FileDelete)
-	rg.PATCH("/workspaces/files", h.FileRename)
-	rg.POST("/workspaces/files", h.FileCreateDispatch)
-	rg.POST("/workspaces/history", h.History)
+	mux.HandleFunc("GET /workspaces/details", h.OpenDir)
+	mux.HandleFunc("GET /workspaces/trees", h.FileTree)
+	mux.HandleFunc("GET /workspaces/contents", h.Contents)
+	mux.HandleFunc("GET /workspaces/directories", h.SearchDirs)
+	mux.HandleFunc("GET /workspaces/files", h.Files)
+	mux.HandleFunc("PUT /workspaces/files", h.FileWrite)
+	mux.HandleFunc("DELETE /workspaces/files", h.FileDelete)
+	mux.HandleFunc("PATCH /workspaces/files", h.FileRename)
+	mux.HandleFunc("POST /workspaces/files", h.FileCreateDispatch)
+	mux.HandleFunc("POST /workspaces/history", h.History)
 }

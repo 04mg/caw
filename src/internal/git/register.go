@@ -1,7 +1,7 @@
 package git
 
 import (
-	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"github.com/04mg/caw/internal/httpx"
 )
@@ -14,81 +14,79 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func (h *Handler) Status(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	result, err := h.svc.Status(path)
+	result, err := h.svc.Status(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, result)
+	httpx.RespondJSON(w, result)
 }
 
-func (h *Handler) Diff(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) Diff(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	content, err := h.svc.Diff(path)
+	content, err := h.svc.Diff(p)
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, ContentResponse{Content: content})
+	httpx.RespondJSON(w, ContentResponse{Content: content})
 }
 
-func (h *Handler) Original(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) Original(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	content, err := h.svc.Original(path)
+	content, err := h.svc.Original(p)
 	if err != nil {
 		if err == ErrNotGitRepo {
-			httpx.BadRequest(c, err.Error())
+			httpx.RespondBadRequest(w, err.Error())
 			return
 		}
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, ContentResponse{Content: content})
+	httpx.RespondJSON(w, ContentResponse{Content: content})
 }
 
-func (h *Handler) Ignored(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		httpx.BadRequest(c, "path required")
+func (h *Handler) Ignored(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		httpx.RespondBadRequest(w, "path required")
 		return
 	}
-	result, err := h.svc.Ignored(path)
+	result, err := h.svc.Ignored(p)
 	if err != nil {
-		httpx.BadRequest(c, err.Error())
+		httpx.RespondBadRequest(w, err.Error())
 		return
 	}
-	httpx.OK(c, result)
+	httpx.RespondJSON(w, result)
 }
 
-func Register(rg *gin.RouterGroup) {
+func Register(mux *http.ServeMux) {
 	svc := NewService()
 	h := NewHandler(svc)
-	rg.GET("/git/statuses", h.Status)
-	rg.GET("/git/diffs", h.Diff)
-	rg.GET("/git/originals", h.Original)
-	rg.GET("/git/ignored", h.Ignored)
+	mux.HandleFunc("GET /git/statuses", h.Status)
+	mux.HandleFunc("GET /git/diffs", h.Diff)
+	mux.HandleFunc("GET /git/originals", h.Original)
+	mux.HandleFunc("GET /git/ignored", h.Ignored)
 }
 
-// RegisterWithService is like Register but reuses a shared *Service so the
-// HTTP handlers and the "git" WebSocket channel share the same status cache.
-func RegisterWithService(rg *gin.RouterGroup, svc *Service) {
+func RegisterWithService(mux *http.ServeMux, svc *Service) {
 	h := NewHandler(svc)
-	rg.GET("/git/statuses", h.Status)
-	rg.GET("/git/diffs", h.Diff)
-	rg.GET("/git/originals", h.Original)
-	rg.GET("/git/ignored", h.Ignored)
+	mux.HandleFunc("GET /git/statuses", h.Status)
+	mux.HandleFunc("GET /git/diffs", h.Diff)
+	mux.HandleFunc("GET /git/originals", h.Original)
+	mux.HandleFunc("GET /git/ignored", h.Ignored)
 }

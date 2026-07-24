@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { 
-  CircleSmall,
   Clock, 
   Terminal,
   ChevronRight,
@@ -32,7 +32,6 @@ type ColumnId = 'idle' | 'needs_input' | 'working'
 interface Column {
   id: ColumnId
   title: string
-  icon: any
   colorClass: string
   glowClass: string
 }
@@ -41,21 +40,18 @@ const COLUMNS: Column[] = [
   {
     id: 'idle',
     title: 'Idle',
-    icon: CircleSmall,
     colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
     glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
   },
   {
     id: 'working',
     title: 'Working',
-    icon: CircleSmall,
     colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
     glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
   },
   {
     id: 'needs_input',
     title: 'Needs Input',
-    icon: CircleSmall,
     colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
     glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
   },
@@ -67,7 +63,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // paint, flashing "No agents in ..." placeholders for one frame.
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>(() => getAgentStatuses())
   const [hydrated, setHydrated] = useState<boolean>(() => isAgentStatusesHydrated())
-  const cardsRef = useRef<Record<string, DOMRect>>({})
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
   useEffect(() => {
@@ -86,43 +81,33 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     })
   }, [])
 
-  // FLIP Layout Animation
-  useLayoutEffect(() => {
-    const newPositions: Record<string, DOMRect> = {}
-    const elements = document.querySelectorAll('[data-card-id]')
+  // Card layout animations are handled by Framer Motion's `layout` prop +
+  // `LayoutGroup` (see renderCard / board wrappers below). A shared
+  // layoutId per sessionId lets cards glide smoothly across columns when
+  // their status changes, instead of snapping as they unmount/remount.
 
-    elements.forEach((el) => {
-      const id = el.getAttribute('data-card-id')
-      if (id) {
-        newPositions[id] = el.getBoundingClientRect()
-      }
-    })
+  // Detect when a column transitions from having agents to being empty,
+  // so the "No agents" placeholder only appears after the exit animation
+  // completes (200ms) rather than overlapping with the departing card.
+  const prevEmptyRef = useRef<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
+  const [showEmpty, setShowEmpty] = useState<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
+  const [colExiting, setColExiting] = useState<Record<ColumnId, boolean>>({ idle: false, working: false, needs_input: false })
+  const colExitingTimers = useRef<Record<ColumnId, ReturnType<typeof setTimeout> | null>>({ idle: null, working: null, needs_input: null })
 
-    Object.keys(newPositions).forEach((id) => {
-      const first = cardsRef.current[id]
-      const last = newPositions[id]
-
-      if (first && last) {
-        const dx = first.left - last.left
-        const dy = first.top - last.top
-
-        if (dx !== 0 || dy !== 0) {
-          const el = document.querySelector(`[data-card-id="${id}"]`) as HTMLElement
-          if (el) {
-            el.style.transform = `translate(${dx}px, ${dy}px)`
-            el.style.transition = 'none'
-
-            requestAnimationFrame(() => {
-              el.style.transform = ''
-              el.style.transition = 'transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)'
-            })
-          }
-        }
-      }
-    })
-
-    cardsRef.current = newPositions
-  }, [statuses])
+  const agentsEmpty = useCallback((colId: ColumnId, count: number) => {
+    const wasEmpty = prevEmptyRef.current[colId]
+    const nowEmpty = count === 0
+    prevEmptyRef.current[colId] = nowEmpty
+    if (wasEmpty && !nowEmpty) {
+      setShowEmpty(prev => ({ ...prev, [colId]: false }))
+    } else if (!wasEmpty && nowEmpty) {
+      const timer = setTimeout(() => {
+        setShowEmpty(prev => ({ ...prev, [colId]: true }))
+      }, 200)
+      return () => clearTimeout(timer)
+    }
+    return undefined
+  }, [])
 
   // Resolve a card to the workspace pane it should open.
   // Prefer the exact session id, then fall back to matching the agent cwd
@@ -208,16 +193,18 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   }
 
   // Group agent statuses by Column
-  const groupedAgents: Record<ColumnId, AgentStatus[]> = {
-    idle: [],
-    needs_input: [],
-    working: [],
-  }
-
-  Object.values(statuses).forEach((agent) => {
-    const colId = getColumnForStatus(agent.status)
-    groupedAgents[colId].push(agent)
-  })
+  const groupedAgents: Record<ColumnId, AgentStatus[]> = useMemo(() => {
+    const grouped: Record<ColumnId, AgentStatus[]> = {
+      idle: [],
+      needs_input: [],
+      working: [],
+    }
+    Object.values(statuses).forEach((agent) => {
+      const colId = getColumnForStatus(agent.status)
+      grouped[colId].push(agent)
+    })
+    return grouped
+  }, [statuses])
 
   // Keep a stable ordering based on the backend-assigned opening sequence
   // (falling back to timestamp) so the cards don't reshuffle every time the
@@ -231,6 +218,41 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
     groupedAgents[colId].sort(byStableOrder)
   })
+
+  // Track when each column transitions from non-empty to empty so the
+  // "No agents" placeholder only appears after the card exit animation
+  // (200ms) completes, avoiding an overlap with the departing card.
+  useEffect(() => { return agentsEmpty('idle', groupedAgents.idle.length) }, [agentsEmpty, groupedAgents.idle.length])
+  useEffect(() => { return agentsEmpty('working', groupedAgents.working.length) }, [agentsEmpty, groupedAgents.working.length])
+  useEffect(() => { return agentsEmpty('needs_input', groupedAgents.needs_input.length) }, [agentsEmpty, groupedAgents.needs_input.length])
+
+  // Track when a column transitions from non-empty to empty so we can suppress
+  // the "No agents" placeholder while the layout animation (400ms) is still
+  // in progress. Without this the empty state and the departing card overlap.
+  useEffect(() => {
+    const LAYOUT_ANIM_MS = 400
+    ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
+      const wasEmpty = prevEmptyRef.current[colId]
+      if (!wasEmpty && groupedAgents[colId].length === 0) {
+        if (colExitingTimers.current[colId]) clearTimeout(colExitingTimers.current[colId]!)
+        setColExiting(prev => ({ ...prev, [colId]: true }))
+        colExitingTimers.current[colId] = setTimeout(() => {
+          setColExiting(prev => ({ ...prev, [colId]: false }))
+          colExitingTimers.current[colId] = null
+        }, LAYOUT_ANIM_MS)
+      }
+    })
+    const timers = colExitingTimers.current
+    return () => {
+      ;(Object.keys(timers) as ColumnId[]).forEach((colId) => {
+        if (timers[colId]) {
+          clearTimeout(timers[colId]!)
+          timers[colId] = null
+        }
+      })
+      setColExiting({ idle: false, working: false, needs_input: false })
+    }
+  }, [groupedAgents])
 
   // Render a single Agent Card
   const renderCard = (agent: AgentStatus) => {
@@ -250,11 +272,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
 
     return (
-      <div
+      <motion.div
         key={agent.sessionId}
+        layout
+        layoutId={agent.sessionId}
         data-card-id={agent.sessionId}
         data-testid="kanban-card"
         onClick={handleCardClick}
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        transition={{
+          layout: { duration: 0.4, ease: [0.25, 0.8, 0.25, 1] },
+          opacity: { duration: 0.2 },
+          scale: { duration: 0.2 },
+        }}
         className={`group relative overflow-hidden cursor-pointer rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 active:scale-[0.98] select-none flex flex-col gap-3.5 shadow-sm hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`}
       >
         {/* Large semi-transparent background brand logo watermark */}
@@ -291,22 +323,20 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
         {/* Card Content - Dynamic Description */}
         <div className="flex flex-col gap-2 z-10">
-          {/* Title / Session Name */}
-          <div className="text-xs font-medium bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors h-[36px] overflow-hidden flex items-center">
-            <div
-              className="whitespace-nowrap overflow-hidden w-full"
-              style={{
-                maskImage: 'linear-gradient(to right, black 85%, transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)'
-              }}
-            >
-              {agent.title ? (
+          {/* Title / Session Name — only rendered when a title exists */}
+          {agent.title && (
+            <div className="text-xs font-medium bg-accent/15 rounded-lg p-2.5 border border-border/30 italic group-hover:bg-accent/25 transition-colors h-[36px] overflow-hidden flex items-center">
+              <div
+                className="whitespace-nowrap overflow-hidden w-full"
+                style={{
+                  maskImage: 'linear-gradient(to right, black 85%, transparent 100%)',
+                  WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)'
+                }}
+              >
                 <span className="text-foreground/90">{agent.title}</span>
-              ) : (
-                <span className="text-muted-foreground">Unnamed Session</span>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Active Tool / Details */}
           {(agent.tool || agent.details) && (
@@ -362,7 +392,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
           <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
         </div>
-      </div>
+      </motion.div>
     )
   }
 
@@ -371,21 +401,18 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     {
       id: 'idle',
       title: 'Idle',
-      icon: CircleSmall,
       colorClass: 'text-slate-400 border-slate-500/20 bg-slate-500/5',
       glowClass: 'group-hover:border-slate-500/40 group-hover:shadow-[0_0_15px_rgba(148,163,184,0.1)]',
     },
     {
       id: 'working',
       title: 'Working',
-      icon: CircleSmall,
       colorClass: 'text-blue-400 border-blue-500/20 bg-blue-500/5',
       glowClass: 'group-hover:border-blue-500/40 group-hover:shadow-[0_0_15px_rgba(59,130,246,0.15)]',
     },
     {
       id: 'needs_input',
       title: 'Needs Input',
-      icon: CircleSmall,
       colorClass: 'text-amber-400 border-amber-500/20 bg-amber-500/5',
       glowClass: 'group-hover:border-amber-500/40 group-hover:shadow-[0_0_15px_rgba(245,158,11,0.15)]',
     },
@@ -409,50 +436,50 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       )
     }
     return (
-        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 scrollbar-thin">
+      <LayoutGroup>
+        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 kanban-scroll">
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
-          const ColIcon = col.icon
           return (
             <div key={col.id} data-testid={`kanban-column-${col.id}`} className="flex flex-col shrink-0 gap-3 rounded-xl p-3 bg-secondary/5">
               <div className="flex items-center justify-between pb-2 border-b border-border/20">
-                <div className="flex items-center gap-2">
-                  <ColIcon className="w-4 h-4 text-foreground" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-foreground/90">
-                    {col.title}
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground/90">
+                  {col.title}
+                </span>
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
                   {agents.length}
                 </span>
               </div>
               <div className="flex flex-col gap-2">
+                <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated ? (
+                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
-                      <ColIcon className="w-3.5 h-3.5 text-foreground" />
+                      <span className="block w-3.5 h-3.5" />
                     </div>
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
+                </AnimatePresence>
               </div>
             </div>
           )
         })}
       </div>
+      </LayoutGroup>
     )
   }
 
   return (
+    <LayoutGroup>
     <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
       {/* Kanban Board Columns */}
-      <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2">
+      <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2 kanban-scroll">
         {COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
-          const ColIcon = col.icon
 
           return (
             <div 
@@ -462,34 +489,31 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             >
               {/* Column Header */}
               <div className="flex items-center justify-between pb-3.5 border-b border-border/40 mb-4 shrink-0">
-                <div className="flex items-center gap-2">
-                  <ColIcon className="w-4 h-4 text-foreground" />
-                  <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
-                    {col.title}
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/40 text-muted-foreground border border-border/30 font-mono">
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
+                  {col.title}
+                </span>
+                <span className="text-xs font-bold tracking-wider uppercase text-foreground/90">
                   {agents.length}
                 </span>
               </div>
 
               {/* Card List */}
-              <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 scrollbar-thin">
+              <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 kanban-scroll">
+                <AnimatePresence initial={false}>
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated ? (
+                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
-                    <div className="p-2.5 rounded-full bg-muted/40">
-                      <ColIcon className="w-4 h-4 text-foreground" />
-                    </div>
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
+                </AnimatePresence>
               </div>
             </div>
           )
         })}
       </div>
     </div>
+    </LayoutGroup>
   )
 }

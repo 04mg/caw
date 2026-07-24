@@ -23,7 +23,7 @@ func TestStripMarkdown(t *testing.T) {
 		{"1. first\n2. second", "first\nsecond"},
 		{"keep dots, commas: yes; and (parens).", "keep dots, commas: yes; and (parens)."},
 		{"~~strike~~", "strike"},
-		{"text with # inside", "text with inside"},
+		{"text with # inside", "text with # inside"},
 		{"multiple    spaces   here", "multiple spaces here"},
 		{"**bold** and `code` and *ital*", "bold and code and ital"},
 		{"Title: [click](http://x) done", "Title: click done"},

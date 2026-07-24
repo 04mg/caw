@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, getTerminal, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -127,6 +127,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       })
       ro.observe(el)
       resizeObsRef.current = ro
+
+      // Force a resize on the first mount. waitForLayout inside
+      // attachTerminal resolves as soon as the container has non-zero
+      // dimensions, but the final layout often hasn't settled yet (sidebar
+      // transitions, flex sizing, panel drag handles still animating). The
+      // initial fit() / WS resize therefore runs against stale intermediate
+      // dimensions and the terminal renders garbled until something else
+      // triggers a ResizeObserver callback (collapsing a sidebar, etc.).
+      // Double-rAF defers the re-fit past the browser's layout + paint pass
+      // so proposeDimensions reads the final, settled container size.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          flushResize()
+        })
+      })
     })()
 
     return () => {
@@ -142,7 +157,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       }
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
-      detachTerminal(terminalId)
+      // Desktop buffers non-active terminals (detach keeps the WS open so
+      // re-attaching replays the local ring buffer instantly). Mobile
+      // renders only the selected terminal, so switching terminals must
+      // fully release the previous one — closing the WS without killing
+      // the backend PTY — so the backend's smallest-viewer resize can grow
+      // the PTY back to desktop size when the mobile viewer drops off.
+      if (window.innerWidth < 768) {
+        releaseTerminal(terminalId)
+      } else {
+        detachTerminal(terminalId)
+      }
     }
   }, [terminalId, stableCmd, env])
 
@@ -400,7 +425,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
-      <div ref={elRef} className="h-full w-full overflow-hidden" />
+      <div ref={elRef} className="h-full w-full overflow-hidden" style={{ backgroundColor: getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button
