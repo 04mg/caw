@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
 	"github.com/04mg/caw/internal/httpx"
@@ -21,47 +20,47 @@ func NewHandler(mgr *SessionManager) *Handler {
 	return &Handler{mgr: mgr}
 }
 
-func (h *Handler) Create(c *gin.Context) {
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreateRequest
-	if !httpx.Bind(c, &req) {
+	if !httpx.BindRequest(w, r, &req) {
 		return
 	}
 	id, err := h.mgr.Create(req)
 	if err != nil {
-		httpx.InternalErr(c, err)
+		httpx.RespondInternalErr(w, err)
 		return
 	}
-	httpx.OK(c, map[string]string{"id": id})
+	httpx.RespondJSON(w, map[string]string{"id": id})
 }
 
-func (h *Handler) Delete(c *gin.Context) {
-	id := c.Param("id")
-	deleteBranch := c.Query("deleteBranch") == "true"
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	deleteBranch := r.URL.Query().Get("deleteBranch") == "true"
 	if !h.mgr.Delete(id, deleteBranch) {
-		httpx.NotFound(c, "not found")
+		httpx.RespondNotFound(w, "not found")
 		return
 	}
-	c.Status(http.StatusOK)
+	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) Get(c *gin.Context) {
-	id := c.Param("id")
+func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	_, ok := h.mgr.Get(id)
 	if !ok {
-		httpx.NotFound(c, "not found")
+		httpx.RespondNotFound(w, "not found")
 		return
 	}
-	httpx.OK(c, map[string]bool{"exists": true})
+	httpx.RespondJSON(w, map[string]bool{"exists": true})
 }
 
 var defaultManagerMgr *SessionManager
 
-func Register(rg *gin.RouterGroup, store *state.Store, upgrader *websocket.Upgrader) {
+func Register(mux *http.ServeMux, store *state.Store, upgrader *websocket.Upgrader) {
 	defaultManagerMgr = NewSessionManager(store, upgrader)
 	h := NewHandler(defaultManagerMgr)
-	rg.POST("/terminals", h.Create)
-	rg.DELETE("/terminals/:id", h.Delete)
-	rg.GET("/terminals/:id", h.Get)
+	mux.HandleFunc("POST /terminals", h.Create)
+	mux.HandleFunc("DELETE /terminals/{id}", h.Delete)
+	mux.HandleFunc("GET /terminals/{id}", h.Get)
 }
 
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrader *websocket.Upgrader) {
