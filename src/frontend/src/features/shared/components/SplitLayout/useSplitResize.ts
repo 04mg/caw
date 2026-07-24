@@ -6,6 +6,7 @@ interface DragState {
   pointerId: number
   index: number
   containerPx: number
+  separatorPx: number
   axis: 'x' | 'y'
   startClient: number
   // Snapshot of the sizes/constraints (resolved to % of the container at the
@@ -23,6 +24,10 @@ interface UseSplitResizeArgs {
   minSizes: SizeInput[]
   maxSizes: SizeInput[]
   onSizesChange: (sizes: number[]) => void
+  /** Total px consumed by visible separators inside the container. The panels
+   * share `containerPx - separatorPx`, so drag deltas are converted to % of
+   * that panel space (not the full container) to stay accurate. */
+  separatorPx?: number
 }
 
 // Hook that exposes a `onSeparatorPointerDown(i)` factory. The returned handler
@@ -39,6 +44,7 @@ export function useSplitResize({
   minSizes,
   maxSizes,
   onSizesChange,
+  separatorPx = 0,
 }: UseSplitResizeArgs) {
   const dragRef = useRef<DragState | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -63,7 +69,10 @@ export function useSplitResize({
   const computeNext = useCallback(
     (drag: DragState, clientPos: number): number[] => {
       const deltaPx = drag.axis === 'x' ? clientPos - drag.startClient : clientPos - drag.startClient
-      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 : 0
+      // Panels share (containerPx - separatorPx); convert the px delta to a
+      // percentage of that panel space so the drag tracks the cursor 1:1.
+      const panelSpace = drag.containerPx - drag.separatorPx
+      const deltaPct = panelSpace > 0 ? (deltaPx / panelSpace) * 100 : 0
       return applyDrag(drag.startSizesPct, drag.startMinPct, drag.startMaxPct, drag.index, deltaPct)
     },
     [],
@@ -117,6 +126,7 @@ export function useSplitResize({
         pointerId: e.pointerId,
         index,
         containerPx,
+        separatorPx,
         axis,
         startClient,
         startSizesPct: resolveSizes(sizes, containerPx),
@@ -129,7 +139,7 @@ export function useSplitResize({
       window.addEventListener('pointerup', onPointerUp)
       window.addEventListener('pointercancel', onPointerUp)
     },
-    [orientation, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
+    [orientation, sizes, minSizes, maxSizes, separatorPx, onPointerMove, onPointerUp],
   )
 
   return { onSeparatorPointerDown, dragRef }
