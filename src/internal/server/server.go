@@ -6,8 +6,6 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/04mg/caw/internal/agent"
 	_ "github.com/04mg/caw/internal/agent/agents"
 	"github.com/04mg/caw/internal/embed"
@@ -31,8 +29,6 @@ type Server struct {
 }
 
 func New() *Server {
-	gin.SetMode(gin.ReleaseMode)
-
 	frontendFS, err := fs.Sub(embed.FrontendFS, "frontend/dist")
 	if err != nil {
 		log.Fatalf("embed sub: %v", err)
