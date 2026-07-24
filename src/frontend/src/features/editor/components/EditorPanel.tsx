@@ -57,9 +57,10 @@ interface EditorPanelProps {
   onSaveSuccess?: () => void
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
+  onOpenFile?: (filePath: string) => void
 }
 
-export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses, onOpenDiff }: EditorPanelProps) {
+export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses, onOpenDiff, onOpenFile }: EditorPanelProps) {
   const [content, setContent] = useState('')
   const [originalContent, setOriginalContent] = useState('')
   const [editedContent, setEditedContent] = useState('')
@@ -543,7 +544,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
             </div>
             {isMarkdown && (
               <div className={view === 'preview' ? 'h-full w-full' : 'hidden'}>
-                <MarkdownPreviewView content={editedContent} filePath={filePath!} />
+                <MarkdownPreviewView content={editedContent} filePath={filePath!} cwd={cwd} onOpenFile={onOpenFile} />
               </div>
             )}
           </div>

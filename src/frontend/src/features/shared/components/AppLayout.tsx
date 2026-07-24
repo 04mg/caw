@@ -1511,6 +1511,7 @@ export function AppLayout() {
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
         onOpenDiff={openDiff}
+        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -1746,7 +1747,7 @@ export function AppLayout() {
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
-                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} />
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} onOpenFile={(path) => openFile(path, currentWorkspacePath)} />
                     ) : (
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
@@ -1881,6 +1882,7 @@ export function AppLayout() {
                             onSizesChange={handleSizesChange}
                             onGroupSizesChange={handleGroupSizesChange}
                             onOpenDiff={openDiff}
+                            onOpenFile={(path) => openFile(path, currentWorkspacePath)}
                             onOpenSettings={() => setSettingsOpen(true)}
                             onToggleFolderSidebar={toggleFolderSidebar}
                           />
