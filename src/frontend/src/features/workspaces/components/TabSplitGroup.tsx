@@ -31,7 +31,7 @@ export function TabSplitGroup({
       sizes={resolvedSizes}
       onSizesChange={(next) => onSizesChange(splitId, next)}
       className="h-full w-full"
-      separatorClassName="bg-border hover:bg-ring transition-colors"
+      separatorClassName="bg-border group-hover:bg-ring transition-colors"
     >
       {childArray}
     </SplitLayout>
