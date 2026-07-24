@@ -174,7 +174,19 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
             h6: ({ children }) => (
               <h6 className="text-xs font-semibold mt-3 mb-1.5 uppercase tracking-wide opacity-70">{children}</h6>
             ),
-            p: ({ children }) => <p className="my-3">{children}</p>,
+            p: ({ children, ...props }) => {
+              // Map the deprecated align="center" attribute to text-align so
+              // raw HTML like <p align="center"> renders centered like GitHub.
+              const align = (props as { align?: string }).align
+              return (
+                <p
+                  className="my-3"
+                  style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}
+                >
+                  {children}
+                </p>
+              )
+            },
             a: ({ children, href, ...rest }) => (
               <a
                 href={href}
@@ -235,6 +247,7 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
                 <img
                   src={finalSrc}
                   alt={alt}
+                  style={{ display: 'inline', verticalAlign: 'middle' }}
                   {...props}
                 />
               )
@@ -261,6 +274,14 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
                   className="mr-2 accent-blue-500"
                   {...props}
                 />
+              )
+            },
+            div: ({ children, ...props }) => {
+              const align = (props as { align?: string }).align
+              return (
+                <div style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}>
+                  {children}
+                </div>
               )
             },
             section: ({ children }) => <section className="my-2">{children}</section>,
