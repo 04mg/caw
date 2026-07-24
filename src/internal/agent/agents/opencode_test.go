@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/04mg/caw/internal/agent"
 	_ "modernc.org/sqlite"
 )
 
@@ -67,9 +66,8 @@ func setupOpenCodeDB(t *testing.T, sessions []struct {
 }
 
 const (
-	testCwd    = "/home/user/project"
-	testAgent  = "opencode"
-	testPtyID  = "pty-test"
+	testCwd   = "/home/user/project"
+	testAgent = "opencode"
 	oldSession = "ses_old"
 	newSession = "ses_new"
 )
@@ -88,18 +86,12 @@ func resetClaimRegistry() {
 	claimsMu.Unlock()
 }
 
-func resetPtyState() {
-	agent.SetPtyActivityForTest(testPtyID, time.Time{})
-	agent.SetPtyFocusForTest(testPtyID, false)
-}
-
-// TestOldSessionClaimedWhenPtyRecent covers the /sessions reattach case: the
-// user reattaches to a pre-existing old session inside a fresh agent launch.
-// The watcher's PTY just produced output, so the old session must be claimable.
-func TestOldSessionClaimedWhenPtyRecent(t *testing.T) {
+// TestOldSessionClaimedWhenRecentlyUpdated covers the /sessions reattach case:
+// the user reattaches to a pre-existing old session inside a fresh agent
+// launch, and the session's time_updated has just advanced (the reattach
+// counts as an update). The old session must be claimable.
+func TestOldSessionClaimedWhenRecentlyUpdated(t *testing.T) {
 	resetClaimRegistry()
-	resetPtyState()
-	agent.SetPtyActivityForTest(testPtyID, time.Now())
 
 	dbPath, cleanup := setupOpenCodeDB(t, []struct {
 		id              string
@@ -113,19 +105,19 @@ func TestOldSessionClaimedWhenPtyRecent(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, testPtyID)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
 	if got != oldSession {
 		t.Fatalf("expected %q, got %q", oldSession, got)
 	}
 }
 
-// TestOldSessionClaimedWhenFocused covers the /sessions reattach case where
-// the pane has the user's focus but hasn't produced PTY bytes yet (the user
-// just issued /sessions and is waiting for the agent to start).
-func TestOldSessionClaimedWhenFocused(t *testing.T) {
+// TestOldSessionSkippedWhenStale ensures a fresh OpenCode launch does NOT
+// claim a pre-existing old session that hasn't been touched since a previous
+// Caw run (time_updated before the watcher started). This is the core fix for
+// the bug where every new OpenCode instance spuriously bound to the next
+// leftover session and showed its old title/status in Idle.
+func TestOldSessionSkippedWhenStale(t *testing.T) {
 	resetClaimRegistry()
-	resetPtyState()
-	agent.SetPtyFocusForTest(testPtyID, true)
 
 	dbPath, cleanup := setupOpenCodeDB(t, []struct {
 		id              string
@@ -134,48 +126,22 @@ func TestOldSessionClaimedWhenFocused(t *testing.T) {
 		timeUpdatedMs   int64
 		parentID        string
 	}{
-		{oldSession, testCwd, oldTimeMs, time.Now().UnixMilli(), ""},
+		{oldSession, testCwd, oldTimeMs, oldTimeMs, ""},
 	})
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, testPtyID)
-	if got != oldSession {
-		t.Fatalf("expected %q, got %q", oldSession, got)
-	}
-}
-
-// TestOldSessionSkippedWhenIdleUnfocused ensures the sibling-stealing guard
-// still holds: an idle, unfocused watcher must NOT claim a pre-existing old
-// session (it likely belongs to a sibling agent in the same cwd).
-func TestOldSessionSkippedWhenIdleUnfocused(t *testing.T) {
-	resetClaimRegistry()
-	resetPtyState()
-
-	dbPath, cleanup := setupOpenCodeDB(t, []struct {
-		id              string
-		directory       string
-		timeCreatedMs   int64
-		timeUpdatedMs   int64
-		parentID        string
-	}{
-		{oldSession, testCwd, oldTimeMs, time.Now().UnixMilli(), ""},
-	})
-	defer cleanup()
-
-	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, testPtyID)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
 	if got != "" {
-		t.Fatalf("expected empty (skip old session when idle & unfocused), got %q", got)
+		t.Fatalf("expected empty (skip stale old session on fresh launch), got %q", got)
 	}
 }
 
 // TestFreshSessionClaimedRegardlessOfPtyState preserves the existing behavior
 // for /new: a freshly created session (time_created after watcherStart) is
-// claimable with no PTY-activity/focus gate.
+// claimable with no extra gate.
 func TestFreshSessionClaimedRegardlessOfPtyState(t *testing.T) {
 	resetClaimRegistry()
-	resetPtyState()
 
 	dbPath, cleanup := setupOpenCodeDB(t, []struct {
 		id              string
@@ -189,7 +155,7 @@ func TestFreshSessionClaimedRegardlessOfPtyState(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, testPtyID)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
 	if got != newSession {
 		t.Fatalf("expected %q, got %q", newSession, got)
 	}
@@ -200,8 +166,6 @@ func TestFreshSessionClaimedRegardlessOfPtyState(t *testing.T) {
 // another watcher is skipped, and the next unclaimed candidate is returned.
 func TestAlreadyClaimedSessionSkipped(t *testing.T) {
 	resetClaimRegistry()
-	resetPtyState()
-	agent.SetPtyActivityForTest(testPtyID, time.Now())
 
 	// Pre-claim oldSession as if another watcher owns it.
 	if !ClaimSession(testAgent, testCwd, oldSession) {
@@ -221,7 +185,7 @@ func TestAlreadyClaimedSessionSkipped(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, testPtyID)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
 	if got != newSession {
 		t.Fatalf("expected %q (skip claimed %q), got %q", newSession, oldSession, got)
 	}

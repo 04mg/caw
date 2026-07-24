@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { SplitLayout } from '@/features/shared/components/SplitLayout'
 import { Toaster, toast } from 'sonner'
 import cawSvg from '@/assets/LOGO.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
@@ -79,18 +79,33 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const sidebarRef = usePanelRef()
-  const folderSidebarRef = usePanelRef()
-  // Tracks the user's last chosen sidebar width (in %) so the imperative
-  // expand() call restores it. Updated from the sidebar Panel's onResize.
-  const sidebarSizeRef = useRef(parseFloat(localStorage.getItem('caw:sidebarSize') || '25'))
-  const folderSidebarSizeRef = useRef(20)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:sidebarCollapsed') === '1',
+  )
+  // Tracks the user's last chosen sidebar width (in %) so that re-expanding
+  // the collapsed sidebar restores it. Updated declaratively from the
+  // SplitLayout onSizesChange callback.
+  const sidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:sidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 15
+    })(),
+  )
+  const folderSidebarSizeRef = useRef(
+    (() => {
+      const saved = localStorage.getItem('caw:folderSidebarSize')
+      const n = saved ? parseFloat(saved) : NaN
+      return n >= 15 && n <= 50 ? n : 20
+    })(),
+  )
   const skipPersistRef = useRef(false)
   const loadedRef = useRef(false)
   const localFocusRef = useRef<Record<string, { tabIndex: number; paneId: string }>>({})
 
-  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(true)
+  const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(
+    () => localStorage.getItem('caw:folderSidebarCollapsed') !== '0',
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
@@ -169,23 +184,6 @@ export function AppLayout() {
       root.classList.remove('light')
     }
   }, [])
-
-  useEffect(() => {
-    const savedCollapsed = localStorage.getItem('caw:sidebarCollapsed')
-    if (savedCollapsed === '1') setSidebarCollapsed(true)
-
-    const savedFolderCollapsed = localStorage.getItem('caw:folderSidebarCollapsed')
-    if (savedFolderCollapsed === '0') setFolderSidebarCollapsed(false)
-  }, [])
-
-  const sidebarDefaultSize = (() => {
-    const saved = localStorage.getItem('caw:sidebarSize')
-    if (saved) {
-      const n = parseFloat(saved)
-      if (n >= 15 && n <= 50) return `${n}%`
-    }
-    return '25%'
-  })()
 
   useEffect(() => {
     let done = false
@@ -278,29 +276,20 @@ export function AppLayout() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
 
-  // Top-level Group panel sizing strategy
-  // --------------------------------------
-  // The left workspace sidebar, main content, and right folder sidebar Panels
-  // are ALWAYS mounted inside the top-level <Group>. Collapse is driven through
-  // the imperative panelRef.resize() API rather than unmounting the Panels.
+  // Top-level SplitLayout sizing strategy
+  // -------------------------------------
+  // The left workspace sidebar, main content, and right folder sidebar live in
+  // one top-level <SplitLayout>. Collapse is driven declaratively by changing
+  // the `sizes`/`minSizes`/`maxSizes` props rather than via imperative refs,
+  // which eliminates the "Invalid N panel layout" ResizeObserver throw that
+  // plagued react-resizable-panels (issue #691) — the panel count never
+  // changes, and there is no async constraint-clamp pass to fight with.
   //
-  // This is required because react-resizable-panels throws
-  // "Invalid N panel layout: ..." from its ResizeObserver whenever the Panel
-  // count changes mid-layout (the cached layout has a different arity than the
-  // current panel constraints). The throw originates inside a ResizeObserver
-  // callback so it bypasses React's ErrorBoundary, leaves the library's
-  // internal layout store un-updated, and recurs on every sidebar toggle.
-  // See https://github.com/bvaughn/react-resizable-panels/issues/691.
-  //
-  // `collapsible` is left OFF. The 15% drag floor is enforced by the library's
-  // own minSize clamping (Z() in the lib hard-clamps to minSize), so dragging
-  // the separator can never push the sidebar below 15% or above 50%. When
-  // collapsed, minSize and maxSize are both pinned to the collapsed size in
-  // PIXELS so the panel can't be dragged at all (no "gap" the user can grab to
-  // shrink the rail further). Pixels are used (rather than a percentage) so
-  // the pinned width matches the 44px rail exactly regardless of window width.
-  // The lib re-registers a Panel whenever its min/max props change, so the
-  // constraints update live without unmounting.
+  // When the sidebar is collapsed, both its min and max are pinned to 44px so
+  // the separator can't be dragged (the panel is "fixed"). Same for the
+  // folder sidebar at 0% when hidden. Pixels are used (rather than a
+  // percentage) so the pinned width matches the 44px rail exactly regardless
+  // of window width.
   const SIDEBAR_COLLAPSED_PX = '44px'
   const folderVisible = activeWorkspace && !folderSidebarCollapsed
   const sidebarMinSize = sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : '15%'
@@ -308,38 +297,61 @@ export function AppLayout() {
   const folderMinSize = folderVisible ? '15%' : '0%'
   const folderMaxSize = folderVisible ? '50%' : '0%'
 
-  // Guard so onResize doesn't persist sizes during programmatic resize calls.
-  const programmaticLayoutRef = useRef(false)
-
-  // Drive the sidebar Panel's size imperatively. The Panel itself is always
-  // mounted (see the desktop Group below); only its size and content change.
-  // panelRef.resize() accepts px and % strings; the lib clamps to the Panel's
-  // current minSize/maxSize and redistributes the remainder to the main panel.
-  useEffect(() => {
-    const ref = sidebarRef.current
-    if (!ref) return
-    programmaticLayoutRef.current = true
+  // Declarative layout: the three panel sizes are derived from the current
+  // collapse state and the live sizes. SplitLayout re-clamps these against
+  // min/max and emits normalized values via onSizesChange (which persists
+  // sidebar/folder widths AND updates the live state so the panels move on
+  // drag). Main is given the remainder so the three values sum to 100.
+  const topLevelSizes = useMemo(() => {
     if (sidebarCollapsed) {
-      ref.resize(SIDEBAR_COLLAPSED_PX)
-    } else {
-      ref.resize(`${sidebarSizeRef.current}%`)
+      // Sidebar pinned to 44px; main absorbs everything, folder takes its
+      // persisted share (or 0 when hidden).
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      return [SIDEBAR_COLLAPSED_PX, `${Math.max(0, 100 - folderPct)}%`, folderVisible ? `${folderSidebarSizeRef.current}%` : '0%']
     }
-    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [sidebarCollapsed, sidebarRef, SIDEBAR_COLLAPSED_PX])
+    const sidebarPct = sidebarSizeRef.current
+    const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+    const mainPct = Math.max(0, 100 - sidebarPct - folderPct)
+    return [`${sidebarPct}%`, `${mainPct}%`, folderVisible ? `${folderPct}%` : '0%']
+  }, [sidebarCollapsed, folderVisible])
 
-  // Drive the folder sidebar Panel's size imperatively. It collapses to 0%
-  // when hidden (no workspace or toggled off) and restores to its saved size.
-  useEffect(() => {
-    const ref = folderSidebarRef.current
-    if (!ref) return
-    programmaticLayoutRef.current = true
-    if (folderVisible) {
-      ref.resize(`${folderSidebarSizeRef.current}%`)
+  // Live sizes in pure percentages — the source of truth that SplitLayout
+  // renders. Updated on drag so the panels move in real time. Re-synced only
+  // when the structural layout changes (collapse toggle or folder visibility
+  // flip), NOT when the ref values change (which happens during drag — the
+  // sync would fight the drag and snap the panel back).
+  const [liveSizes, setLiveSizes] = useState<number[]>([])
+  const lastStructKey = useRef('')
+  const structKey = `${sidebarCollapsed ? '1' : '0'}|${folderVisible ? '1' : '0'}`
+  if (structKey !== lastStructKey.current) {
+    lastStructKey.current = structKey
+    if (sidebarCollapsed) {
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([0, Math.max(0, 100 - folderPct), folderPct])
     } else {
-      ref.resize('0%')
+      const sidebarPct = sidebarSizeRef.current
+      const folderPct = folderVisible ? folderSidebarSizeRef.current : 0
+      setLiveSizes([sidebarPct, Math.max(0, 100 - sidebarPct - folderPct), folderPct])
     }
-    setTimeout(() => { programmaticLayoutRef.current = false }, 0)
-  }, [folderVisible, folderSidebarRef])
+  }
+
+  const handleTopLevelSizesChange = useCallback(
+    (next: number[]) => {
+      // next is [sidebarPct, mainPct, folderPct] in pure percentages.
+      setLiveSizes(next)
+      const sidebarPct = next[0]
+      const folderPct = next[2]
+      if (!sidebarCollapsed && sidebarPct >= 15) {
+        sidebarSizeRef.current = sidebarPct
+        localStorage.setItem('caw:sidebarSize', String(sidebarPct))
+      }
+      if (folderVisible && folderPct >= 15) {
+        folderSidebarSizeRef.current = folderPct
+        localStorage.setItem('caw:folderSidebarSize', String(folderPct))
+      }
+    },
+    [sidebarCollapsed, folderVisible],
+  )
 
   const layouts = activeWorkspace?.layouts ?? []
   const activeTab = layouts[activeWorkspace?.activeTabIndex ?? 0] ?? null
@@ -406,7 +418,7 @@ export function AppLayout() {
   const toggleFolderSidebar = useCallback(() => {
     setFolderSidebarCollapsed((v) => {
       const next = !v
-      localStorage.setItem('caw:folderSidebarCollapsed', next ? '0' : '1') // 0 = false, 1 = true
+      localStorage.setItem('caw:folderSidebarCollapsed', next ? '1' : '0')
       return next
     })
   }, [])
@@ -1805,50 +1817,39 @@ export function AppLayout() {
         <>
           <div className="relative flex-1 min-h-0">
             <div className="flex h-full w-full">
-              <Group orientation="horizontal" className="flex-1">
+              <SplitLayout
+                orientation="horizontal"
+                className="flex-1 h-full w-full"
+                sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
+                minSizes={[sidebarMinSize, '0%', folderMinSize]}
+                maxSizes={[sidebarMaxSize, '100%', folderMaxSize]}
+                separatorHidden={[sidebarCollapsed, !(activeWorkspace && !folderSidebarCollapsed)]}
+                separatorClassName="bg-border group-hover:bg-ring transition-colors"
+                onSizesChange={handleTopLevelSizesChange}
+              >
                 {/* Left Workspace Panel — always mounted; collapse/expand is
-                    driven imperatively via sidebarRef.resize() (see the effect
-                    near the derived-size block above). Only the Panel content
-                    swaps between the 44px collapsed rail and the full sidebar.
-                    The Panel count never changes, which prevents the
-                    "Invalid N panel layout" throw from react-resizable-panels'
-                    ResizeObserver when the cached layout arity mismatches the
-                    live panel constraints. */}
-                <Panel
-                  id="sidebar"
-                  panelRef={sidebarRef}
-                  defaultSize={sidebarCollapsed ? SIDEBAR_COLLAPSED_PX : sidebarDefaultSize}
-                  minSize={sidebarMinSize}
-                  maxSize={sidebarMaxSize}
-                  onResize={(size) => {
-                    if (programmaticLayoutRef.current) return
-                    if (size.asPercentage >= 15) {
-                      sidebarSizeRef.current = size.asPercentage
-                      localStorage.setItem('caw:sidebarSize', String(size.asPercentage))
-                    }
-                  }}
-                >
-                  <WorkspacePanel
-                    workspaces={workspaces}
-                    activeWorkspaceId={activeWorkspaceId}
-                    onSelectWorkspace={setActiveWorkspaceId}
-                    onAddWorkspace={handleAddWorkspace}
-                    onDeleteWorkspace={handleDeleteWorkspace}
-                    onEditWorkspace={handleEditWorkspace}
-                    onReorderWorkspaces={handleReorderWorkspaces}
-                    collapsed={sidebarCollapsed}
-                    onToggle={toggleSidebar}
-                    pickerOpen={pickerOpen}
-                    onPickerOpenChange={setPickerOpen}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                  />
-                </Panel>
-                {!sidebarCollapsed && (
-                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                )}
+                    driven declaratively by changing sizes/min/max. Only the
+                    content swaps between the 44px collapsed rail and the full
+                    sidebar. The panel count never changes, which avoids the
+                    "Invalid N panel layout" throw that react-resizable-panels'
+                    ResizeObserver emitted (issue #691). */}
+                <WorkspacePanel
+                  workspaces={workspaces}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSelectWorkspace={setActiveWorkspaceId}
+                  onAddWorkspace={handleAddWorkspace}
+                  onDeleteWorkspace={handleDeleteWorkspace}
+                  onEditWorkspace={handleEditWorkspace}
+                  onReorderWorkspaces={handleReorderWorkspaces}
+                  collapsed={sidebarCollapsed}
+                  onToggle={toggleSidebar}
+                  pickerOpen={pickerOpen}
+                  onPickerOpenChange={setPickerOpen}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
 
-                {/* Main Terminals / Editors Content */}
-                <Panel id="main" defaultSize="55%">
+                {/* Main Terminals / Editors Content. */}
+                <div className="h-full w-full min-w-0 min-h-0">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -1940,29 +1941,12 @@ export function AppLayout() {
                       {terminalBody}
                     </div>
                   )}
-                </Panel>
+                </div>
 
-                {/* Right Folder Explorer Panel — always mounted (same reason as
-                    the left sidebar above); collapses to 0% imperatively via
-                    folderSidebarRef.resize("0%") and renders null content when
-                    hidden. The separator is conditionally rendered since its
-                    count does not affect the layout validator. */}
-                {activeWorkspace && !folderSidebarCollapsed && (
-                  <Separator className="w-px bg-border hover:bg-ring hover:w-[3px] transition-all cursor-col-resize" />
-                )}
-                <Panel
-                  id="folder-sidebar"
-                  panelRef={folderSidebarRef}
-                  defaultSize={folderVisible ? '20%' : '0%'}
-                  minSize={folderMinSize}
-                  maxSize={folderMaxSize}
-                  onResize={(size) => {
-                    if (programmaticLayoutRef.current) return
-                    if (size.asPercentage >= 15) {
-                      folderSidebarSizeRef.current = size.asPercentage
-                    }
-                  }}
-                >
+                {/* Right Folder Explorer Panel — always mounted (same reason
+                    as the left sidebar above); collapses to 0% declaratively
+                    and renders null content when hidden. */}
+                <div className="h-full w-full min-w-0 min-h-0">
                   {activeWorkspace && !folderSidebarCollapsed ? (
                     <FolderSidebar
                       workspacePath={currentWorkspacePath}
@@ -1974,8 +1958,8 @@ export function AppLayout() {
                       onClose={() => setFolderSidebarCollapsed(true)}
                     />
                   ) : null}
-                </Panel>
-              </Group>
+                </div>
+              </SplitLayout>
             </div>
             {(agentBoardOpen || kanbanClosing) && (
               <div
