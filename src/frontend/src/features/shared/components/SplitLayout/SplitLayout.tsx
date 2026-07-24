@@ -182,7 +182,7 @@ export function SplitLayout({
           key={`sep-${sepIndex}`}
           ref={(el) => { separatorRefs.current[sepIndex] = el }}
           onPointerDown={handleSeparatorPointerDown(sepIndex)}
-          className={`group absolute flex items-center justify-center ${hitClass}`}
+          className={`group absolute flex items-center justify-center ${hitClass} z-10`}
           style={{
             touchAction: 'none',
             cursor: isHorizontal ? 'col-resize' : 'row-resize',
