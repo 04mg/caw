@@ -66,10 +66,10 @@ func (s *Server) Handler() http.Handler {
 	push.Register(api, s.store)
 	state.RegisterHTTP(api, s.store, s.mux)
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
+	agent.Register(api)
 
 	httpx.RegisterAPIGin(api, func(rg *gin.RouterGroup) {
 		workspace.Register(rg)
-		agent.Register(rg)
 	})
 
 	mux := http.NewServeMux()
