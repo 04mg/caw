@@ -367,20 +367,3 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 
 	callback("idle", "", "", sessionTitle)
 }
-
-// isUserInputTool reports whether a tool name represents a tool that
-// requests user input (e.g. AskUserQuestion, ExitPlanMode). When the last
-// assistant action is one of these tools, the agent is blocked waiting for
-// the user to respond, so the status should be "waiting_input" rather than
-// "executing".
-func isUserInputTool(toolLower string) bool {
-	switch toolLower {
-	case "askuserquestion", "ask_user_question", "askuser",
-		"exitplanmode", "exit_plan_mode",
-		"question", "request_user_input",
-		// Oh My Pi / omp interactive prompt tool.
-		"ask":
-		return true
-	}
-	return false
-}
