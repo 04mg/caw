@@ -66,6 +66,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		conns:      make(map[*connWriter]bool),
 		scrollback: []byte{},
 		modes:      make(map[int]bool),
+		exitReady:  make(chan struct{}),
 	}
 	sess.onExit = m.buildOnExit(sess, cwd, id)
 
