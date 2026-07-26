@@ -89,8 +89,8 @@ type Session struct {
 	modes map[int]bool
 	// killed is set when the user explicitly kills this session via
 	// SessionManager.Delete, so the onExit path can tell an explicit kill
-	// apart from a crash that also resulted in a non-zero/signal exit. It is
-	// read once by buildOnExit's closure, then cleared.
+	// apart from a crash that happened to be signalled. It is read once by
+	// buildOnExit's closure, then cleared.
 	killed bool
 	// exitInfo carries the process exit result collected in ReadLoop's exit
 	// goroutine so it is available to onExit. It is written before s.Pty.Close()
@@ -99,6 +99,14 @@ type Session struct {
 	// Close unblocks Read which returns err, then onExit is called) so no
 	// additional synchronization is needed.
 	exitInfo exitInfo
+	// exitReady is closed by the exit goroutine once exitInfo has been
+	// populated. The main ReadLoop waits on it before calling onExit, so
+	// onExit always sees the real exit code even when the kernel's own EOF
+	// (from the child dying and closing the slave PTY) unblocks Read before
+	// the exit goroutine has finished cmd.Wait(). Without this, an
+	// externally-killed process (e.g. pkill -SEGV) would race: Read returns
+	// EOF, onExit runs with a zeroed exitInfo, and the crash is missed.
+	exitReady chan struct{}
 	onExit   func()
 }
 
@@ -422,6 +430,11 @@ func (s *Session) ReadLoop() {
 			code = 1
 		}
 		s.exitInfo = exitInfo{code: code, err: waitErr}
+		// Signal that exitInfo is populated BEFORE closing the PTY, so the
+		// main ReadLoop (which may have already gotten EOF from the kernel
+		// when the child died) can wait on exitReady and read the real exit
+		// code rather than a zeroed default.
+		close(s.exitReady)
 		s.Pty.Close()
 	}()
 
@@ -463,6 +476,14 @@ func (s *Session) ReadLoop() {
 			break
 		}
 	}
+
+	// Wait for the exit goroutine to populate exitInfo before calling
+	// onExit. On Linux the kernel closes the slave PTY when the child dies,
+	// so Read() returns EOF and we reach here before the exit goroutine has
+	// necessarily finished cmd.Wait(). Waiting on exitReady guarantees
+	// onExit sees the real exit code (e.g. -1 for a signal) instead of the
+	// zero default, which is what distinguishes a crash from a clean exit.
+	<-s.exitReady
 
 	s.mu.Lock()
 	for c := range s.conns {
