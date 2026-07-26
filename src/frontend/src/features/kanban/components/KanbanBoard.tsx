@@ -201,7 +201,12 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
   }
 
-  // Group agent statuses by Column
+  // Group agent statuses by Column. Idle agents whose workspace can't be
+  // resolved (no matching leaf/cwd in any workspace) are hidden from the
+  // board: there is nothing to navigate to and they would just clutter the
+  // Idle column with "Unknown Workspace" cards. Crashed cards are always
+  // kept — the whole point is to surface dead runs the user needs to notice
+  // and dismiss, even when their workspace is no longer mapped.
   const groupedAgents: Record<ColumnId, AgentStatus[]> = useMemo(() => {
     const grouped: Record<ColumnId, AgentStatus[]> = {
       idle: [],
@@ -210,10 +215,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
     Object.values(statuses).forEach((agent) => {
       const colId = getColumnForStatus(agent)
+      if (colId === 'idle' && agent.status !== 'crashed' && !findWorkspaceDetails(agent)) {
+        return
+      }
       grouped[colId].push(agent)
     })
     return grouped
-  }, [statuses])
+  }, [statuses, findWorkspaceDetails])
 
   // Keep a stable ordering based on the backend-assigned opening sequence
   // (falling back to timestamp) so the cards don't reshuffle every time the
