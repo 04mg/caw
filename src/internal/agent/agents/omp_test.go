@@ -119,6 +119,17 @@ func TestPiStatusForMessageReadIsExecuting(t *testing.T) {
 	}
 }
 
+func TestPiStatusForMessageDeveloperIsThinking(t *testing.T) {
+	// omp's harness injects a "developer" role system-reminder between a
+	// text-only assistant message (stopReason:stop) and a follow-up ask tool
+	// call. Treating developer as thinking prevents the preceding idle from
+	// firing a spurious "finished" push before the ask arrives.
+	status, tool := piStatusForMessage(PiMessage{Role: "developer"})
+	if status != "thinking" || tool != "" {
+		t.Fatalf("developer status = (%q, %q), want (thinking, \"\")", status, tool)
+	}
+}
+
 func TestIsUserInputToolIncludesAsk(t *testing.T) {
 	if !isUserInputTool("ask") {
 		t.Fatal("ask should be treated as a user-input tool")

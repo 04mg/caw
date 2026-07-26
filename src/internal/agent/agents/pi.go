@@ -357,6 +357,17 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 		return "thinking", ""
 	}
 
+	// Harness-injected context (e.g. omp plan-mode system reminders delivered
+	// as a "developer" role message) signals the agent is about to continue
+	// with a follow-up turn. Treat it as thinking so a preceding text-only
+	// assistant message (stopReason:stop) doesn't prematurely emit idle and
+	// fire a spurious "finished" push before the subsequent ask/tool call
+	// arrives. Without this, omp's text→developer→ask sequence produces both
+	// a "finished" and a "needs_input" notification instead of just one.
+	if roleLower == "developer" {
+		return "thinking", ""
+	}
+
 	if roleLower == "assistant" || roleLower == "agent" {
 		if strings.ToLower(msg.StopReason) == "aborted" || strings.Contains(strings.ToLower(msg.ErrorMessage), "aborted") {
 			return "idle", ""
