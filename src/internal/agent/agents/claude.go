@@ -377,7 +377,9 @@ func isUserInputTool(toolLower string) bool {
 	switch toolLower {
 	case "askuserquestion", "ask_user_question", "askuser",
 		"exitplanmode", "exit_plan_mode",
-		"question", "request_user_input":
+		"question", "request_user_input",
+		// Oh My Pi / omp interactive prompt tool.
+		"ask":
 		return true
 	}
 	return false

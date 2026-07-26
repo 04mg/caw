@@ -92,3 +92,38 @@ func TestParsePiFormatTitleLine(t *testing.T) {
 		t.Fatal("session header should not parse as title")
 	}
 }
+
+func TestPiStatusForMessageAskIsWaitingInput(t *testing.T) {
+	status, tool := piStatusForMessage(PiMessage{
+		Role:       "assistant",
+		StopReason: "toolUse",
+		Content: []PiBlock{
+			{Type: "toolCall", Name: "ask"},
+		},
+	})
+	if status != "waiting_input" || tool != "ask" {
+		t.Fatalf("ask tool status = (%q, %q), want (waiting_input, ask)", status, tool)
+	}
+}
+
+func TestPiStatusForMessageReadIsExecuting(t *testing.T) {
+	status, tool := piStatusForMessage(PiMessage{
+		Role:       "assistant",
+		StopReason: "toolUse",
+		Content: []PiBlock{
+			{Type: "toolCall", Name: "read"},
+		},
+	})
+	if status != "executing" || tool != "read" {
+		t.Fatalf("read tool status = (%q, %q), want (executing, read)", status, tool)
+	}
+}
+
+func TestIsUserInputToolIncludesAsk(t *testing.T) {
+	if !isUserInputTool("ask") {
+		t.Fatal("ask should be treated as a user-input tool")
+	}
+	if isUserInputTool("bash") {
+		t.Fatal("bash should not be a user-input tool")
+	}
+}
