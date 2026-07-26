@@ -1,0 +1,94 @@
+package agents
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func TestEncodeOmpSessionDirHomeRelative(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home dir")
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+
+	got := encodeOmpSessionDir(filepath.Join(home, "Documents", "projects", "evm_cuda"))
+	want := "-Documents-projects-evm_cuda"
+	if got != want {
+		t.Fatalf("home-relative encode = %q, want %q", got, want)
+	}
+
+	got = encodeOmpSessionDir(home)
+	if got != "-" {
+		t.Fatalf("home itself encode = %q, want %q", got, "-")
+	}
+}
+
+func TestEncodeOmpSessionDirTempRelative(t *testing.T) {
+	tmp := filepath.Clean(os.TempDir())
+	if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = resolved
+	}
+
+	got := encodeOmpSessionDir(tmp)
+	if got != "-tmp-" {
+		t.Fatalf("temp root encode = %q, want %q", got, "-tmp-")
+	}
+
+	got = encodeOmpSessionDir(filepath.Join(tmp, "caw-agent-test"))
+	if got != "-tmp-caw-agent-test" {
+		t.Fatalf("temp child encode = %q, want %q", got, "-tmp-caw-agent-test")
+	}
+}
+
+func TestEncodeOmpSessionDirLegacyAbsolute(t *testing.T) {
+	// Outside home and outside os.TempDir. On macOS /tmp resolves to
+	// /private/tmp and is encoded as the legacy absolute form.
+	path := "/private/tmp"
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy absolute encoding checked on unix paths")
+	}
+	if _, err := os.Stat(path); err != nil {
+		path = "/var/empty-caw-omp-test-path"
+	}
+
+	got := encodeOmpSessionDir(path)
+	if !strings.HasPrefix(got, "--") || !strings.HasSuffix(got, "--") {
+		t.Fatalf("legacy encode = %q, want --...-- form", got)
+	}
+	if strings.Contains(got, "/") || strings.Contains(got, "\\") {
+		t.Fatalf("legacy encode still contains separators: %q", got)
+	}
+}
+
+func TestIsTopLevelOmpSession(t *testing.T) {
+	root := filepath.Join(string(os.PathSeparator), "Users", "dev", ".omp", "agent", "sessions")
+	top := filepath.Join(root, "-Documents-demo", "2026-07-25T00-00-00Z_abc.jsonl")
+	nested := filepath.Join(root, "-Documents-demo", "2026-07-25T00-00-00Z_abc", "SubAgent.jsonl")
+	loose := filepath.Join(root, "orphan.jsonl")
+
+	if !isTopLevelOmpSession(root, top) {
+		t.Fatalf("expected top-level session %q", top)
+	}
+	if isTopLevelOmpSession(root, nested) {
+		t.Fatalf("nested subagent session should be rejected: %q", nested)
+	}
+	if isTopLevelOmpSession(root, loose) {
+		t.Fatalf("file directly under sessions root should be rejected: %q", loose)
+	}
+}
+
+func TestParsePiFormatTitleLine(t *testing.T) {
+	title, ok := parsePiFormatTitleLine(`{"type":"title","v":1,"title":"Add omp support to caw"}`)
+	if !ok || title != "Add omp support to caw" {
+		t.Fatalf("title parse = (%q, %v)", title, ok)
+	}
+	if _, ok := parsePiFormatTitleLine(`{"type":"session","id":"x"}`); ok {
+		t.Fatal("session header should not parse as title")
+	}
+}
