@@ -331,6 +331,25 @@ export function sendTerminalInput(leafId: string, data: string) {
   }
 }
 
+// pasteFromClipboard reads the system clipboard (via the async Clipboard
+// API) and writes the result into the terminal as input, mirroring the
+// desktop Ctrl+V / Cmd+V paste path. Returns the pasted text on success, an
+// empty string if the clipboard was empty or the read failed (e.g. on a
+// non-secure context or a denied permission). The mobile control bar uses
+// this for its Clipboard button — mobile keyboards rarely surface a paste
+// shortcut directly inside xterm.js' hidden textarea, so an explicit button
+// is the only way to get clipboard content into the PTY.
+export async function pasteFromClipboard(leafId: string): Promise<string> {
+  if (!navigator.clipboard || !navigator.clipboard.readText) return ''
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) sendTerminalInput(leafId, text)
+    return text
+  } catch {
+    return ''
+  }
+}
+
 // reconnectTerminalWs forces an immediate WebSocket reconnection for the
 // given terminal. Used by the visibility/focus handler in TerminalPanel so
 // that returning from a PWA minimize / tab switch restores input without
