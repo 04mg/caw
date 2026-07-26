@@ -375,6 +375,12 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 		}
 
 		if lastToolName != "" {
+			// User-input tools block the agent until the human answers.
+			// Without this, omp's `ask` (and similar) stay in Working forever
+			// instead of moving the kanban card to Needs Input.
+			if isUserInputTool(strings.ToLower(lastToolName)) {
+				return "waiting_input", lastToolName
+			}
 			return "executing", lastToolName
 		}
 		// An assistant message with a thinking (reasoning) block but no
