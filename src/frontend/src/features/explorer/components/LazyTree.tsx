@@ -14,6 +14,7 @@ interface LazyTreeProps {
   onRenameFolder?: (path: string, name: string) => void
   onRenameCancel?: () => void
   onHoverPath?: (path: string) => void
+  scrollBlock?: 'start' | 'nearest'
 }
 
 export function LazyTree({
@@ -30,6 +31,7 @@ export function LazyTree({
   onRenameFolder,
   onRenameCancel,
   onHoverPath,
+  scrollBlock,
 }: LazyTreeProps) {
   return (
     <div className="py-1">
@@ -50,6 +52,7 @@ export function LazyTree({
         onRenameFolder={onRenameFolder}
         onRenameCancel={onRenameCancel}
         onHoverPath={onHoverPath}
+        scrollBlock={scrollBlock}
       />
     </div>
   )

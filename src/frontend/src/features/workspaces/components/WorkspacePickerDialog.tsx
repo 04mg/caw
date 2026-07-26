@@ -229,6 +229,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                   onSelect={handleSelect}
                   focusPath={focusPath}
                   refreshCounter={refreshCounter}
+                  scrollBlock="start"
                   onShowContextMenu={(path, name, x, y) => {
                     const rect = treeContainerRef.current?.getBoundingClientRect()
                     if (!rect) return
@@ -348,8 +349,15 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
               </DialogDescription>
             </DialogHeader>
 
-            <div className="flex flex-col gap-4 py-2">
-              <div className="flex flex-col gap-1.5">
+            <div className="flex gap-4 py-2 items-start">
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <label className="text-xs text-muted-foreground font-medium">Emoji</label>
+                <div className="h-9 w-9 rounded-md border border-border flex items-center justify-center text-2xl shrink-0 cursor-pointer">
+                  {emoji}
+                </div>
+              </div>
+
+              <div className="flex-1 flex flex-col gap-1.5 min-w-0">
                 <label className="text-xs text-muted-foreground font-medium">Name</label>
                 <Input
                   autoFocus
@@ -360,21 +368,16 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                 />
               </div>
 
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 shrink-0">
                 <label className="text-xs text-muted-foreground font-medium">Emoji</label>
-                <div className="flex items-center gap-2">
-                  <div className={`h-8 w-8 rounded-md border border-border flex items-center justify-center text-lg ${emoji ? '' : 'text-muted-foreground'}`}>
-                    {emoji || '○'}
-                  </div>
-                  <span className="text-xs text-muted-foreground">{emoji ? 'Click an emoji below to change' : 'Select an emoji'}</span>
-                </div>
-                <div className="mt-1 w-full rounded-md border border-border overflow-hidden">
+                <div className="rounded-md border border-border overflow-hidden">
                   <EmojiPicker.Root
                     onEmojiSelect={({ emoji }) => setEmoji(emoji)}
-                    className="isolate flex h-[240px] w-full flex-col bg-background"
+                    className="isolate flex h-[240px] flex-col bg-background"
+                    columns={6}
                   >
                     <EmojiPicker.Search className="z-10 mx-2 mt-2 mb-1 appearance-none rounded-md bg-secondary px-2.5 py-1.5 text-sm text-foreground placeholder-muted-foreground outline-hidden" />
-                    <EmojiPicker.Viewport className="relative flex-1 w-full outline-hidden">
+                    <EmojiPicker.Viewport className="relative flex-1 outline-hidden">
                       <EmojiPicker.Loading className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
                         Loading…
                       </EmojiPicker.Loading>
@@ -382,7 +385,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                         No emoji found.
                       </EmojiPicker.Empty>
                       <EmojiPicker.List
-                        className="select-none pb-1 w-full"
+                        className="select-none pb-1"
                         components={{
                           CategoryHeader: ({ category, ...props }) => (
                             <div
@@ -397,7 +400,8 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                           ),
                           Emoji: ({ emoji, ...props }) => (
                             <button
-                              className="flex flex-1 items-center justify-center rounded-md text-lg data-[active]:bg-accent aspect-square min-w-0"
+                              className="flex items-center justify-center rounded-md text-lg data-[active]:bg-accent aspect-square min-w-0"
+                              style={{ width: 'calc(100% / 6)' }}
                               {...props}
                             >
                               {emoji.emoji}
