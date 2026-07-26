@@ -379,6 +379,8 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		agentID = "opencode"
 	case "pi":
 		agentID = "pi"
+	case "omp":
+		agentID = "omp"
 	default:
 		return
 	}
