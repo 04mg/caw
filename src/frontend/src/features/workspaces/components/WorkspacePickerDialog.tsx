@@ -229,6 +229,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                   onSelect={handleSelect}
                   focusPath={focusPath}
                   refreshCounter={refreshCounter}
+                  scrollBlock="start"
                   onShowContextMenu={(path, name, x, y) => {
                     const rect = treeContainerRef.current?.getBoundingClientRect()
                     if (!rect) return
@@ -348,66 +349,69 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
               </DialogDescription>
             </DialogHeader>
 
-            <div className="flex flex-col gap-4 py-2">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-muted-foreground font-medium">Name</label>
-                <Input
-                  autoFocus
-                  value={wsName}
-                  onChange={(e) => setWsName(e.target.value)}
-                  placeholder="Workspace name"
-                  className="w-full"
-                />
+            <div className="flex flex-col gap-4 py-2 sm:flex-row sm:items-start">
+              <div className="flex-1 flex flex-col gap-3 min-w-0">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-muted-foreground font-medium">Name</label>
+                  <Input
+                    autoFocus
+                    value={wsName}
+                    onChange={(e) => setWsName(e.target.value)}
+                    placeholder="Workspace name"
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-muted-foreground font-medium">Emoji</label>
+                  <div className="h-9 w-9 rounded-md border border-border flex items-center justify-center text-2xl cursor-pointer">
+                    {emoji}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Choose an emoji from the emoji picker.</p>
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-muted-foreground font-medium">Emoji</label>
-                <div className="flex items-center gap-2">
-                  <div className={`h-8 w-8 rounded-md border border-border flex items-center justify-center text-lg ${emoji ? '' : 'text-muted-foreground'}`}>
-                    {emoji || '○'}
-                  </div>
-                  <span className="text-xs text-muted-foreground">{emoji ? 'Click an emoji below to change' : 'Select an emoji'}</span>
-                </div>
-                <div className="mt-1 w-full rounded-md border border-border overflow-hidden">
-                  <EmojiPicker.Root
-                    onEmojiSelect={({ emoji }) => setEmoji(emoji)}
-                    className="isolate flex h-[240px] w-full flex-col bg-background"
-                  >
-                    <EmojiPicker.Search className="z-10 mx-2 mt-2 mb-1 appearance-none rounded-md bg-secondary px-2.5 py-1.5 text-sm text-foreground placeholder-muted-foreground outline-hidden" />
-                    <EmojiPicker.Viewport className="relative flex-1 w-full outline-hidden">
-                      <EmojiPicker.Loading className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                        Loading…
-                      </EmojiPicker.Loading>
-                      <EmojiPicker.Empty className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                        No emoji found.
-                      </EmojiPicker.Empty>
-                      <EmojiPicker.List
-                        className="select-none pb-1 w-full"
-                        components={{
-                          CategoryHeader: ({ category, ...props }) => (
-                            <div
-                              className="bg-background px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground"
-                              {...props}
-                            >
-                              {category.label}
-                            </div>
-                          ),
-                          Row: ({ children, ...props }) => (
-                            <div className="scroll-my-1 px-1 w-full flex" {...props}>{children}</div>
-                          ),
-                          Emoji: ({ emoji, ...props }) => (
-                            <button
-                              className="flex flex-1 items-center justify-center rounded-md text-lg data-[active]:bg-accent aspect-square min-w-0"
-                              {...props}
-                            >
-                              {emoji.emoji}
-                            </button>
-                          ),
-                        }}
-                      />
-                    </EmojiPicker.Viewport>
-                  </EmojiPicker.Root>
-                </div>
+              <div className="shrink-0 mt-0 sm:mt-5 w-fit rounded-md border border-border overflow-hidden">
+                <EmojiPicker.Root
+                  onEmojiSelect={({ emoji }) => setEmoji(emoji)}
+                  className="isolate flex h-[368px] w-fit flex-col bg-background"
+                >
+                  <EmojiPicker.Search className="z-10 mx-2 mt-2 appearance-none rounded-md bg-secondary px-2.5 py-2 text-sm text-foreground placeholder-muted-foreground outline-hidden" />
+                  <EmojiPicker.Viewport className="relative flex-1 outline-hidden">
+                    <EmojiPicker.Loading className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                      Loading…
+                    </EmojiPicker.Loading>
+                    <EmojiPicker.Empty className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                      No emoji found.
+                    </EmojiPicker.Empty>
+                    <EmojiPicker.List
+                      className="select-none pb-1.5"
+                      components={{
+                        CategoryHeader: ({ category, ...props }) => (
+                          <div
+                            className="bg-background px-3 pt-3 pb-1.5 text-xs font-medium text-muted-foreground"
+                            {...props}
+                          >
+                            {category.label}
+                          </div>
+                        ),
+                        Row: ({ children, ...props }) => (
+                          <div className="scroll-my-1.5 px-1.5" {...props}>
+                            {children}
+                          </div>
+                        ),
+                        Emoji: ({ emoji, ...props }) => (
+                          <button
+                            className="flex size-8 items-center justify-center rounded-md text-lg data-[active]:bg-accent"
+                            {...props}
+                          >
+                            {emoji.emoji}
+                          </button>
+                        ),
+                      }}
+                    />
+                  </EmojiPicker.Viewport>
+                </EmojiPicker.Root>
               </div>
             </div>
 
