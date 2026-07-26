@@ -31,12 +31,48 @@ type PiBlock struct {
 }
 
 func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".pi", "agent", "sessions")
+	watchPiFormatSessions(ctx, sessionID, cwd, resume, callback, heartbeat, piFormatWatchConfig{
+		agentID:     "pi",
+		sessionsDir: dir,
+		projectDir: func(cleanCwd string) string {
+			if cleanCwd == "" {
+				return ""
+			}
+			// Upstream Pi encodes the absolute cwd as -<encoded-abs-path>-.
+			return "-" + encodePathForDir(cleanCwd) + "-"
+		},
+	})
+}
+
+// piFormatWatchConfig parameterizes the shared Pi-compatible JSONL watcher so
+// forks (Oh My Pi / omp) can reuse the poll/claim/rebind loop without copying it.
+type piFormatWatchConfig struct {
+	agentID     string
+	sessionsDir string
+	// projectDir maps a cleaned cwd to the per-project subdirectory name under
+	// sessionsDir. Empty means "search the whole sessions tree".
+	projectDir func(cleanCwd string) string
+	// acceptPath, when non-nil, filters candidate transcript files after the
+	// mtime scan (e.g. to skip nested subagent JSONL files).
+	acceptPath func(path string) bool
+}
+
+func watchPiFormatSessions(
+	ctx context.Context,
+	sessionID string,
+	cwd string,
+	resume bool,
+	callback func(status, tool, details, title string),
+	heartbeat func(),
+	cfg piFormatWatchConfig,
+) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".pi", "agent", "sessions")
-	const agentID = "pi"
+	dir := cfg.sessionsDir
+	agentID := cfg.agentID
 	// On resume (--continue), the agent reattaches to a pre-existing session
 	// whose transcript may predate this watcher. Widen the search window to
 	// 1 hour so the resumed session is found. For a fresh start, only look
@@ -66,6 +102,36 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 		}
 	}()
 
+	projectSearchDir := func() string {
+		searchDir := dir
+		if cwd == "" || cfg.projectDir == nil {
+			return searchDir
+		}
+		cleanCwd := filepath.Clean(cwd)
+		projDir := cfg.projectDir(cleanCwd)
+		if projDir == "" {
+			return searchDir
+		}
+		targetDir := filepath.Join(dir, projDir)
+		if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+			return targetDir
+		}
+		return searchDir
+	}
+
+	filterCandidates := func(cands []FileCandidate) []FileCandidate {
+		if cfg.acceptPath == nil {
+			return cands
+		}
+		out := make([]FileCandidate, 0, len(cands))
+		for _, c := range cands {
+			if cfg.acceptPath(c.Path) {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+
 	readWatched := func() bool {
 		if watchedFilePath == "" {
 			return false
@@ -88,7 +154,7 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 			}
 			callback(status, tool, details, sessionTitle)
 		}
-		w.parsePiLog(watchedFilePath, lastFileSize, resume, wrappedCallback)
+		parsePiFormatLog(watchedFilePath, lastFileSize, resume, wrappedCallback)
 		lastFileSize = info.Size()
 		lastActivity = info.ModTime()
 		silentTicks = 0
@@ -104,19 +170,12 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				searchDir := dir
-				if cwd != "" {
-					cleanCwd := filepath.Clean(cwd)
-					projDir := "-" + encodePathForDir(cleanCwd) + "-"
-					targetDir := filepath.Join(dir, projDir)
-					if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
-						searchDir = targetDir
-					}
-				}
+				searchDir := projectSearchDir()
 				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
 				}
+				candidates = filterCandidates(candidates)
 				for _, c := range candidates {
 					if ClaimSession(agentID, cwd, c.Path) {
 						watchedFilePath = c.Path
@@ -136,27 +195,20 @@ func (w *PiWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					silentTicks++
 				}
 
-			// Mid-session re-bind for /new and /resume. Gated on PTY
-			// activity OR user focus: only the watcher whose PTY is producing
-			// output (or whose pane the user is currently driving) switches,
-			// so a sibling Pi in the same cwd writing to its own transcript
-			// can't make this idle, unfocused watcher steal its session. The
-			// focus exemption covers a /new or /resume issued in the focused
-			// pane before the agent emits any PTY output.
-			if silentTicks >= rebindSilenceTicks {
-				focused := agent.IsPtyFocused(sessionID)
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				if time.Since(lastPtyOut) < 3*time.Second || focused {
-						rebindDir := dir
-						if cwd != "" {
-							cleanCwd := filepath.Clean(cwd)
-							projDir := "-" + encodePathForDir(cleanCwd) + "-"
-							targetDir := filepath.Join(dir, projDir)
-							if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
-								rebindDir = targetDir
-							}
-						}
+				// Mid-session re-bind for /new and /resume. Gated on PTY
+				// activity OR user focus: only the watcher whose PTY is producing
+				// output (or whose pane the user is currently driving) switches,
+				// so a sibling agent in the same cwd writing to its own transcript
+				// can't make this idle, unfocused watcher steal its session. The
+				// focus exemption covers a /new or /resume issued in the focused
+				// pane before the agent emits any PTY output.
+				if silentTicks >= rebindSilenceTicks {
+					focused := agent.IsPtyFocused(sessionID)
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second || focused {
+						rebindDir := projectSearchDir()
 						cands, _ := FindLatestFiles(rebindDir, ".jsonl", lastActivity)
+						cands = filterCandidates(cands)
 						var others []RebindCandidate
 						for _, c := range cands {
 							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
@@ -200,17 +252,23 @@ func parseOnePiLogLine(line string) (PiMessage, bool) {
 	return PiMessage{}, false
 }
 
-func (w *PiWatcher) parsePiLog(filePath string, offset int64, resume bool, callback func(status, tool, details, title string)) {
+func parsePiFormatLog(filePath string, offset int64, resume bool, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the first user prompt (session title).
+	// Prefer an explicit title/title_change record (omp writes these), then
+	// fall back to the first user prompt (upstream Pi).
 	var sessionTitle string
 	for _, line := range lines {
+		if title, ok := parsePiFormatTitleLine(line); ok && sessionTitle == "" {
+			sessionTitle = title
+		}
+	}
+	for _, line := range lines {
 		if msg, ok := parseOnePiLogLine(line); ok {
-			if msg.Role == "user" {
+			if strings.EqualFold(msg.Role, "user") {
 				for _, b := range msg.Content {
 					if b.Type == "text" && b.Text != "" && sessionTitle == "" {
 						cleaned := CleanPrompt(b.Text)
@@ -238,6 +296,9 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, resume bool, callb
 	}
 
 	if len(states) == 0 {
+		if sessionTitle != "" && offset == 0 {
+			callback("idle", "", "", sessionTitle)
+		}
 		return
 	}
 
@@ -262,6 +323,24 @@ func (w *PiWatcher) parsePiLog(filePath string, offset int64, resume bool, callb
 		lastState = state
 		callback(st.status, st.tool, "", sessionTitle)
 	}
+}
+
+func parsePiFormatTitleLine(line string) (string, bool) {
+	var rec struct {
+		Type  string `json:"type"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		return "", false
+	}
+	if rec.Type != "title" && rec.Type != "title_change" {
+		return "", false
+	}
+	title := strings.TrimSpace(rec.Title)
+	if title == "" {
+		return "", false
+	}
+	return CleanPrompt(title), true
 }
 
 // piStatusForMessage derives the working/idle state represented by a single
