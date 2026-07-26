@@ -1,8 +1,24 @@
 import React from 'react'
 
+/** Official Oh My Pi mark from https://omp.sh/favicon.svg */
 export function OmpIcon({ className }: { className?: string }) {
-  return React.createElement('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 800 800', className, fill: 'currentColor' },
-    React.createElement('path', { d: 'M165.29 165.29h469.42v469.42H165.29zm58.825 58.825v351.77h351.77V224.115z' }),
-    React.createElement('path', { d: 'M282.65 341.18h234.7v58.82H282.65zm0 117.65h176.03v58.82H282.65z' })
+  // Unique gradient id per mount so multiple icons on one page don't clash.
+  const gradId = React.useId().replace(/:/g, '')
+  return React.createElement(
+    'svg',
+    { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 64 64', className },
+    React.createElement(
+      'defs',
+      null,
+      React.createElement(
+        'linearGradient',
+        { id: gradId, x1: '0', y1: '0', x2: '1', y2: '1' },
+        React.createElement('stop', { offset: '0', stopColor: '#ed4abf' }),
+        React.createElement('stop', { offset: '.5', stopColor: '#9b4dff' }),
+        React.createElement('stop', { offset: '1', stopColor: '#5ad8e6' }),
+      ),
+    ),
+    React.createElement('rect', { width: '64', height: '64', rx: '12', fill: '#0f0a14' }),
+    React.createElement('path', { fill: `url(#${gradId})`, d: 'M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z' }),
   )
 }
