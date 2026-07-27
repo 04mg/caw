@@ -73,11 +73,27 @@ export interface TerminalInstance {
    * re-opens the terminal and reconnects.
    */
   _released: boolean
+  /**
+   * @internal Number of consecutive reconnect attempts after the WebSocket
+   * closed. Reset on successful open. When the backend is unreachable
+   * (e.g. killed externally), the health-check fetch fails with a network
+   * error rather than 404, so we'd retry forever. After
+   * MAX_RECONNECT_ATTEMPTS consecutive failures we give up and mark the
+   * terminal as exited so the pane auto-closes.
+   */
+  _reconnectAttempts: number
 }
 
 const registry = new Map<string, TerminalInstance>()
 const subscribers = new Set<() => void>()
 let onTerminalExit: ((leafId: string) => void) | null = null
+
+/**
+ * Maximum number of consecutive WebSocket reconnect attempts before giving
+ * up and marking the terminal as exited. This prevents infinite retry
+ * loops when the backend server is killed externally (e.g. pkill -SEGV).
+ */
+const MAX_RECONNECT_ATTEMPTS = 5
 
 export function setOnTerminalExit(cb: ((leafId: string) => void) | null) {
   onTerminalExit = cb
@@ -499,6 +515,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
   inst.ws = ws
 
   ws.onopen = () => {
+    inst._reconnectAttempts = 0
     const dims = inst.fit.proposeDimensions()
     if (dims) ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
     // Re-send the current focus flag so a dropped socket that the backend
@@ -564,6 +581,14 @@ function connectWs(inst: TerminalInstance, backendId: string) {
       // once the OS kills the background socket, and the user is forced
       // to reload the page to regain input.
       if (!inst.exited && inst.backendId) {
+        inst._reconnectAttempts++
+        if (inst._reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+          // Backend is unreachable after several retries (likely killed
+          // externally). Give up and close the pane.
+          inst.exited = true
+          onTerminalExit?.(inst.leafId)
+          return
+        }
         fetch(`/api/terminals/${encodeURIComponent(inst.backendId)}`)
           .then((res) => {
             if (res.status === 404) {
@@ -700,7 +725,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false, _reconnectAttempts: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 

@@ -358,10 +358,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               <>
                 {/* Red dot — shown when not hovering. */}
                 <span
-                  className="relative flex h-2.5 w-2.5 group-hover:hidden"
+                  className="relative flex h-2 w-2 group-hover:hidden"
                   title={`Crashed: ${agent.exitReason || 'unexpected exit'}`}
                 >
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
                 </span>
                 {/* Dismiss X button — replaces the red dot in-place on
                     hover. Sized to visually match the dot. */}
@@ -371,7 +371,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   aria-label="Dismiss crashed card"
                   className="relative hidden group-hover:flex items-center justify-center text-red-400 hover:text-red-300 transition-colors -m-0.5"
                 >
-                  <X className="w-4 h-4" strokeWidth={2.5} />
+                  <X className="w-3 h-3" strokeWidth={2.5} />
                 </button>
               </>
             )}
