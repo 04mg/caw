@@ -27,7 +27,7 @@
 
 ### Run Agents in the Browser
 
-Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, Pi, or Oh My Pi side-by-side — Caw auto-detects which agents are installed and spins up a terminal pane for each.
+Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, Pi, Oh My Pi, or Hermes side-by-side — Caw auto-detects which agents are installed and spins up a terminal pane for each.
 
 </td>
 <td width="50%">
@@ -95,7 +95,8 @@ Caw launches any CLI coding agent that runs in a terminal. These are detected on
   <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
   <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b> &nbsp;&nbsp;
-  <img src="assets/icons/omp.svg" width="18" alt="Oh My Pi" /> <b>Oh My Pi</b>
+  <img src="assets/icons/omp.svg" width="18" alt="Oh My Pi" /> <b>Oh My Pi</b> &nbsp;&nbsp;
+  <img src="assets/icons/hermes.svg" width="18" alt="Hermes" /> <b>Hermes</b>
 </p>
 
 ### Usage quota providers
