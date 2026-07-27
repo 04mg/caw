@@ -193,6 +193,8 @@ export function LazyNode({
     <div>
       <button
         ref={buttonRef}
+        data-pick-name={name}
+        data-pick-path={path}
         onMouseEnter={() => onHoverPath?.(path)}
         onContextMenu={(e) => {
           e.preventDefault()
