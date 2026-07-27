@@ -86,8 +86,36 @@ type Session struct {
 	// modes holds the last-set state of the DEC private modes listed in
 	// syncModes, tracked incrementally from the live PTY stream. It is the
 	// authoritative source used to re-sync a freshly-attached client.
-	modes   map[int]bool
-	onExit  func()
+	modes map[int]bool
+	// killed is set when the user explicitly kills this session via
+	// SessionManager.Delete, so the onExit path can tell an explicit kill
+	// apart from a crash that happened to be signalled. It is read once by
+	// buildOnExit's closure, then cleared.
+	killed bool
+	// exitInfo carries the process exit result collected in ReadLoop's exit
+	// goroutine so it is available to onExit. It is written before s.Pty.Close()
+	// unblocks the read loop and read in the onExit closure; both accesses
+	// happen on the same ReadLoop goroutine (the exit goroutine writes, then
+	// Close unblocks Read which returns err, then onExit is called) so no
+	// additional synchronization is needed.
+	exitInfo exitInfo
+	// exitReady is closed by the exit goroutine once exitInfo has been
+	// populated. The main ReadLoop waits on it before calling onExit, so
+	// onExit always sees the real exit code even when the kernel's own EOF
+	// (from the child dying and closing the slave PTY) unblocks Read before
+	// the exit goroutine has finished cmd.Wait(). Without this, an
+	// externally-killed process (e.g. pkill -SEGV) would race: Read returns
+	// EOF, onExit runs with a zeroed exitInfo, and the crash is missed.
+	exitReady chan struct{}
+	onExit   func()
+}
+
+// exitInfo captures the outcome of the PTY process: its exit code (negative
+// when killed by a signal), and the error returned by cmd.Wait() (which is
+// typically nil for a clean exit and non-nil for a crash/signal).
+type exitInfo struct {
+	code int
+	err  error
 }
 
 // resizePTY handles a viewer resize request. For a single viewer the PTY is
@@ -390,7 +418,23 @@ func (s *Session) ReadLoop() {
 	// On Windows, the ConPTY output pipe may not signal EOF when the
 	// process exits, so we must explicitly break the Read.
 	go func() {
-		s.Pty.cmd.Wait()
+		waitErr := s.Pty.cmd.Wait()
+		// Capture the exit code for the onExit callback. ProcessState is
+		// populated by Wait() when the process has exited. A negative exit
+		// code means the process was terminated by a signal (a crash); a
+		// zero code means a clean exit.
+		code := 0
+		if ps := s.Pty.cmd.ProcessState; ps != nil {
+			code = ps.ExitCode()
+		} else if waitErr != nil {
+			code = 1
+		}
+		s.exitInfo = exitInfo{code: code, err: waitErr}
+		// Signal that exitInfo is populated BEFORE closing the PTY, so the
+		// main ReadLoop (which may have already gotten EOF from the kernel
+		// when the child died) can wait on exitReady and read the real exit
+		// code rather than a zeroed default.
+		close(s.exitReady)
 		s.Pty.Close()
 	}()
 
@@ -432,6 +476,14 @@ func (s *Session) ReadLoop() {
 			break
 		}
 	}
+
+	// Wait for the exit goroutine to populate exitInfo before calling
+	// onExit. On Linux the kernel closes the slave PTY when the child dies,
+	// so Read() returns EOF and we reach here before the exit goroutine has
+	// necessarily finished cmd.Wait(). Waiting on exitReady guarantees
+	// onExit sees the real exit code (e.g. -1 for a signal) instead of the
+	// zero default, which is what distinguishes a crash from a clean exit.
+	<-s.exitReady
 
 	s.mu.Lock()
 	for c := range s.conns {

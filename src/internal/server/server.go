@@ -51,6 +51,11 @@ func New() *Server {
 	agent.SetPushStore(s.store)
 	agent.SetStateStore(s.store)
 	agent.SetStatusMux(mux)
+	// Rehydrate any persisted crashed-session cards so they survive a Caw
+	// restart and stay on the Kanban board until the user dismisses them.
+	// Must run after SetStateStore (reads the SQLite store) and before the
+	// server starts serving.
+	agent.LoadCrashedSessions()
 	s.gitSvc = gitSvc
 	return s
 }
