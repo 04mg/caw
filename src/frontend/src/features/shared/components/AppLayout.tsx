@@ -27,7 +27,7 @@ import {
 import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
-import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput } from '@/features/terminal/services/terminalRegistry'
+import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -1333,6 +1333,13 @@ export function AppLayout() {
       }
 
       const leaf = findLeafById(activeTab.layout, id)
+      // If the terminal process has already exited (e.g. the agent crashed),
+      // skip all confirmation dialogs and close the pane immediately —
+      // there's nothing to save and the pane is just showing a dead terminal.
+      if (isTerminalExited(id)) {
+        forceClosePane(id)
+        return
+      }
       // Unsaved editor file inside this pane -> confirm before closing.
       if (leaf && leaf.type === 'leaf' && !leaf.isDiff && leaf.filePath && isFileDirty(leaf.filePath)) {
         setCloseConfirm({
