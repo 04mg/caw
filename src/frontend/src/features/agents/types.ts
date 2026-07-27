@@ -2,7 +2,7 @@ export interface AgentStatus {
   sessionId: string
   agentId: string
   cwd?: string
-  status: string // "thinking", "executing", "waiting_input", "idle", "stopped"
+  status: string // "thinking", "executing", "waiting_input", "idle", "crashed"
   tool?: string
   details?: string
   title?: string
@@ -10,10 +10,20 @@ export interface AgentStatus {
   // Sequence reflects the order in which agents were opened (assigned by the
   // backend). Used to keep a stable ordering in the UI instead of timestamps.
   sequence?: number
+  // Terminal-state fields. Only populated when status === "crashed" (i.e. the
+  // agent process died unexpectedly). A clean or user-killed session is
+  // removed from the store and never carries these.
+  endedAt?: string
+  exitCode?: number
+  exitReason?: string
+  // lastColumn records the column the card was in just before the crash
+  // ("working" | "needs_input" | "idle") so the board can keep the crashed
+  // card in the column the user last saw it in.
+  lastColumn?: string
 }
 
 export interface AgentStatusEvent {
-  event: 'agent_started' | 'agent_stopped' | 'agent_status'
+  event: 'agent_started' | 'agent_stopped' | 'agent_status' | 'agent_crashed'
   sessionId: string
   agentId: string
   cwd?: string
@@ -23,6 +33,11 @@ export interface AgentStatusEvent {
   title?: string
   timestamp: string
   sequence?: number
+  // Terminal-state fields, populated for "agent_crashed" events.
+  endedAt?: string
+  exitCode?: number
+  exitReason?: string
+  lastColumn?: string
 }
 
 export interface AgentType {

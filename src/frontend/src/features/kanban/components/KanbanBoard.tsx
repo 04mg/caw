@@ -4,12 +4,13 @@ import {
   Clock, 
   Terminal,
   ChevronRight,
-  Workflow
+  Workflow,
+  X
 } from 'lucide-react'
 import { type Workspace } from '@/features/workspaces/types'
 import { collectLeafIds, getLeaf } from '@/features/shared/utils/layout'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { subscribeAgentStatuses, getAgentStatuses, isAgentStatusesHydrated } from '@/features/agents/stores/agentStatusStore'
+import { subscribeAgentStatuses, getAgentStatuses, isAgentStatusesHydrated, dismissCrashedSession } from '@/features/agents/stores/agentStatusStore'
 import { type AgentStatus } from '@/features/agents/types'
 
 
@@ -113,7 +114,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // Prefer the exact session id, then fall back to matching the agent cwd
   // against the leaf cwd so cards still navigate when the leaf mapping has
   // drifted.
-  const findWorkspaceDetails = (agent: AgentStatus): WorkspaceDetails | null => {
+  const findWorkspaceDetails = useCallback((agent: AgentStatus): WorkspaceDetails | null => {
     const resolveBySessionId = (): WorkspaceDetails | null => {
       for (const ws of workspaces) {
         for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
@@ -159,11 +160,19 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       }
     }
     return null
-  }
+  }, [workspaces])
 
-  // Map AgentStatus status to ColumnId
-  const getColumnForStatus = (statusStr: string): ColumnId => {
-    const status = statusStr.toLowerCase()
+  // Map AgentStatus status to ColumnId. A crashed card stays in the column
+  // it was last in (recorded by the backend in agent.lastColumn) rather than
+  // being bucketed into Idle — this keeps the crash visible where the user
+  // last saw the agent working.
+  const getColumnForStatus = (agent: AgentStatus): ColumnId => {
+    if (agent.status === 'crashed') {
+      const lc = agent.lastColumn
+      if (lc === 'working' || lc === 'needs_input' || lc === 'idle') return lc
+      return 'idle'
+    }
+    const status = agent.status.toLowerCase()
     if (status === 'thinking' || status === 'executing') {
       return 'working'
     }
@@ -192,7 +201,12 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
   }
 
-  // Group agent statuses by Column
+  // Group agent statuses by Column. Idle agents whose workspace can't be
+  // resolved (no matching leaf/cwd in any workspace) are hidden from the
+  // board: there is nothing to navigate to and they would just clutter the
+  // Idle column with "Unknown Workspace" cards. Crashed cards are always
+  // kept — the whole point is to surface dead runs the user needs to notice
+  // and dismiss, even when their workspace is no longer mapped.
   const groupedAgents: Record<ColumnId, AgentStatus[]> = useMemo(() => {
     const grouped: Record<ColumnId, AgentStatus[]> = {
       idle: [],
@@ -200,11 +214,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       working: [],
     }
     Object.values(statuses).forEach((agent) => {
-      const colId = getColumnForStatus(agent.status)
+      const colId = getColumnForStatus(agent)
+      if (colId === 'idle' && agent.status !== 'crashed' && !findWorkspaceDetails(agent)) {
+        return
+      }
       grouped[colId].push(agent)
     })
     return grouped
-  }, [statuses])
+  }, [statuses, findWorkspaceDetails])
 
   // Keep a stable ordering based on the backend-assigned opening sequence
   // (falling back to timestamp) so the cards don't reshuffle every time the
@@ -261,14 +278,24 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     const AgentIcon = agentDef?.icon || Terminal
     const label = agentDef?.label || agent.agentId
 
+    const isCrashed = agent.status === 'crashed'
+
     // Choose column classes for styling card headers/borders
-    const colId = getColumnForStatus(agent.status)
+    const colId = getColumnForStatus(agent)
     const colConf = COLUMNS.find(c => c.id === colId)
 
     const handleCardClick = () => {
+      // A crashed card's only interaction is dismissal; clicking the body
+      // does nothing (the pane is gone, so there's nothing to navigate to).
+      if (isCrashed) return
       if (wsDetails) {
         onNavigateToWorkspace(wsDetails.workspaceId, wsDetails.tabIndex, wsDetails.paneId)
       }
+    }
+
+    const handleDismissClick = (e: React.MouseEvent) => {
+      e.stopPropagation()
+      dismissCrashedSession(agent.sessionId)
     }
 
     return (
@@ -278,16 +305,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         layoutId={agent.sessionId}
         data-card-id={agent.sessionId}
         data-testid="kanban-card"
+        data-crashed={isCrashed ? 'true' : undefined}
         onClick={handleCardClick}
         initial={{ opacity: 0, scale: 0.92 }}
-        animate={{ opacity: 1, scale: 1 }}
+        animate={{ opacity: isCrashed ? 0.55 : 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.92 }}
         transition={{
           layout: { duration: 0.4, ease: [0.25, 0.8, 0.25, 1] },
           opacity: { duration: 0.2 },
           scale: { duration: 0.2 },
         }}
-        className={`group relative overflow-hidden cursor-pointer rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 active:scale-[0.98] select-none flex flex-col gap-3.5 shadow-sm hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`}
+        className={`group relative overflow-hidden rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 select-none flex flex-col gap-3.5 shadow-sm ${
+          isCrashed
+            ? 'cursor-default border-red-500/30 hover:shadow-[0_0_15px_rgba(239,68,68,0.12)] hover:border-red-500/40'
+            : `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`
+        }`}
       >
         {/* Large semi-transparent background brand logo watermark */}
         <div className="absolute right-[-15px] bottom-[-15px] opacity-[0.03] group-hover:opacity-[0.07] transition-opacity duration-300 pointer-events-none select-none">
@@ -297,7 +329,9 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         {/* Card Header */}
         <div className="flex items-center justify-between z-10">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-background/50 border border-border/40 group-hover:border-foreground/20 transition-colors">
+            <div className={`p-2 rounded-lg bg-background/50 border transition-colors ${
+              isCrashed ? 'border-red-500/40 group-hover:border-red-500/60' : 'border-border/40 group-hover:border-foreground/20'
+            }`}>
               <AgentIcon className="w-5 h-5 text-foreground" />
             </div>
             <span className="font-semibold text-sm text-foreground/90 group-hover:text-foreground transition-colors">
@@ -305,19 +339,46 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             </span>
           </div>
           
-          {/* Status Indicator Dot/Badge */}
+          {/* Status Indicator Dot/Badge — for a crashed card this becomes a
+              red dot that, on hover, is replaced by a small Dismiss button. */}
           <div className="flex items-center gap-1.5">
-            <span className={`relative flex h-2 w-2`}>
-              {colId === 'working' && (
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              )}
-              {colId === 'needs_input' && (
-                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              )}
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                colId === 'working' ? 'bg-blue-400' : colId === 'needs_input' ? 'bg-amber-400' : 'bg-slate-400'
-              }`}></span>
-            </span>
+            {!isCrashed ? (
+              <span className={`relative flex h-2 w-2`}>
+                {colId === 'working' && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                )}
+                {colId === 'needs_input' && (
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                )}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                  colId === 'working' ? 'bg-blue-400' : colId === 'needs_input' ? 'bg-amber-400' : 'bg-slate-400'
+                }`}></span>
+              </span>
+            ) : (
+              <>
+                {/* Red dot — visible by default; on hover-capable devices
+                    hidden when the card is hovered so the X takes its place.
+                    On touch devices (no hover) the dot stays visible alongside
+                    the always-shown dismiss button. */}
+                <span
+                  className="relative flex h-2 w-2 @media(hover:hover):group-hover:hidden"
+                  title={`Crashed: ${agent.exitReason || 'unexpected exit'}`}
+                >
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                </span>
+                {/* Dismiss X button — always visible on touch devices so
+                    mobile users can dismiss crashed cards. On hover-capable
+                    devices it replaces the red dot on card hover. */}
+                <button
+                  type="button"
+                  onClick={handleDismissClick}
+                  aria-label="Dismiss crashed card"
+                  className="relative flex @media(hover:hover):hidden @media(hover:hover):group-hover:flex items-center justify-center text-red-400 hover:text-red-300 transition-colors -m-0.5"
+                >
+                  <X className="w-3 h-3" strokeWidth={2.5} />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -384,14 +445,17 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
           <div className="flex items-center gap-1 text-[10px] shrink-0">
             <Clock className="w-3 h-3 opacity-60" />
-            <span>{formatTime(agent.timestamp)}</span>
+            <span>{formatTime(agent.endedAt || agent.timestamp)}</span>
           </div>
         </div>
 
-        {/* Hover Arrow Overlay */}
-        <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
-          <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
-        </div>
+        {/* Hover Arrow Overlay — hidden for crashed cards since they don't
+            navigate anywhere. */}
+        {!isCrashed && (
+          <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pl-4 bg-gradient-to-l from-secondary/80 to-transparent h-full flex items-center justify-end pointer-events-none w-12 rounded-r-xl">
+            <ChevronRight className="w-4 h-4 text-foreground/80 mr-3 translate-x-2 group-hover:translate-x-0 transition-transform duration-300" />
+          </div>
+        )}
       </motion.div>
     )
   }

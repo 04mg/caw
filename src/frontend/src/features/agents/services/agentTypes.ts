@@ -2,6 +2,7 @@ import { OpenCode, Antigravity, Claude, Codex, GithubCopilot } from '@lobehub/ic
 import { Terminal } from 'lucide-react'
 import { type AgentType } from '../types'
 import { PiIcon } from '../components/PiIcon'
+import { OmpIcon } from '../components/OmpIcon'
 
 
 const AGENT_CMDS_KEY = 'caw:agentCmds'
@@ -77,5 +78,11 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Pi',
     cmd: ['pi'],
     icon: PiIcon,
+  },
+  omp: {
+    id: 'omp',
+    label: 'Oh My Pi',
+    cmd: ['omp'],
+    icon: OmpIcon,
   },
 }

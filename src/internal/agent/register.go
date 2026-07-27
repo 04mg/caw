@@ -65,12 +65,26 @@ func (h *Handler) ListStatuses(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, list)
 }
 
+// DismissStatus handles DELETE /agents/statuses/{id}. It removes a crashed
+// card from the Kanban board. Only sessions currently in the "crashed"
+// terminal state can be dismissed this way; live sessions are not affected
+// (killing a live session is done via DELETE /terminals/{id}).
+func (h *Handler) DismissStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !DismissCrashedSession(id) {
+		httpx.RespondNotFound(w, "no crashed session with that id")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func Register(mux *http.ServeMux) {
 	h := NewHandler(NewService())
 	mux.HandleFunc("GET /agents", h.ListAgents)
 	mux.HandleFunc("POST /agents", h.SetupWorkspace)
 	mux.HandleFunc("GET /agents/changes", h.CheckChanges)
 	mux.HandleFunc("GET /agents/statuses", h.ListStatuses)
+	mux.HandleFunc("DELETE /agents/statuses/{id}", h.DismissStatus)
 }
 
 func RegisterMuxChannel(mux *ws.Multiplexer) {
@@ -85,20 +99,24 @@ func RegisterMuxChannel(mux *ws.Multiplexer) {
 			sort.Slice(states, func(i, j int) bool {
 				return states[i].Sequence < states[j].Sequence
 			})
-			for _, s := range states {
-				_ = c.Send("agents", Event{
-					Type:      "agent_status",
-					SessionID: s.SessionID,
-					AgentID:   s.AgentID,
-					Cwd:       s.Cwd,
-					Status:    s.Status,
-					Tool:      s.Tool,
-					Details:   s.Details,
-					Title:     s.Title,
-					Timestamp: s.Timestamp,
-					Sequence:  s.Sequence,
-				})
-			}
+		for _, s := range states {
+			_ = c.Send("agents", Event{
+				Type:       "agent_status",
+				SessionID:  s.SessionID,
+				AgentID:    s.AgentID,
+				Cwd:        s.Cwd,
+				Status:     s.Status,
+				Tool:       s.Tool,
+				Details:    s.Details,
+				Title:      s.Title,
+				Timestamp:  s.Timestamp,
+				Sequence:   s.Sequence,
+				EndedAt:    s.EndedAt,
+				ExitCode:   s.ExitCode,
+				ExitReason: s.ExitReason,
+				LastColumn: s.LastColumn,
+			})
+		}
 		},
 		nil,
 		nil,
@@ -129,16 +147,20 @@ func HandleStatusWS(w http.ResponseWriter, r *http.Request, hub *ws.Hub) {
 	})
 	for _, s := range states {
 		msg, _ := marshalEvent(Event{
-			Type:      "agent_status",
-			SessionID: s.SessionID,
-			AgentID:   s.AgentID,
-			Cwd:       s.Cwd,
-			Status:    s.Status,
-			Tool:      s.Tool,
-			Details:   s.Details,
-			Title:     s.Title,
-			Timestamp: s.Timestamp,
-			Sequence:  s.Sequence,
+			Type:       "agent_status",
+			SessionID:  s.SessionID,
+			AgentID:    s.AgentID,
+			Cwd:        s.Cwd,
+			Status:     s.Status,
+			Tool:       s.Tool,
+			Details:    s.Details,
+			Title:      s.Title,
+			Timestamp:  s.Timestamp,
+			Sequence:   s.Sequence,
+			EndedAt:    s.EndedAt,
+			ExitCode:   s.ExitCode,
+			ExitReason: s.ExitReason,
+			LastColumn: s.LastColumn,
 		})
 		_ = wc.WriteMessage(websocket.TextMessage, msg)
 	}

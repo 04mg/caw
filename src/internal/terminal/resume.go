@@ -70,6 +70,9 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 	case "pi":
 		// pi --continue / -c continues the previous session.
 		return appendNonFlag(cmd, "--continue")
+	case "omp":
+		// Oh My Pi (omp) --continue / -c continues the previous session.
+		return appendNonFlag(cmd, "--continue")
 	default:
 		return cmd
 	}
@@ -91,7 +94,7 @@ func agentBaseName(name string) string {
 // don't receive a spurious --continue flag on reopen.
 func isKnownAgent(b string) bool {
 	switch b {
-	case "claude", "codex", "copilot", "agy", "opencode", "pi":
+	case "claude", "codex", "copilot", "agy", "opencode", "pi", "omp":
 		return true
 	}
 	return false

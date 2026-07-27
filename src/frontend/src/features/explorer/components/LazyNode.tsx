@@ -41,6 +41,7 @@ export interface LazyNodeProps {
   onRenameFolder?: (path: string, name: string) => void
   onRenameCancel?: () => void
   onHoverPath?: (path: string) => void
+  scrollBlock?: 'start' | 'nearest'
 }
 
 export function LazyNode({
@@ -60,6 +61,7 @@ export function LazyNode({
   onRenameFolder,
   onRenameCancel,
   onHoverPath,
+  scrollBlock = 'nearest',
 }: LazyNodeProps) {
   const [expanded, setExpanded] = useState(!!startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -122,9 +124,9 @@ export function LazyNode({
   // Scroll into view when this node becomes the selected/focused one.
   useEffect(() => {
     if (focusPath && samePath(focusPath, path) && buttonRef.current) {
-      buttonRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      buttonRef.current.scrollIntoView({ block: scrollBlock, behavior: 'smooth' })
     }
-  }, [focusPath, path])
+  }, [focusPath, path, scrollBlock])
 
   const isCreating = createTargetPath === path
 
@@ -267,6 +269,7 @@ export function LazyNode({
               onRenameFolder={onRenameFolder}
               onRenameCancel={onRenameCancel}
               onHoverPath={onHoverPath}
+              scrollBlock={scrollBlock}
             />
           ))}
           {isCreating && (

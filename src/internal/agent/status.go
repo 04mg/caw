@@ -17,10 +17,14 @@ import (
 
 // AgentStatus represents the current tracked state of an agent
 type AgentStatus struct {
-	SessionID string    `json:"sessionId"`
-	AgentID   string    `json:"agentId"`
-	Cwd       string    `json:"cwd,omitempty"`
-	Status    string    `json:"status"` // "thinking", "executing", "waiting_input", "idle", "stopped"
+	SessionID string `json:"sessionId"`
+	AgentID   string `json:"agentId"`
+	Cwd       string `json:"cwd,omitempty"`
+	// Status is the live state: "thinking", "executing", "waiting_input",
+	// "idle". When the session has terminated and is being kept on the board
+	// as a dismissable card, Status is set to "crashed" and EndedAt/ExitCode/
+	// ExitReason are populated.
+	Status    string    `json:"status"`
 	Tool      string    `json:"tool,omitempty"`
 	Details   string    `json:"details,omitempty"`
 	Title     string    `json:"title,omitempty"`
@@ -30,20 +34,35 @@ type AgentStatus struct {
 	// used to keep a stable ordering in the UI instead of relying on the map
 	// iteration order or timestamps (which can reorder when re-fetching).
 	Sequence int64 `json:"sequence"`
+	// Terminal-session fields. Only populated when Status == "crashed" (i.e.
+	// the agent process died unexpectedly). A clean (exit 0) or user-killed
+	// session is removed from the statuses map and never carries these.
+	EndedAt     *time.Time `json:"endedAt,omitempty"`
+	ExitCode    *int       `json:"exitCode,omitempty"`
+	ExitReason  string     `json:"exitReason,omitempty"`
+	// LastColumn records the column the card was in just before the crash
+	// (one of "working", "needs_input", "idle") so the Kanban board can keep
+	// the crashed card in the column the user last saw it in.
+	LastColumn string `json:"lastColumn,omitempty"`
 }
 
 // Event represents a WebSocket event message
 type Event struct {
-	Type      string    `json:"event"`
-	SessionID string    `json:"sessionId"`
-	AgentID   string    `json:"agentId"`
-	Cwd       string    `json:"cwd,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	Tool      string    `json:"tool,omitempty"`
-	Details   string    `json:"details,omitempty"`
-	Title     string    `json:"title,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-	Sequence  int64     `json:"sequence"`
+	Type      string     `json:"event"`
+	SessionID string     `json:"sessionId"`
+	AgentID   string     `json:"agentId"`
+	Cwd       string     `json:"cwd,omitempty"`
+	Status    string     `json:"status,omitempty"`
+	Tool      string     `json:"tool,omitempty"`
+	Details   string     `json:"details,omitempty"`
+	Title     string     `json:"title,omitempty"`
+	Timestamp time.Time  `json:"timestamp"`
+	Sequence  int64      `json:"sequence"`
+	// Terminal-state fields. Populated for "agent_crashed" events.
+	EndedAt    *time.Time `json:"endedAt,omitempty"`
+	ExitCode   *int       `json:"exitCode,omitempty"`
+	ExitReason string     `json:"exitReason,omitempty"`
+	LastColumn string     `json:"lastColumn,omitempty"`
 }
 
 type watcherContext struct {
@@ -295,6 +314,14 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
 	now := time.Now()
+	// Once a session has transitioned to "crashed" it is terminal: ignore
+	// any straggler status update from a watcher goroutine that hadn't yet
+	// observed the process exit. This prevents a late "idle" callback from
+	// resurrecting the card as a normal live card and hiding the crash.
+	if exists && prev.Status == "crashed" {
+		statusesMu.Unlock()
+		return
+	}
 	if exists && prev.Status == status && prev.Tool == tool && prev.Details == details && prev.Title == title {
 		statusesMu.Unlock()
 		return // no change
@@ -379,6 +406,8 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		agentID = "opencode"
 	case "pi":
 		agentID = "pi"
+	case "omp":
+		agentID = "omp"
 	default:
 		return
 	}
@@ -410,7 +439,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 	go watchAgent(ctx, wCtx)
 }
 
-func handleSessionExit(id string) {
+func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	activeSesMu.Lock()
 	wCtx, exists := activeSessions[id]
 	if exists {
@@ -418,24 +447,245 @@ func handleSessionExit(id string) {
 	}
 	activeSesMu.Unlock()
 
-	if exists {
-		wCtx.cancel()
-		push.CancelFinishedDebounced(id)
-		statusesMu.Lock()
+	if !exists {
+		return
+	}
+
+	wCtx.cancel()
+	push.CancelFinishedDebounced(id)
+
+	// Decide how to finalize the session.
+	//
+	//   - killed (user clicked kill in the UI): remove immediately, just like
+	//     a clean exit. The user explicitly chose to discard this run.
+	//   - clean exit (exit code 0): remove. A finished run is not a crash.
+	//   - anything else (non-zero exit, signal): transition to "crashed" and
+	//     keep the card on the board with a red dot + reduced opacity in the
+	//     column it was last in, persisted to SQLite so it survives Caw
+	//     restarts. The user dismisses it explicitly.
+	crashed := !killed && exitCode != 0
+
+	statusesMu.Lock()
+	prev, hadStatus := statuses[id]
+	if !crashed {
 		delete(statuses, id)
-		statusesMu.Unlock()
+	} else {
+		// Transition to "crashed" but keep the last live tool/details/title so
+		// the card shows what the agent was last doing. Status itself is
+		// overwritten to "crashed"; LastColumn records the column the card was
+		// in so the UI can keep it there.
+		now := time.Now()
+		ec := exitCode
+		st := AgentStatus{
+			SessionID:  prev.SessionID,
+			AgentID:    prev.AgentID,
+			Cwd:        prev.Cwd,
+			Status:     "crashed",
+			Tool:       prev.Tool,
+			Details:    prev.Details,
+			Title:      prev.Title,
+			Timestamp:  prev.Timestamp,
+			Sequence:   prev.Sequence,
+			EndedAt:    &now,
+			ExitCode:   &ec,
+			ExitReason: exitReason(exitCode, exitErr),
+			LastColumn: lastColumnForStatus(prev.Status),
+		}
+		statuses[id] = st
+	}
+	statusesMu.Unlock()
 
-		ptyFocusMu.Lock()
-		delete(ptyFocus, id)
-		ptyFocusMu.Unlock()
+	ptyFocusMu.Lock()
+	delete(ptyFocus, id)
+	ptyFocusMu.Unlock()
 
+	if !crashed {
+		// Clean exit or user kill: card simply leaves the board, as before.
 		broadcastEvent(Event{
 			Type:      "agent_stopped",
 			SessionID: id,
 			AgentID:   wCtx.agentId,
 			Timestamp: time.Now(),
 		})
+		// Make sure a previously-persisted crashed row for this leaf is gone
+		// (e.g. the user re-ran the agent in the same pane after dismissing a
+		// crash, then exited cleanly).
+		if stateStore != nil {
+			stateStore.DeleteCrashedSession(id)
+		}
+		return
 	}
+
+	// Crashed: broadcast the new terminal event and persist the snapshot so
+	// the card survives a Caw restart until the user dismisses it.
+	statusesMu.RLock()
+	cur := statuses[id]
+	statusesMu.RUnlock()
+
+	broadcastEvent(Event{
+		Type:       "agent_crashed",
+		SessionID:  id,
+		AgentID:    cur.AgentID,
+		Cwd:        cur.Cwd,
+		Status:     cur.Status,
+		Tool:       cur.Tool,
+		Details:    cur.Details,
+		Title:      cur.Title,
+		Timestamp:  cur.Timestamp,
+		Sequence:   cur.Sequence,
+		EndedAt:    cur.EndedAt,
+		ExitCode:   cur.ExitCode,
+		ExitReason: cur.ExitReason,
+		LastColumn: cur.LastColumn,
+	})
+
+	if stateStore != nil && hadStatus {
+		stateStore.SaveCrashedSession(state.CrashedSession{
+			SessionID:  cur.SessionID,
+			AgentID:   cur.AgentID,
+			Cwd:       cur.Cwd,
+			Title:     cur.Title,
+			Tool:      cur.Tool,
+			Details:   cur.Details,
+			Status:    prev.Status, // the live status it was in before the crash
+			LastColumn: cur.LastColumn,
+			ExitCode:   valInt(cur.ExitCode),
+			ExitReason: cur.ExitReason,
+			StartedAt:  cur.Timestamp,
+			EndedAt:   valTime(cur.EndedAt),
+			Sequence:  cur.Sequence,
+		})
+	}
+}
+
+// lastColumnForStatus maps a live agent status to the Kanban column id the
+// card was in. Used to keep a crashed card in the column the user last saw
+// it in rather than moving it on crash.
+func lastColumnForStatus(liveStatus string) string {
+	switch liveStatus {
+	case "thinking", "executing":
+		return "working"
+	case "waiting_input":
+		return "needs_input"
+	default:
+		return "idle"
+	}
+}
+
+// exitReason produces a short human-readable reason for the exit, used as a
+// sub-label on the crashed card. Negative exit codes mean the process was
+// terminated by a signal (a crash); positive non-zero codes mean the agent
+// exited with an error.
+func exitReason(exitCode int, exitErr error) string {
+	if exitErr != nil {
+		return "crashed"
+	}
+	if exitCode < 0 {
+		return "signal"
+	}
+	return "crashed"
+}
+
+func valInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func valTime(p *time.Time) time.Time {
+	if p == nil {
+		return time.Time{}
+	}
+	return *p
+}
+
+// DismissCrashedSession removes a crashed card from the in-memory statuses
+// map and from the persisted crashed_sessions table, and broadcasts an
+// agent_stopped event so the frontend animates the card out. Called by the
+// DELETE /agents/statuses/{id} dismiss endpoint when the user dismisses a
+// crashed card. It is a no-op if the session isn't currently in the
+// "crashed" state (e.g. the user is trying to dismiss a live card, which is
+// not allowed).
+func DismissCrashedSession(sessionID string) bool {
+	statusesMu.Lock()
+	s, exists := statuses[sessionID]
+	if !exists || s.Status != "crashed" {
+		statusesMu.Unlock()
+		return false
+	}
+	delete(statuses, sessionID)
+	statusesMu.Unlock()
+
+	if stateStore != nil {
+		stateStore.DeleteCrashedSession(sessionID)
+	}
+
+	broadcastEvent(Event{
+		Type:      "agent_stopped",
+		SessionID: sessionID,
+		AgentID:   s.AgentID,
+		Timestamp: time.Now(),
+	})
+	return true
+}
+
+// LoadCrashedSessions rehydrates the in-memory statuses map with any
+// persisted crashed-session snapshots from the SQLite store. Called once
+// at server startup (from server.New via a hook) so crashed cards survive a
+// Caw restart and stay on the board until the user dismisses them. Sessions
+// whose leaf id is currently running a live agent (i.e. also in
+// activeSessions) are skipped — the live run takes precedence over the
+// stale crashed row, which is also cleaned up.
+func LoadCrashedSessions() {
+	if stateStore == nil {
+		return
+	}
+	rows := stateStore.ListCrashedSessions()
+	if len(rows) == 0 {
+		return
+	}
+	statusesMu.Lock()
+	for _, c := range rows {
+		// If a live agent is already running in this leaf (e.g. the user
+		// reopened Caw and the auto-resume restarted the agent in the same
+		// pane), drop the stale crashed row — the live run owns the card.
+		activeSesMu.Lock()
+		_, live := activeSessions[c.SessionID]
+		activeSesMu.Unlock()
+		if live {
+			stateStore.DeleteCrashedSession(c.SessionID)
+			continue
+		}
+		// Skip if a status already exists (e.g. a live card was created by
+		// handleSessionStart in a race before we ran).
+		if _, ok := statuses[c.SessionID]; ok {
+			continue
+		}
+		ec := c.ExitCode
+		endedAt := c.EndedAt
+		statuses[c.SessionID] = AgentStatus{
+			SessionID:  c.SessionID,
+			AgentID:    c.AgentID,
+			Cwd:        c.Cwd,
+			Status:     "crashed",
+			Tool:       c.Tool,
+			Details:    c.Details,
+			Title:      c.Title,
+			Timestamp:  c.StartedAt,
+			Sequence:   c.Sequence,
+			EndedAt:    &endedAt,
+			ExitCode:   &ec,
+			ExitReason: c.ExitReason,
+			LastColumn: c.LastColumn,
+		}
+		// Keep statusSeq ahead of any reloaded sequence so newly opened
+		// sessions sort after the rehydrated crashed cards.
+		if c.Sequence > statusSeq {
+			statusSeq = c.Sequence
+		}
+	}
+	statusesMu.Unlock()
 }
 
 // idleTimeout is the duration after which an agent stuck in a non-idle state
@@ -524,7 +774,7 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 					// waiting for the user to answer — this can take minutes.
 					// Only revert transient "working" states (thinking/executing)
 					// that have stalled.
-					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" {
+					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" {
 						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
 					}
 				}
