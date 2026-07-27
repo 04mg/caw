@@ -577,17 +577,20 @@ func CleanPrompt(raw string) string {
 }
 
 // isUserInputTool reports whether a tool name represents a tool that
-// requests user input (e.g. AskUserQuestion, ExitPlanMode, omp ask). When the
-// last assistant action is one of these tools, the agent is blocked waiting
-// for the user to respond, so the status should be "waiting_input" rather
-// than "executing". Shared by Claude, Codex, and Pi/omp status mappers.
+// requests user input (e.g. AskUserQuestion, ExitPlanMode, omp ask, hermes
+// clarify). When the last assistant action is one of these tools, the agent
+// is blocked waiting for the user to respond, so the status should be
+// "waiting_input" rather than "executing". Shared by Claude, Codex,
+// Pi/omp, and Hermes status mappers.
 func isUserInputTool(toolLower string) bool {
 	switch toolLower {
 	case "askuserquestion", "ask_user_question", "askuser",
 		"exitplanmode", "exit_plan_mode",
 		"question", "request_user_input",
 		// Oh My Pi / omp interactive prompt tool.
-		"ask":
+		"ask",
+		// Hermes interactive prompt tool.
+		"clarify":
 		return true
 	}
 	return false
