@@ -255,7 +255,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      const target = el.querySelector('.xterm-viewport') || el
+      // xterm.js v6 creates a .xterm-scrollable-element overlay (sibling of
+      // .xterm-viewport) whose wheel handler drives viewport scrolling for
+      // non-TUI apps. Dispatching to .xterm-viewport would bubble to .xterm
+      // but never pass through .xterm-scrollable-element, so the ScrollableElement
+      // never sees the event and nothing scrolls. TUI apps work regardless
+      // because bindMouse's handler on .xterm captures the event and sends
+      // mouse escape sequences.
+      const target = el.querySelector('.xterm-scrollable-element') || el.querySelector('.xterm-viewport') || el
       if (!target) return
       accumDelta += deltaY
       const wholeLines = Math.trunc(accumDelta)
