@@ -356,24 +356,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               </span>
             ) : (
               <>
-                {/* Red dot — visible by default; on hover-capable devices
-                    hidden when the card is hovered so the X takes its place.
-                    On touch devices (no hover) the dot stays visible alongside
-                    the always-shown dismiss button. */}
-                <span
-                  className="relative flex h-2 w-2 @media(hover:hover):group-hover:hidden"
-                  title={`Crashed: ${agent.exitReason || 'unexpected exit'}`}
-                >
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                </span>
-                {/* Dismiss X button — always visible on touch devices so
-                    mobile users can dismiss crashed cards. On hover-capable
-                    devices it replaces the red dot on card hover. */}
+                {/* Dismiss X button — always visible so crashed cards can be
+                    dismissed on both touch and hover-capable devices. */}
                 <button
                   type="button"
                   onClick={handleDismissClick}
                   aria-label="Dismiss crashed card"
-                  className="relative flex @media(hover:hover):hidden @media(hover:hover):group-hover:flex items-center justify-center text-red-400 hover:text-red-300 transition-colors -m-0.5"
+                  title={`Crashed: ${agent.exitReason || 'unexpected exit'}`}
+                  className="relative flex items-center justify-center text-red-400 hover:text-red-300 transition-colors -m-0.5"
                 >
                   <X className="w-3 h-3" strokeWidth={2.5} />
                 </button>
