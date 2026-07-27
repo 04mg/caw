@@ -24,6 +24,7 @@ func (s *Service) ListAgents() []Info {
 		{ID: "opencode", Label: "OpenCode", Cmd: []string{"opencode", "--auto"}},
 		{ID: "pi", Label: "Pi", Cmd: []string{"pi"}},
 		{ID: "omp", Label: "Oh My Pi", Cmd: []string{"omp"}},
+		{ID: "hermes", Label: "Hermes", Cmd: []string{"hermes", "--yolo"}},
 	}
 	available := []Info{}
 	for _, a := range agentsList {
