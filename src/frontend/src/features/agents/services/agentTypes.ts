@@ -1,4 +1,4 @@
-import { OpenCode, Antigravity, Claude, Codex, GithubCopilot } from '@lobehub/icons'
+import { OpenCode, Antigravity, Claude, Codex, GithubCopilot, NousResearch } from '@lobehub/icons'
 import { Terminal } from 'lucide-react'
 import { type AgentType } from '../types'
 import { PiIcon } from '../components/PiIcon'
@@ -84,5 +84,11 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Oh My Pi',
     cmd: ['omp'],
     icon: OmpIcon,
+  },
+  hermes: {
+    id: 'hermes',
+    label: 'Hermes',
+    cmd: ['hermes', '--yolo'],
+    icon: NousResearch,
   },
 }

@@ -29,7 +29,7 @@ export function isAgentAvailable(id: string): boolean {
   }
 }
 
-export const AGENT_IDS = ['claude', 'codex', 'copilot', 'agy', 'opencode', 'pi', 'omp']
+export const AGENT_IDS = ['claude', 'codex', 'copilot', 'agy', 'opencode', 'pi', 'omp', 'hermes']
 
 export function skipIfAgentNotAvailable(test: typeof base, agentId: string) {
   test.skip(!isAgentAvailable(agentId), `${agentId} not installed`)
