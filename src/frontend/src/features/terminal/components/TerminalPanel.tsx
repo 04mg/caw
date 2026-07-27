@@ -314,7 +314,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     const onTouchMove = (e: TouchEvent) => {
       if (!active || e.touches.length !== 1) return
+      // Stop the event before xterm.js' own touchmove listener (registered on
+      // the inner .xterm element) runs in the bubble phase. xterm's
+      // handleTouchMove scrolls the viewport in raw touch pixels, which fights
+      // our fractional-line wheel synthesis and, for normal-buffer shells with
+      // scrollback, clamps ydisp to a bound on the first drag — leaving
+      // subsequent drags doing nothing. Capturing the event on the outer
+      // container and stopping propagation makes our synthetic wheel the sole
+      // scroll authority for both alt-buffer TUIs (arrow-key / mouse protocol)
+      // and normal-buffer shells (viewport scrollback).
       e.preventDefault()
+      e.stopPropagation()
       const t = e.touches[0]
       const now = Date.now()
       const dy = lastY - t.clientY
@@ -336,18 +346,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       }
     }
 
-    el.addEventListener('touchstart', onTouchStart, { passive: true })
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd, { passive: true })
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
+    el.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId)
       if (graceTimer) clearTimeout(graceTimer)
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
-      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('touchstart', onTouchStart, { capture: true } as EventListenerOptions)
+      el.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions)
+      el.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions)
+      el.removeEventListener('touchcancel', onTouchEnd, { capture: true } as EventListenerOptions)
       setTerminalUserScrolling(terminalId, false)
     }
   }, [terminalId])
