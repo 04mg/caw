@@ -66,6 +66,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		conns:      make(map[*connWriter]bool),
 		scrollback: []byte{},
 		modes:      make(map[int]bool),
+		exitReady:  make(chan struct{}),
 	}
 	sess.onExit = m.buildOnExit(sess, cwd, id)
 
@@ -90,6 +91,14 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 
 func (m *SessionManager) buildOnExit(sess *Session, cwd, id string) func() {
 	return func() {
+		// Capture the exit result before deleting the session. The exit
+		// goroutine in ReadLoop writes sess.exitInfo before s.Pty.Close()
+		// unblocks the read loop, so by the time onExit runs the info is
+		// already populated. killed is set by Delete before issuing the kill.
+		exitCode := sess.exitInfo.code
+		exitErr := sess.exitInfo.err
+		killed := sess.killed
+
 		m.sessionsMu.Lock()
 		delete(m.sessions, id)
 
@@ -104,7 +113,7 @@ func (m *SessionManager) buildOnExit(sess *Session, cwd, id string) func() {
 		m.sessionsMu.Unlock()
 
 		if OnSessionExit != nil {
-			OnSessionExit(id)
+			OnSessionExit(id, exitCode, exitErr, killed)
 		}
 		if !doCleanup {
 			return
@@ -164,6 +173,10 @@ func (m *SessionManager) Delete(id string, deleteBranch bool) bool {
 		if deleteBranch {
 			sess.DeleteBranch = true
 		}
+		// Mark the session as user-killed so the onExit handler can
+		// distinguish an explicit kill (which should NOT be treated as a
+		// crash on the Kanban board) from a process that died on its own.
+		sess.killed = true
 		delete(m.sessions, id)
 	}
 	m.sessionsMu.Unlock()

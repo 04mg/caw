@@ -20,8 +20,30 @@ function ensureMux() {
       if (!ev || !ev.sessionId) return
 
       if (ev.event === 'agent_stopped') {
+        // Clean exit or user-dismissed crashed card: remove from the board.
         delete activeStatuses[ev.sessionId]
         hydrated = true
+      } else if (ev.event === 'agent_crashed') {
+        // The agent process died unexpectedly. Keep the card on the board as
+        // a dismissable crashed card (red dot, reduced opacity) in the
+        // column it was last in. The user dismisses it explicitly via the
+        // hover Dismiss button, which calls the DELETE /agents/statuses/{id}
+        // endpoint and triggers an agent_stopped event here.
+        activeStatuses[ev.sessionId] = {
+          sessionId: ev.sessionId,
+          agentId: ev.agentId,
+          cwd: ev.cwd,
+          status: 'crashed',
+          tool: ev.tool,
+          details: ev.details,
+          title: ev.title,
+          timestamp: ev.timestamp || new Date().toISOString(),
+          sequence: typeof ev.sequence === 'number' ? ev.sequence : undefined,
+          endedAt: ev.endedAt,
+          exitCode: ev.exitCode,
+          exitReason: ev.exitReason,
+          lastColumn: ev.lastColumn,
+        }
       } else if (ev.event === 'agent_started') {
         activeStatuses[ev.sessionId] = {
           sessionId: ev.sessionId,
@@ -32,7 +54,9 @@ function ensureMux() {
           sequence: typeof ev.sequence === 'number' ? ev.sequence : undefined,
         }
       } else {
-        // agent_status or initial payload
+        // agent_status or initial payload — includes crashed cards on
+        // reconnect/reload, since the backend keeps them in the statuses map
+        // and the multiplexer dumps them in the snapshot.
         activeStatuses[ev.sessionId] = {
           sessionId: ev.sessionId,
           agentId: ev.agentId,
@@ -43,6 +67,10 @@ function ensureMux() {
           title: ev.title,
           timestamp: ev.timestamp || new Date().toISOString(),
           sequence: typeof ev.sequence === 'number' ? ev.sequence : undefined,
+          endedAt: ev.endedAt,
+          exitCode: ev.exitCode,
+          exitReason: ev.exitReason,
+          lastColumn: ev.lastColumn,
         }
       }
 
@@ -120,5 +148,23 @@ export async function loadInitialStatuses(): Promise<Record<string, AgentStatus>
   } catch (err) {
     console.error('Failed to load initial agent statuses:', err)
     return {}
+  }
+}
+
+// dismissCrashedSession removes a crashed card from the board by calling the
+// backend DELETE /agents/statuses/{id} endpoint. The backend removes the
+// in-memory record and the persisted SQLite row, and broadcasts an
+// agent_stopped event that drops the card from the local store. We optimisti-
+// cally delete locally first so the UI feels instant, then fire the request;
+// if it fails we log and leave the store as-is (the next WS event will
+// reconcile). Only crashed cards can be dismissed — live sessions must be
+// killed via DELETE /terminals/{id}.
+export async function dismissCrashedSession(sessionId: string): Promise<void> {
+  delete activeStatuses[sessionId]
+  notify()
+  try {
+    await fetch(`/api/agents/statuses/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+  } catch (err) {
+    console.error('Failed to dismiss crashed session:', err)
   }
 }
