@@ -788,6 +788,16 @@ export function getTerminal(leafId: string): TerminalInstance | undefined {
   return registry.get(leafId)
 }
 
+// isTerminalExited reports whether the backend process for this leaf has
+// already exited (the terminal received an "exit" message). Used by
+// handleClosePane to skip the uncommitted-changes confirmation dialog when
+// the agent crashed — the process is gone, there's nothing to save, and the
+// pane should close immediately.
+export function isTerminalExited(leafId: string): boolean {
+  const inst = registry.get(leafId)
+  return !!inst?.exited
+}
+
 export function useTerminalIds(): string[] {
   const [ids, setIds] = useState<string[]>(() => Array.from(registry.keys()))
   useEffect(() => {
