@@ -8,6 +8,7 @@ import { SmartContextMenu } from '@/features/explorer/components/SmartContextMen
 import { DeleteDialog } from '@/features/explorer/components/DeleteDialog'
 import { type FileNode } from '@/features/explorer/types'
 import { EmojiPicker } from 'frimousse'
+import { appendTypeahead, findTypeaheadIndex, stepIndex } from '../utils/folderTypeahead'
 
 const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '🎨', '💡', '📁', '🔧', '📊', '🎮', '🤖', '🛠️', '📦', '🔬', '🎪', '🏗️', '🧩', '🎭', '📡', '🔍', '💎', '🌿', '🍀', '🎵', '📚', '⚙️', '🧪']
 
@@ -40,6 +41,30 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   const [deleteTarget, setDeleteTarget] = useState<{ path: string; name: string } | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
 
+  // Type-ahead buffer (selection jump among rendered tree nodes only).
+  const [typeahead, setTypeahead] = useState('')
+  const typeaheadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearTypeahead = useCallback(() => {
+    if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current)
+    setTypeahead('')
+  }, [])
+
+  const getTreeButtons = useCallback(() => {
+    const container = treeContainerRef.current
+    if (!container) return [] as HTMLButtonElement[]
+    return Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-pick-path]'))
+  }, [])
+
+  /** Move highlight only — never expand (no setFocusPath). */
+  const moveSelectionTo = useCallback((button: HTMLButtonElement) => {
+    const path = button.getAttribute('data-pick-path') || ''
+    if (!path) return
+    setSelected(path)
+    setHoveredPath(path)
+    button.scrollIntoView({ block: 'nearest' })
+  }, [])
+
   useEffect(() => {
     if (!contextMenu) return
     const onDown = (event: MouseEvent) => {
@@ -51,15 +76,110 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
   }, [contextMenu])
 
   useEffect(() => {
+    if (!open) {
+      clearTypeahead()
+      return
+    }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!open || event.key !== 'F2' || !hoveredPath || hoveredPath === '/' || editingPath) return
+      // F2 rename (original)
+      if (event.key === 'F2') {
+        if (!hoveredPath || hoveredPath === '/' || editingPath) return
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+        event.preventDefault()
+        setEditingPath(hoveredPath)
+        return
+      }
+
+      // Never steal keys from the existing search box / other inputs
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      if (contextMenu) return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+
+      const buttons = getTreeButtons()
+      if (buttons.length === 0) return
+      const currentIdx = buttons.findIndex((b) => b.getAttribute('data-pick-path') === selected)
+
+      // Arrows: selection only
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        clearTypeahead()
+        const nextIdx = stepIndex(currentIdx, buttons.length, 1)
+        if (nextIdx >= 0) moveSelectionTo(buttons[nextIdx])
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        clearTypeahead()
+        const prevIdx = stepIndex(currentIdx, buttons.length, -1)
+        if (prevIdx >= 0) moveSelectionTo(buttons[prevIdx])
+        return
+      }
+
+      // Enter: expand/collapse via existing LazyNode onClick
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        clearTypeahead()
+        const target = currentIdx >= 0 ? buttons[currentIdx] : buttons[0]
+        if (target) target.click()
+        return
+      }
+
+      if (event.key === 'Escape') {
+        if (typeahead) {
+          event.preventDefault()
+          clearTypeahead()
+        }
+        return
+      }
+
+      // Backspace: pop the last type-ahead char (no-op when empty)
+      if (event.key === 'Backspace') {
+        if (typeahead) {
+          event.preventDefault()
+          if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current)
+          const trimmed = typeahead.slice(0, -1)
+          setTypeahead(trimmed)
+          if (trimmed) {
+            const items = buttons.map((b) => ({
+              name: b.getAttribute('data-pick-name') || '',
+              path: b.getAttribute('data-pick-path') || '',
+            }))
+            const hitIdx = findTypeaheadIndex(items, trimmed, currentIdx)
+            if (hitIdx >= 0) moveSelectionTo(buttons[hitIdx])
+          }
+        }
+        return
+      }
+
+      // Type-ahead: move selection only (does not filter the tree)
+      if (event.key.length !== 1) return
       event.preventDefault()
-      setEditingPath(hoveredPath)
+
+      if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current)
+      const next = appendTypeahead(typeahead, event.key)
+      setTypeahead(next)
+      typeaheadTimer.current = setTimeout(() => setTypeahead(''), 800)
+
+      const items = buttons.map((b) => ({
+        name: b.getAttribute('data-pick-name') || '',
+        path: b.getAttribute('data-pick-path') || '',
+      }))
+      const hitIdx = findTypeaheadIndex(items, next, currentIdx)
+      if (hitIdx >= 0) moveSelectionTo(buttons[hitIdx])
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, hoveredPath, editingPath])
+  }, [
+    open,
+    hoveredPath,
+    editingPath,
+    contextMenu,
+    selected,
+    typeahead,
+    getTreeButtons,
+    moveSelectionTo,
+    clearTypeahead,
+  ])
 
   const [wsName, setWsName] = useState('')
   const [emoji, setEmoji] = useState('')
@@ -99,8 +219,9 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
       setEditingPath(null)
       setDeleteTarget(null)
       setHoveredPath(null)
+      clearTypeahead()
     }
-  }, [open])
+  }, [open, clearTypeahead])
 
   const selectAndExpand = useCallback((path: string) => {
     setSelected(path)
@@ -222,6 +343,17 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
             </form>
 
             <div ref={treeContainerRef} className="relative h-[50vh] shrink-0 border border-border rounded-md overflow-visible">
+              {typeahead ? (
+                <div
+                  className="pointer-events-none absolute right-2 top-2 z-20 rounded-md border border-border bg-popover/95 px-2 py-1 text-xs font-mono text-foreground shadow-md backdrop-blur-sm"
+                  aria-live="polite"
+                  title="Type-ahead query"
+                >
+                  <span className="text-muted-foreground mr-1">find</span>
+                  {typeahead}
+                  <span className="animate-pulse">|</span>
+                </div>
+              ) : null}
               <div ref={treeScrollRef} className="h-full overflow-auto">
                 <LazyTree
                   rootPath="/"
