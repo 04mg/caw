@@ -14,7 +14,13 @@ type KillRequest struct {
 
 var (
 	OnSessionStart func(id string, cmd []string, cwd string)
-	OnSessionExit  func(id string)
+	// OnSessionExit is invoked once the PTY process has fully exited and the
+	// ReadLoop has terminated. exitCode is the process exit code (a negative
+	// value means the process was terminated by a signal); exitErr is any
+	// error returned by cmd.Wait(); killed is true when the exit was
+	// initiated by the user via SessionManager.Delete (so consumers can
+	// distinguish an explicit kill from a crash that happened to be signalled).
+	OnSessionExit func(id string, exitCode int, exitErr error, killed bool)
 	// OnPtyActivity is invoked (from ReadLoop) whenever new bytes are read
 	// from the PTY. It receives the leaf/session id and the byte count. Used
 	// by the agent status watcher to know when its agent process is producing

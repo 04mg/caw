@@ -81,6 +81,21 @@ func (s *Store) migrate() {
 		p256dh     TEXT NOT NULL,
 		auth       TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE IF NOT EXISTS crashed_sessions (
+		session_id  TEXT PRIMARY KEY,
+		agent_id    TEXT NOT NULL DEFAULT '',
+		cwd         TEXT NOT NULL DEFAULT '',
+		title       TEXT NOT NULL DEFAULT '',
+		tool        TEXT NOT NULL DEFAULT '',
+		details     TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT '',
+		last_column TEXT NOT NULL DEFAULT '',
+		exit_code   INTEGER NOT NULL DEFAULT 0,
+		exit_reason TEXT NOT NULL DEFAULT '',
+		started_at  TEXT NOT NULL DEFAULT '',
+		ended_at    TEXT NOT NULL DEFAULT '',
+		sequence    INTEGER NOT NULL DEFAULT 0
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
