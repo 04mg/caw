@@ -7,9 +7,10 @@ import {
   subscribeStickyModifiers,
   stickyModifiers,
   resetStickyModifiers,
-  sendTerminalInput
+  sendTerminalInput,
+  pasteFromClipboard
 } from '@/features/terminal/services/terminalRegistry'
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft, Mic, Loader2 } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CornerDownLeft, Mic, ClipboardPaste, Loader2 } from 'lucide-react'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { cn } from '@/features/shared/utils/utils'
 
@@ -19,6 +20,7 @@ interface MobileControlBarProps {
 
 export function MobileControlBar({ terminalId }: MobileControlBarProps) {
   const [sticky, setSticky] = useState({ ctrl: false, alt: false, shift: false })
+  const [pasting, setPasting] = useState(false)
   const voice = useVoiceMode()
 
   useEffect(() => {
@@ -37,6 +39,16 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
       voice.start()
     } else if (voice.phase === 'listening') {
       voice.stop()
+    }
+  }
+
+  const handlePaste = async () => {
+    if (pasting) return
+    setPasting(true)
+    try {
+      await pasteFromClipboard(terminalId)
+    } finally {
+      setPasting(false)
     }
   }
 
@@ -63,6 +75,18 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
             )}
           </Button>
         )}
+        <Button
+          variant="ghost"
+          className="h-7 px-2 transition-all border border-border/30 text-muted-foreground hover:text-foreground"
+          onClick={handlePaste}
+          disabled={pasting}
+        >
+          {pasting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ClipboardPaste className="h-3.5 w-3.5" />
+          )}
+        </Button>
         <Button
           variant={sticky.ctrl ? 'default' : 'ghost'}
           className={`h-7 px-2.5 text-xs font-bold transition-all border ${
