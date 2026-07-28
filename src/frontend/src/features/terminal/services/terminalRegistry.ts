@@ -535,8 +535,17 @@ function connectWs(inst: TerminalInstance, backendId: string) {
 
   ws.onopen = () => {
     inst._reconnectAttempts = 0
-    const dims = inst.fit.proposeDimensions()
-    if (dims) ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+    // Only resize the backend PTY when this document is visible. When the
+    // mobile OS wakes the PWA to deliver a push notification the page is
+    // still backgrounded, so proposeDimensions returns stale mobile sizes.
+    // Sending those would shrink the shared PTY and the desktop client's
+    // view would jump to mobile dimensions until the mobile screen is
+    // turned off. The actual resize happens in TerminalPanel's
+    // onVisibility handler when the user returns to the terminal.
+    if (document.visibilityState === 'visible') {
+      const dims = inst.fit.proposeDimensions()
+      if (dims) ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+    }
     // Re-send the current focus flag so a dropped socket that the backend
     // cleared on disconnect is restored. Without this, the agent status
     // idle-timeout and re-bind heuristics would treat the pane as unfocused

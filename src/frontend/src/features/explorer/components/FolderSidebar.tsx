@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
-  RefreshCw, FileCode, FolderPlus, Pencil, Copy,
+  RefreshCw, FileCode, FolderPlus, Upload, Pencil, Copy,
   ClipboardPaste, Download, Trash2, PanelRightClose, Loader2
 } from 'lucide-react'
 import { ScrollArea } from '@/components/scroll-area'
@@ -62,7 +62,9 @@ export function FolderSidebar({
     : null
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [refreshCounter, setRefreshCounter] = useState(0)
+  const [uploadTarget, setUploadTarget] = useState<string | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -425,6 +427,13 @@ export function FolderSidebar({
                 <FolderPlus className="h-3.5 w-3.5" />
                 New Folder
               </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setUploadTarget(p); setTimeout(() => fileInputRef.current?.click(), 0) }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Upload
+              </button>
               {!contextMenu.isRoot && <div className="border-b border-border my-1 mx-1" />}
             </>
           )}
@@ -483,6 +492,19 @@ export function FolderSidebar({
         onCancel={() => setDeleteTarget(null)}
       />
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = e.target.files
+          if (files && files.length > 0 && uploadTarget) {
+            handleUpload(uploadTarget, files)
+          }
+          e.target.value = ''
+        }}
+      />
       <ConflictDialog
         target={conflictTarget}
         onConfirm={() => {
