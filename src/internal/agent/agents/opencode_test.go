@@ -190,3 +190,38 @@ func TestAlreadyClaimedSessionSkipped(t *testing.T) {
 		t.Fatalf("expected %q (skip claimed %q), got %q", newSession, oldSession, got)
 	}
 }
+
+// TestOpenCodeSessionNotLeakedAcrossWorkspaces verifies that a watcher whose
+// cwd has no matching session rows does NOT fall back to claiming a session
+// from a different workspace. Two OpenCode agents in different workspaces
+// must never bind the same internal session row — that was the root cause of
+// both Kanban cards showing the same session title.
+func TestOpenCodeSessionNotLeakedAcrossWorkspaces(t *testing.T) {
+	resetClaimRegistry()
+
+	otherCwd := "/home/user/other-project"
+	dbPath, cleanup := setupOpenCodeDB(t, []struct {
+		id              string
+		directory       string
+		timeCreatedMs   int64
+		timeUpdatedMs   int64
+		parentID        string
+	}{
+		// A fresh session that lives in a *different* workspace.
+		{newSession, otherCwd, freshTimeMs, freshTimeMs, ""},
+	})
+	defer cleanup()
+
+	watcherStart := time.Now().Add(-10 * time.Second)
+	// Watcher running in testCwd finds no sessions there; it must NOT
+	// claim the session that belongs to otherCwd.
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	if got != "" {
+		t.Fatalf("watcher in %q must not claim session from %q, got %q", testCwd, otherCwd, got)
+	}
+	// The session remains unclaimed and available to a watcher in its own cwd.
+	got2 := findUnclaimedOpenCodeSession(dbPath, otherCwd, watcherStart, testAgent, false)
+	if got2 != newSession {
+		t.Fatalf("watcher in %q should claim its own session, got %q", otherCwd, got2)
+	}
+}
