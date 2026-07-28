@@ -63,6 +63,18 @@ func Register(mux *http.ServeMux, store *state.Store, upgrader *websocket.Upgrad
 	mux.HandleFunc("GET /terminals/{id}", h.Get)
 }
 
+// ReconcileOrphans schedules a debounced reconciliation pass on the default
+// session manager. It kills PTY sessions whose leaf id is no longer in any
+// workspace's layout and that have no connected WebSocket viewers. Called
+// by the state package after a layout-state save. It is a no-op if Register
+// has not been called yet.
+func ReconcileOrphans(knownLeafIDs map[string]bool) {
+	if defaultManagerMgr == nil {
+		return
+	}
+	defaultManagerMgr.ReconcileOrphans(knownLeafIDs)
+}
+
 func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrader *websocket.Upgrader) {
 	sess, ok := defaultManagerMgr.Get(id)
 	if !ok {
