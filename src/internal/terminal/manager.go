@@ -19,7 +19,19 @@ type SessionManager struct {
 	sessionsMu sync.RWMutex
 	upgrader   *websocket.Upgrader
 	store      *state.Store
+	// reconcileDebounce is a resettable timer that coalesces rapid
+	// layout-state saves (e.g. during a drag/split/merge) so a leaf that
+	// is momentarily absent from the layout isn't killed before the user
+	// finishes the edit. The timer is nil-safe and guarded by
+	// reconcileMu; only one in-flight timer exists at a time.
+	reconcileMu    sync.Mutex
+	reconcileTimer *time.Timer
 }
+
+// reconcileDebounce is the grace period during which a layout-state save is
+// held before orphan reconciliation runs. A leaf that reappears in a
+// subsequent save within this window is never killed.
+const reconcileDebounce = 2 * time.Second
 
 func NewSessionManager(store *state.Store, upgrader *websocket.Upgrader) *SessionManager {
 	return &SessionManager{
@@ -191,3 +203,63 @@ func (m *SessionManager) Delete(id string, deleteBranch bool) bool {
 }
 
 func (m *SessionManager) Upgrader() *websocket.Upgrader { return m.upgrader }
+
+// scheduleReconcile arms (or resets) the debounce timer for orphan
+// reconciliation. Called after every layout-state save. When the timer
+// finally fires, it calls doReconcileOrphans with the last knownLeafIDs
+// that was scheduled. This coalesces a burst of saves (e.g. during a
+// drag-merge) into a single reconciliation pass, so a leaf that is
+// transiently absent during the edit is not killed.
+func (m *SessionManager) scheduleReconcile(knownLeafIDs map[string]bool) {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if m.reconcileTimer != nil {
+		m.reconcileTimer.Stop()
+	}
+	m.reconcileTimer = time.AfterFunc(reconcileDebounce, func() {
+		m.doReconcileOrphans(knownLeafIDs)
+	})
+}
+
+// doReconcileOrphans kills any PTY session whose leaf id is no longer
+// present in any workspace's layout AND that has no connected WebSocket
+// viewers. Killing via Delete triggers the existing onExit →
+// OnSessionExit → handleSessionExit chain, which removes the Kanban card
+// and cancels the status watcher — no separate cleanup is needed.
+//
+// Sessions with active viewers are skipped: another browser may be
+// viewing the pane even though this client's layout snapshot doesn't
+// include it (the multi-client releaseTerminal path intentionally keeps
+// the PTY alive).
+func (m *SessionManager) doReconcileOrphans(knownLeafIDs map[string]bool) {
+	type victim struct {
+		id   string
+		sess *Session
+	}
+	m.sessionsMu.RLock()
+	var victims []victim
+	for id, sess := range m.sessions {
+		if knownLeafIDs[id] {
+			continue
+		}
+		sess.mu.Lock()
+		viewers := len(sess.conns) + sess.pendingResizes
+		sess.mu.Unlock()
+		if viewers > 0 {
+			continue
+		}
+		victims = append(victims, victim{id, sess})
+	}
+	m.sessionsMu.RUnlock()
+
+	for _, v := range victims {
+		m.Delete(v.id, false)
+	}
+}
+
+// ReconcileOrphans schedules a debounced reconciliation pass. It is the
+// package-level entry point called by the state package after a
+// layout-state save.
+func (m *SessionManager) ReconcileOrphans(knownLeafIDs map[string]bool) {
+	m.scheduleReconcile(knownLeafIDs)
+}
