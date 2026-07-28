@@ -29,6 +29,9 @@ func (h *Handler) PutWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.svc.Set(s)
+	if OnLayoutSaved != nil {
+		OnLayoutSaved(s)
+	}
 	httpx.RespondJSON(w, map[string]bool{"ok": true})
 }
 
@@ -41,6 +44,13 @@ func RegisterHTTP(mux *http.ServeMux, store *Store, muxWS *ws.Multiplexer) {
 var (
 	lastStateJSON []byte
 	lastStateMu   sync.Mutex
+
+	// OnLayoutSaved is called after every layout-state save (both the
+	// multiplexer channel and the legacy WebSocket). It receives the
+	// AppState that was just persisted, so the consumer can compute the
+	// canonical leaf-id set and reconcile orphaned PTY sessions. Set by
+	// server.New during wiring; nil-safe.
+	OnLayoutSaved func(as AppState)
 )
 
 func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
@@ -71,6 +81,10 @@ func RegisterMuxChannel(mux *ws.Multiplexer, store *Store) {
 			lastStateMu.Unlock()
 
 			mux.BroadcastExcept("state", json.RawMessage(nextJSON), c)
+
+			if OnLayoutSaved != nil {
+				OnLayoutSaved(s)
+			}
 		},
 	)
 }
@@ -114,5 +128,9 @@ func HandleStateWS(w http.ResponseWriter, r *http.Request, store *Store, hub *ws
 		}
 		curJSON = nextJSON
 		hub.BroadcastExcept(websocket.TextMessage, nextJSON, wc)
+
+		if OnLayoutSaved != nil {
+			OnLayoutSaved(s)
+		}
 	}
 }
