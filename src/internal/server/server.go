@@ -57,6 +57,15 @@ func New() *Server {
 	// server starts serving.
 	agent.LoadCrashedSessions()
 	s.gitSvc = gitSvc
+	// Wire the orphan-session reconciler: after every layout-state save,
+	// kill PTY sessions whose leaf id is no longer in any workspace and
+	// that have no connected WebSocket viewers. This prevents ghost agent
+	// cards and orphaned agent processes when a leaf is dropped from the
+	// layout without an explicit kill (e.g. the multi-client
+	// releaseTerminal path).
+	state.OnLayoutSaved = func(as state.AppState) {
+		terminal.ReconcileOrphans(as.CollectLeafIDs())
+	}
 	return s
 }
 
