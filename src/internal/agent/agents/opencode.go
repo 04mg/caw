@@ -306,16 +306,24 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 		}
 	}
 	if len(candidates) == 0 {
-		rows, qerr := db.Query(
-			`SELECT id, time_created, time_updated FROM session WHERE (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var r row
-				rows.Scan(&r.id, &r.timeCreated, &r.timeUpdated)
-				candidates = append(candidates, r)
+		// Only fall back to the unfiltered scan when we have no cwd to
+		// narrow by. When a cwd IS set, an empty cwd-specific result means
+		// no session has been created in this workspace yet — grabbing a
+		// session from a different workspace here is exactly what would
+		// associate two agents in different workspaces with the same
+		// session. The watcher retries on the next DB change instead.
+		if cwd == "" {
+			rows, qerr := db.Query(
+				`SELECT id, time_created, time_updated FROM session WHERE (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
+			)
+			if qerr == nil {
+				for rows.Next() {
+					var r row
+					rows.Scan(&r.id, &r.timeCreated, &r.timeUpdated)
+					candidates = append(candidates, r)
+				}
+				rows.Close()
 			}
-			rows.Close()
 		}
 	}
 
