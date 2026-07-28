@@ -62,6 +62,14 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".codex", "sessions")
 	const agentID = "codex"
+	// Codex stores every session transcript under the shared ~/.codex/sessions
+	// tree with no per-cwd partitioning, so the watcher cannot narrow the
+	// file scan by workspace. Claims are therefore keyed globally per agent —
+	// every Codex pane shares one claim namespace regardless of its Caw-side
+	// cwd, so two Codex panes in different workspaces never bind the same
+	// rollout file (and thus the same session title/state). We pass a fixed
+	// sentinel ("") as the claim cwd, mirroring the Hermes watcher.
+	const claimCwd = ""
 	// On resume (codex resume --last), the agent reattaches to a pre-existing
 	// session whose transcript file may predate this watcher. Widen the
 	// search window to 1 hour so the resumed session is found. For a fresh
@@ -88,7 +96,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 
 	defer func() {
 		if watchedFilePath != "" {
-			UnclaimSession(agentID, cwd, watchedFilePath)
+			UnclaimSession(agentID, claimCwd, watchedFilePath)
 		}
 	}()
 
@@ -98,7 +106,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 		}
 		info, err := os.Stat(watchedFilePath)
 		if err != nil {
-			UnclaimSession(agentID, cwd, watchedFilePath)
+			UnclaimSession(agentID, claimCwd, watchedFilePath)
 			watchedFilePath = ""
 			if notifyCh != nil {
 				notifier.Watch("")
@@ -135,7 +143,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 					continue
 				}
 			for _, c := range candidates {
-				if ClaimSession(agentID, cwd, c.Path) {
+				if ClaimSession(agentID, claimCwd, c.Path) {
 					watchedFilePath = c.Path
 					lastFileSize = 0
 					lastCheck = time.Now()
@@ -159,7 +167,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 			// Mid-session re-bind for /new and /resume. Gated on PTY activity
 			// OR user focus: only the watcher whose PTY is producing output
 			// (or whose pane the user is currently driving) switches, so a
-			// sibling Codex in the same cwd writing to its own transcript
+			// sibling Codex in another workspace writing to its own transcript
 			// can't make this idle, unfocused watcher steal its session.
 			// The focus exemption covers /new or /resume issued in the
 			// focused pane before the agent emits any PTY output.
@@ -174,8 +182,8 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 					}
 					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, cwd, newKey) {
-							UnclaimSession(agentID, cwd, watchedFilePath)
+						if ClaimSession(agentID, claimCwd, newKey) {
+							UnclaimSession(agentID, claimCwd, watchedFilePath)
 							watchedFilePath = newKey
 							lastFileSize = 0
 							lastCheck = time.Now()
