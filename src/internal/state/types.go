@@ -37,3 +37,26 @@ type AppState struct {
 	Workspaces        []Workspace `json:"workspaces"`
 	ActiveWorkspaceID string      `json:"activeWorkspaceId"`
 }
+
+// CollectLeafIDs walks every workspace/tab/layout tree in the AppState and
+// returns the set of leaf node ids. Used by the orphan-session reconciler
+// to know which PTY sessions are still referenced by the persisted layout.
+func (as AppState) CollectLeafIDs() map[string]bool {
+	out := make(map[string]bool)
+	for _, w := range as.Workspaces {
+		for _, tl := range w.Layouts {
+			collectLeafIDs(tl.Layout, out)
+		}
+	}
+	return out
+}
+
+func collectLeafIDs(node LayoutNode, out map[string]bool) {
+	if node.Type == "leaf" && node.ID != "" {
+		out[node.ID] = true
+		return
+	}
+	for _, child := range node.Children {
+		collectLeafIDs(child, out)
+	}
+}
