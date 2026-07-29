@@ -255,24 +255,34 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      // ghostty-web renders into a <canvas> and handles wheel events on it
-      // (driving viewport scrolling for non-TUI apps and mouse-protocol
-      // sequences for TUIs). Dispatch the synthetic wheel to the canvas so
-      // ghostty-web's own wheel handler processes our fractional-line scroll.
-      const target = el.querySelector('canvas') || el
-      if (!target) return
+      // ghostty-web has no DOM scroll container — scrolling is programmatic
+      // via the Terminal's viewport API. Rather than synthesizing a WheelEvent
+      // (which is fragile and relies on ghostty-web's internal wheel handler
+      // reaching the right branch), drive the terminal directly:
+      //  - alt-screen (TUI): send up/down arrow-key input so the TUI scrolls
+      //    its own view (mirrors ghostty-web's handleWheel alt-screen branch).
+      //  - normal buffer (shell): call scrollLines to move the scrollback
+      //    viewport. Positive = scroll down, negative = scroll up.
+      void clientX
+      void clientY
       accumDelta += deltaY
       const wholeLines = Math.trunc(accumDelta)
       if (wholeLines === 0) return
       accumDelta -= wholeLines
-      target.dispatchEvent(new WheelEvent('wheel', {
-        deltaY: wholeLines,
-        deltaMode: WheelEvent.DOM_DELTA_LINE,
-        bubbles: true,
-        cancelable: true,
-        clientX,
-        clientY,
-      }))
+      const inst = getTerminal(terminalId)
+      if (!inst) return
+      const term = inst.term
+      try {
+        if (term.buffer.active.type === 'alternate') {
+          const dir = wholeLines > 0 ? '\x1B[B' : '\x1B[A'
+          const count = Math.min(Math.abs(wholeLines), 5)
+          if (inst.ws?.readyState === WebSocket.OPEN) {
+            inst.ws.send(JSON.stringify({ type: 'input', data: dir.repeat(count) }))
+          }
+        } else {
+          term.scrollLines(wholeLines)
+        }
+      } catch { /* ignore if not attached to DOM */ }
     }
 
     const beginGrace = () => {
@@ -318,15 +328,11 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     const onTouchMove = (e: TouchEvent) => {
       if (!active || e.touches.length !== 1) return
-      // Stop the event before ghostty-web's own touchmove listener (registered
-      // on the inner canvas element) runs in the bubble phase. The terminal's
-      // native touch handler scrolls the viewport in raw touch pixels, which
-      // fights our fractional-line wheel synthesis and, for normal-buffer
-      // shells with scrollback, clamps ydisp to a bound on the first drag —
-      // leaving subsequent drags doing nothing. Capturing the event on the
-      // outer container and stopping propagation makes our synthetic wheel the
-      // sole scroll authority for both alt-buffer TUIs (arrow-key / mouse
-      // protocol) and normal-buffer shells (viewport scrollback).
+      // Prevent the browser's native touch scrolling/zoom and stop the event
+      // from reaching ghostty-web's canvas touchend (focus) listener, so our
+      // programmatic scrollLines/arrow-key dispatch is the sole scroll
+      // authority for both alt-buffer TUIs (arrow-key / mouse protocol) and
+      // normal-buffer shells (viewport scrollback).
       e.preventDefault()
       e.stopPropagation()
       const t = e.touches[0]
