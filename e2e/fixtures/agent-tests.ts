@@ -118,7 +118,18 @@ async function acceptTrustDialog(page: Page): Promise<void> {
   // on first launch in a new directory. We detect it by checking the terminal
   // text for "trust" and accept by pressing the appropriate key.
   await page.waitForTimeout(5000)
-  const termText = await page.locator('.xterm-rows').textContent().catch(() => '')
+  // ghostty-web renders to a <canvas> (no .xterm-rows DOM), so read the
+  // buffer text from the debug terminal handle exposed in dev builds.
+  const termText = await page.evaluate(() => {
+    const t = (window as any).__cawTerm
+    if (!t) return ''
+    const lines: string[] = []
+    for (let i = 0; i < t.rows; i++) {
+      const line = t.buffer.active.getLine(i)
+      if (line) lines.push(line.translateToString(true))
+    }
+    return lines.join('\n')
+  }).catch(() => '')
   if (!termText) return
   const lower = termText.toLowerCase()
   if (lower.includes('trust this folder') || lower.includes('safety check')) {

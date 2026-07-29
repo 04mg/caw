@@ -12,8 +12,8 @@ import (
 )
 
 // syncModes are the DEC private modes whose current state must be re-applied
-// to a freshly-attached xterm.js client. When a TUI (e.g. OpenCode) enables
-// mouse tracking or bracketed paste, xterm.js stops handling clicks/wheel
+// to a freshly-attached the terminal client. When a TUI (e.g. OpenCode) enables
+// mouse tracking or bracketed paste, the terminal stops handling clicks/wheel
 // itself and forwards them to the app. A client that attaches after the
 // mode-setting sequences were emitted (or whose scrollback replay had a
 // sequence split by the 256KiB ring trim) ends up with the wrong mode state,
@@ -46,7 +46,7 @@ type connWriter struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
 
-	// Per-connection terminal dimensions reported by the viewer's xterm.js.
+	// Per-connection terminal dimensions reported by the viewer terminal.
 	// Used to compute the smallest viewer and per-viewer padding.
 	cols int
 	rows int
@@ -136,10 +136,10 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	source.rows = rows
 
 	// Single viewer — resize the PTY directly. The frontend already fit
-	// its local xterm.js to the new dimensions and sent us the size; we
+	// its local terminal to the new dimensions and sent us the size; we
 	// only need to drive the PTY. Echoing a resize back here would be
 	// redundant and can race with the user's next resize: a stale echo
-	// arriving after a further shrink/grow snaps xterm.js back to the old
+	// arriving after a further shrink/grow snaps the terminal back to the old
 	// size and reflows the buffer, corrupting scrollback. So, unlike the
 	// multi-viewer path, we do NOT broadcastResize here.
 	totalViewers := len(s.conns) + s.pendingResizes
@@ -250,13 +250,13 @@ func (s *Session) recomputeResize() {
 	s.broadcastResize(nil)
 }
 
-// broadcastResize tells each connected client how big its local xterm.js
+// broadcastResize tells each connected client how big its local terminal
 // grid should be, plus cell-based padding (padCols/padRows) so the grid is
 // centered within a panel that is larger than the PTY. The PTY is sized to
 // the smallest viewer, so every viewer renders the SAME PTY-sized grid:
 //   - the smallest viewer receives cols/rows == PTY size and zero padding;
 //   - larger viewers ALSO receive cols/rows == PTY size, plus positive
-//     padding so xterm.js renders the PTY-sized grid centered inside their
+//     padding so the terminal renders the PTY-sized grid centered inside their
 //     larger panel. No VirtualScreen upscaling is needed — raw PTY output
 //     is already at PTY dimensions and renders correctly at that size.
 //
@@ -310,7 +310,7 @@ func (s *Session) broadcastResize(extra *connWriter) {
 
 // stripAlternateScreen removes the alternate screen toggle sequences
 // (\x1b[?1049h and \x1b[?1049l) from the buffer, keeping only normal
-// screen output so scrollback replay works correctly in xterm.js.
+// screen output so scrollback replay works correctly in the terminal.
 func stripAlternateScreen(data []byte) []byte {
 	if !bytes.Contains(data, []byte("\x1b[?1049")) {
 		return data
@@ -384,7 +384,7 @@ func (s *Session) updateModes(data []byte) {
 // syncMessage builds a single escape sequence that re-applies every tracked
 // DEC private mode currently in the "set" state, e.g.
 // "\x1b[?1003;1006;2004h". Sent to a freshly-attached client right after the
-// scrollback replay so its xterm.js instance enters the same mouse/paste
+// scrollback replay so its terminal instance enters the same mouse/paste
 // mode the running TUI expects. Must be called with s.mu held.
 func (s *Session) syncMessage() string {
 	if len(s.modes) == 0 {

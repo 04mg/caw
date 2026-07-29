@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@xterm/xterm/css/xterm.css";
 
 @font-face {
   font-family: 'Host Grotesk';
@@ -132,45 +131,35 @@ html, body, #root {
   overflow: hidden;
 }
 
-.xterm {
+/* ==========================================================================
+   Terminal (ghostty-web) — canvas renderer overrides
+   ghostty-web renders the grid into a <canvas> and draws its own scrollbar
+   overlay, so there is no .xterm-viewport/.xterm-screen DOM to style. We
+   only need to ensure the canvas fills its container and the container
+   itself never shows a native scrollbar.
+   ========================================================================== */
+
+.terminal-container,
+.terminal-container canvas {
   height: 100%;
+  width: 100%;
+  display: block;
   touch-action: none;
-  border-bottom: none !important;
 }
 
-.xterm-keyboard-open .xterm,
-.xterm-keyboard-open .xterm-viewport,
-.xterm-keyboard-open .xterm-screen {
+.terminal-keyboard-open,
+.terminal-keyboard-open canvas {
   touch-action: auto !important;
   overflow: visible !important;
 }
 
-.xterm,
-.xterm-viewport,
-.xterm-screen,
-.xterm-screen canvas,
-.xterm-scrollable-element {
+.terminal-container {
   scrollbar-width: none !important;
 }
-.xterm::-webkit-scrollbar,
-.xterm-viewport::-webkit-scrollbar,
-.xterm-screen::-webkit-scrollbar,
-.xterm-scrollable-element::-webkit-scrollbar {
+.terminal-container::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
   display: none !important;
-}
-
-.xterm-viewport {
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
-  background-color: transparent !important;
-  touch-action: none;
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  width: 6px;
 }
 
 .thin-scroll::-webkit-scrollbar {
@@ -182,17 +171,6 @@ html, body, #root {
 .thin-scroll::-webkit-scrollbar-thumb {
   background: hsl(var(--border));
   border-radius: 2px;
-}
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 3px;
-}
-
-.xterm .xterm-scrollable-element > .scrollbar {
-  display: none !important;
 }
 
 *::-webkit-scrollbar {

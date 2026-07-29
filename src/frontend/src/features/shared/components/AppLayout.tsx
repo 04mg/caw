@@ -232,7 +232,7 @@ export function AppLayout() {
         for (const w of remote.workspaces) for (const t of w.layouts) for (const id of collectLeafIds(t.layout)) nextLeafIds.add(id)
         // A leaf disappearing from the shared workspace state usually means
         // another browser closed or reshaped a tab. Only release this
-        // client's local hold on the terminal (dispose xterm.js, drop the
+        // client's local hold on the terminal (dispose the terminal, drop the
         // WebSocket) — do NOT kill the shared backend PTY, since another
         // client may still be viewing it. Killing is the job of the client
         // that actually closed the pane (forceClosePane/Tab), which calls
@@ -567,7 +567,7 @@ export function AppLayout() {
   // pane the user was working in, not leave it parked on the toolbar button.
   // We blur the control-center button (so it doesn't keep an active focus
   // ring) and dispatch a focus request for the last active terminal pane,
-  // which TerminalPanel listens for and forwards to its xterm instance.
+  // which TerminalPanel listens for and forwards to its terminal instance.
   // The Kanban overlay plays a fade-out animation before unmounting; we keep
   // it mounted with a `closing` flag for the duration of that animation.
   const kanbanCloseTimer = useRef<number | null>(null)

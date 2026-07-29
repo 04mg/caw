@@ -223,8 +223,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       const open = shrunk > baseline * 0.18
       keyboardOpenRef.current = open
       if (el) {
-        if (open) el.classList.add('xterm-keyboard-open')
-        else el.classList.remove('xterm-keyboard-open')
+        if (open) el.classList.add('terminal-keyboard-open')
+        else el.classList.remove('terminal-keyboard-open')
       }
     }
     vv.addEventListener('resize', onResize)
@@ -232,7 +232,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     return () => {
       vv.removeEventListener('resize', onResize)
       vv.removeEventListener('scroll', onResize)
-      if (el) el.classList.remove('xterm-keyboard-open')
+      if (el) el.classList.remove('terminal-keyboard-open')
     }
   }, [])
 
@@ -255,14 +255,11 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let accumDelta = 0
 
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      // xterm.js v6 creates a .xterm-scrollable-element overlay (sibling of
-      // .xterm-viewport) whose wheel handler drives viewport scrolling for
-      // non-TUI apps. Dispatching to .xterm-viewport would bubble to .xterm
-      // but never pass through .xterm-scrollable-element, so the ScrollableElement
-      // never sees the event and nothing scrolls. TUI apps work regardless
-      // because bindMouse's handler on .xterm captures the event and sends
-      // mouse escape sequences.
-      const target = el.querySelector('.xterm-scrollable-element') || el.querySelector('.xterm-viewport') || el
+      // ghostty-web renders into a <canvas> and handles wheel events on it
+      // (driving viewport scrolling for non-TUI apps and mouse-protocol
+      // sequences for TUIs). Dispatch the synthetic wheel to the canvas so
+      // ghostty-web's own wheel handler processes our fractional-line scroll.
+      const target = el.querySelector('canvas') || el
       if (!target) return
       accumDelta += deltaY
       const wholeLines = Math.trunc(accumDelta)
@@ -321,15 +318,15 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     const onTouchMove = (e: TouchEvent) => {
       if (!active || e.touches.length !== 1) return
-      // Stop the event before xterm.js' own touchmove listener (registered on
-      // the inner .xterm element) runs in the bubble phase. xterm's
-      // handleTouchMove scrolls the viewport in raw touch pixels, which fights
-      // our fractional-line wheel synthesis and, for normal-buffer shells with
-      // scrollback, clamps ydisp to a bound on the first drag — leaving
-      // subsequent drags doing nothing. Capturing the event on the outer
-      // container and stopping propagation makes our synthetic wheel the sole
-      // scroll authority for both alt-buffer TUIs (arrow-key / mouse protocol)
-      // and normal-buffer shells (viewport scrollback).
+      // Stop the event before ghostty-web's own touchmove listener (registered
+      // on the inner canvas element) runs in the bubble phase. The terminal's
+      // native touch handler scrolls the viewport in raw touch pixels, which
+      // fights our fractional-line wheel synthesis and, for normal-buffer
+      // shells with scrollback, clamps ydisp to a bound on the first drag —
+      // leaving subsequent drags doing nothing. Capturing the event on the
+      // outer container and stopping propagation makes our synthetic wheel the
+      // sole scroll authority for both alt-buffer TUIs (arrow-key / mouse
+      // protocol) and normal-buffer shells (viewport scrollback).
       e.preventDefault()
       e.stopPropagation()
       const t = e.touches[0]
@@ -442,7 +439,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
-      <div ref={elRef} className="h-full w-full overflow-hidden" style={{ backgroundColor: getTerminalBackground() }} />
+      <div ref={elRef} className="terminal-container h-full w-full overflow-hidden" style={{ backgroundColor: getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button

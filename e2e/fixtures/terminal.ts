@@ -32,7 +32,7 @@ export async function launchTerminal(page: Page): Promise<void> {
 export async function focusTerminal(page: Page, terminalId: string): Promise<void> {
   const panel = page.getByTestId(`terminal-panel-${terminalId}`)
   await expect(panel).toBeVisible({ timeout: 10_000 })
-  const textarea = panel.locator('.xterm-helper-textarea')
+  const textarea = panel.locator('textarea[aria-label="Terminal input"]')
   await textarea.focus()
 }
 
