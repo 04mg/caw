@@ -71,6 +71,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let cancelled = false
     let inst: TerminalInstance | null = null
 
+    const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
+
     const flushResize = () => {
       fitTimerRef.current = null
       if (!inst) return
@@ -142,6 +144,25 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
           flushResize()
         })
       })
+
+      // Re-attach / page reload case: when reopening an agent (e.g. by
+      // reloading the page or returning from another workspace) the terminal
+      // container is mounted into a panel whose CSS transitions and flex
+      // sizing settle *after* the double-rAF above — sometimes only after
+      // several hundred milliseconds. The ResizeObserver fires while these
+      // are still animating, so proposeDimensions reads the in-between
+      // dimensions and the terminal only renders a partial grid with large
+      // empty/black areas until something else (toggling a sidebar, making
+      // the panel a touch wider) nudges a real resize. To make the terminal
+      // reliably fill its container on every reload, schedule a few
+      // staggered re-fits past the common transition durations. Each is
+      // cheap (a no-op if the dimensions haven't changed) and the last one
+      // catches the fully settled layout.
+      const FORCE_RESIZE_DELAYS_MS = [250, 500, 1000]
+      for (const delay of FORCE_RESIZE_DELAYS_MS) {
+        const t = setTimeout(() => { flushResize() }, delay)
+        forceResizeTimers.push(t)
+      }
     })()
 
     return () => {
@@ -155,6 +176,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
       }
+      for (const t of forceResizeTimers) clearTimeout(t)
+      forceResizeTimers.length = 0
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
       // Desktop buffers non-active terminals (detach keeps the WS open so
