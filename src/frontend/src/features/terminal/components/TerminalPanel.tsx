@@ -164,6 +164,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       // canvas), but doing it here first guarantees it happens synchronously in
       // the cleanup phase, before the new terminal's async open() runs.
       while (el.firstChild) el.removeChild(el.firstChild)
+      // Paint a solid placeholder that matches the terminal's background over
+      // the cleared container. The mobile GPU compositor can hold the
+      // previous terminal's last canvas frame for a frame or two after the DOM
+      // node is removed (showing it as a white-text "ghost"), and a plain empty
+      // div isn't always enough to overwrite that cached layer. A solid block
+      // of the theme background forces the compositor to repaint a clean blank.
+      const placeholder = document.createElement('div')
+      placeholder.style.position = 'absolute'
+      placeholder.style.inset = '0'
+      placeholder.style.background = getTerminalBackground()
+      el.appendChild(placeholder)
       // Desktop buffers non-active terminals (detach keeps the WS open so
       // re-attaching replays the local ring buffer instantly). Mobile
       // renders only the selected terminal, so switching terminals must
@@ -260,6 +271,11 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let rafId = 0
     let graceTimer: ReturnType<typeof setTimeout> | null = null
     let accumDelta = 0
+    // True once a touchmove actually scrolled (vs. a tap that goes straight to
+    // touchend). Used by touchend to decide whether to suppress the terminal's
+    // focus-on-tap behavior: a tap should still focus (open the keyboard), but
+    // ending a scroll should NOT yank focus / pop the keyboard.
+    let moved = false
 
     // SGR mouse wheel encoding: when a TUI enables mouse tracking (modes
     // 1000/1002/1003 + SGR 1006), wheel events must be sent as SGR mouse
@@ -298,8 +314,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       const term = inst.term
       if (!inst.ws || inst.ws.readyState !== WebSocket.OPEN) return
       try {
-        const mouseTracking = (inst._modes.get(1000) || inst._modes.get(1002) || inst._modes.get(1003)) && inst._modes.get(1006)
-        if (mouseTracking) {
+        // Query the terminal's own mode state (authoritative — kept in sync by
+        // the backend's mode-sync sequence on reconnect and by the live stream).
+        // Relying on inst._modes breaks after a mobile re-attach creates a fresh
+        // terminal: the client-tracked map is empty until the sync sequence is
+        // processed, while the terminal already knows its real mode state.
+        const mouseTracking = term.hasMouseTracking()
+        const sgr = term.getMode(1006)
+        if (mouseTracking && sgr) {
           const button = wholeLines > 0 ? 65 : 64
           const count = Math.min(Math.abs(wholeLines), 5)
           const seq = encodeSgrWheel(inst, button, clientX, clientY)
@@ -354,6 +376,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       velocity = 0
       accumDelta = 0
       active = true
+      moved = false
       setTerminalUserScrolling(terminalId, true)
     }
 
@@ -366,6 +389,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       // normal-buffer shells (viewport scrollback).
       e.preventDefault()
       e.stopPropagation()
+      moved = true
       const t = e.touches[0]
       const now = Date.now()
       const dy = lastY - t.clientY
@@ -377,9 +401,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       dispatchWheel(dy * LINES_PER_PX, t.clientX, t.clientY)
     }
 
-    const onTouchEnd = () => {
+    const onTouchEnd = (e: TouchEvent) => {
       if (!active) return
       active = false
+      // If this was a real scroll gesture (not a tap), stop the event so
+      // ghostty-web's canvas touchend listener (which focuses the input
+      // textarea and pops the mobile keyboard) doesn't fire. A plain tap with
+      // no movement should still focus — the user expects the keyboard on tap.
+      if (moved) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
       if (Math.abs(velocity) >= VELOCITY_THRESHOLD) {
         rafId = requestAnimationFrame(momentum)
       } else {
@@ -389,8 +421,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
     el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
-    el.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
+    el.addEventListener('touchend', onTouchEnd, { passive: false, capture: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: false, capture: true })
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId)
