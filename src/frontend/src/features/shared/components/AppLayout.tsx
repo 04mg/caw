@@ -7,6 +7,7 @@ import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
 import { KanbanBoard } from '@/features/kanban/components/KanbanBoard'
 import {
   type LayoutNode,
+  createEmpty,
   createLeaf,
   splitLeaf,
   removeLeaf,
@@ -1394,19 +1395,19 @@ export function AppLayout() {
         }
       } catch { /* fall back to raw path */ }
 
-      const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'terminal'
+      const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'none'
       const agent = agentTypes[defaultAgentId]
-      const cmd = agent && agent.id !== 'terminal' ? agent.cmd : undefined
-      const env = agent && agent.id !== 'terminal' ? agent.env : undefined
-      const layout = createLeaf(absPath, cmd, agent && agent.id !== 'terminal' ? agent.id : undefined, env)
+      const isNone = defaultAgentId === 'none'
+      const layout = isNone ? createEmpty() : createLeaf(absPath, agent && agent.id !== 'terminal' ? agent.cmd : undefined, agent && agent.id !== 'terminal' ? agent.id : undefined, agent && agent.id !== 'terminal' ? agent.env : undefined)
+      const tabName = isNone ? 'Workspace' : agent && agent.id !== 'terminal' ? agent.label : 'Terminal'
       const ws: Workspace = {
         id: crypto.randomUUID(),
         path: absPath,
         name: name || absPath.split(/[\\/]/).filter(Boolean).pop() || absPath || 'Workspace',
         emoji: emoji || undefined,
-        layouts: [{ id: crypto.randomUUID(), name: agent && agent.id !== 'terminal' ? agent.label : 'Terminal', layout }],
+        layouts: [{ id: crypto.randomUUID(), name: tabName, layout }],
         activeTabIndex: 0,
-        activePaneId: collectLeafIds(layout)[0],
+        activePaneId: collectLeafIds(layout)[0] || '',
         enableWorktrees: false,
       }
       setWorkspaces((prev) => [...prev, ws])
