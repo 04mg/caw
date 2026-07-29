@@ -17,7 +17,7 @@ test.describe('Settings dialog', () => {
   test('opens and shows all section buttons', async ({ page }) => {
     await waitForAppReady(page)
     await openSettings(page)
-    for (const section of ['appearance', 'notifications', 'workspaces', 'terminal', 'agents', 'limits']) {
+    for (const section of ['appearance', 'notifications', 'workspaces', 'terminal', 'voice', 'agents', 'limits', 'updates']) {
       await expect(page.getByTestId(`settings-section-${section}`)).toBeVisible()
     }
   })
