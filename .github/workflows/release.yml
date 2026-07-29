@@ -45,6 +45,8 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-darwin-amd64   ./cmd/caw/
           CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-darwin-arm64   ./cmd/caw/
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=${{ needs.tag.outputs.tag }}" -o caw-windows-amd64.exe ./cmd/caw/
+          tar czf caw-darwin-amd64.tar.gz caw-darwin-amd64
+          tar czf caw-darwin-arm64.tar.gz caw-darwin-arm64
 
       - uses: softprops/action-gh-release@v2
         with:
