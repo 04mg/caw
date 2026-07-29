@@ -294,7 +294,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     orKey: string,
   ) => {
     try {
-      await fetch('/api/quotas/settings', {
+      const res = await fetch('/api/quotas/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -307,6 +307,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           openrouter: { apiKey: orKey },
         }),
       })
+      if (!res.ok) {
+        console.error('Failed to save quota settings', res.status, await res.text().catch(() => ''))
+      }
     } catch (e) {
       console.error('Failed to save quota settings', e)
     }
