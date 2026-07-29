@@ -114,6 +114,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     window.addEventListener('focus', onVisibility)
 
     ;(async () => {
+      // Wait one paint frame before attaching the new terminal. The cleanup
+      // phase (which runs synchronously before this effect) strips the old
+      // canvas and paints a solid placeholder div in its place. Without this
+      // deferral, the async attachTerminal resolves before the browser paints
+      // a single frame — the placeholder is added and removed without ever
+      // reaching the GPU compositor, so the old terminal's last canvas frame
+      // ghosts through (visible as stale "white text") until the new canvas
+      // gets its first content paint. Waiting one rAF guarantees the browser
+      // composites the placeholder frame, replacing the stale GPU texture,
+      // before the new terminal's canvas is created.
+      await new Promise<void>((r) => requestAnimationFrame(() => r()))
       inst = await attachTerminal(terminalId, el, cwdRef.current, stableCmd, env)
       if (cancelled) return
 

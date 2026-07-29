@@ -515,6 +515,11 @@ function scheduleFlush(inst: TerminalInstance) {
     const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
     inst.term.write(combined, () => {
       safeScrollToBottom(inst)
+      // If this terminal has a pending reveal callback (set by the
+      // first-open branch of attachTerminal), fire it now so the
+      // container is un-hidden after the first content paint.
+      const reveal = (inst as any)._pendingReveal
+      if (reveal) reveal()
     })
     for (const ch of chunks) {
       inst.buffer.push(ch)
@@ -817,11 +822,31 @@ export async function attachTerminal(
   // Defensive-clear any lingering children (React reuses the container div
   // across tab switches; see the re-attach branch above).
   while (el.firstChild) el.removeChild(el.firstChild)
+  // Hide the container until the first content arrives. On mobile, a freshly
+  // opened terminal canvas is blank until the WS scrollback is written —
+  // showing it prematurely reads as a flash/ghost. The container's background
+  // already matches the terminal theme, so hiding just shows a clean blank.
+  const prevVisibility = el.style.visibility
+  el.style.visibility = 'hidden'
   term.open(el)
   fit.fit()
   exposeDebugTerm(term)
 
+  const reveal = () => { el.style.visibility = prevVisibility }
+  const revealSoon = () => requestAnimationFrame(() => requestAnimationFrame(reveal))
+  // Safety fallback: never leave the pane stuck invisible if no output arrives.
+  const revealTimer = setTimeout(reveal, 1000)
+
   const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false, _reconnectAttempts: 0 }
+  // Mark that this terminal should reveal itself once the first batch of
+  // output is rendered. scheduleFlush checks this flag after the initial
+  // rAF write completes and triggers the double-rAF reveal so the container
+  // is un-hidden only after content has been painted.
+  ;(inst as any)._pendingReveal = () => {
+    clearTimeout(revealTimer)
+    revealSoon()
+    delete (inst as any)._pendingReveal
+  }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -831,6 +856,8 @@ export async function attachTerminal(
     connectWs(inst, backendId)
   } catch (err) {
     console.error('terminal backend init failed:', err)
+    clearTimeout(revealTimer)
+    revealSoon()
   }
 
   notify()
