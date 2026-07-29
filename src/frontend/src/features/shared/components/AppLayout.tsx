@@ -417,6 +417,22 @@ export function AppLayout() {
     return unsub
   }, [currentWorkspacePath])
 
+  const patchWorkspace = useCallback(
+    (id: string, fn: (ws: Workspace) => Workspace) => {
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          if (w.id !== id) return w
+          const next = fn(w)
+          if (next.tabGroups) {
+            next.tabGroupsJson = JSON.stringify(next.tabGroups)
+          }
+          return next
+        }),
+      )
+    },
+    [],
+  )
+
   // Subscribe to file-tree events so we can close editor panes for deleted
   // files, matching VS Code behavior.
   useEffect(() => {
@@ -606,22 +622,6 @@ export function AppLayout() {
       window.removeEventListener('keydown', handleKeyDown, true)
     }
   }, [fetchGitStatus])
-
-  const patchWorkspace = useCallback(
-    (id: string, fn: (ws: Workspace) => Workspace) => {
-      setWorkspaces((prev) =>
-        prev.map((w) => {
-          if (w.id !== id) return w
-          const next = fn(w)
-          if (next.tabGroups) {
-            next.tabGroupsJson = JSON.stringify(next.tabGroups)
-          }
-          return next
-        }),
-      )
-    },
-    [],
-  )
 
   const navigateToAgent = useCallback(
     (workspaceId: string, tabIndex: number, paneId: string) => {
