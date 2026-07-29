@@ -23,27 +23,6 @@ function exposeDebugTerm(term: Terminal | null) {
   ;(globalThis as any).__cawTerm = term
 }
 
-// Clear the terminal's canvas to the theme background before disposing so the
-// mobile compositor doesn't briefly show stale text ("ghosting") when the old
-// pane is torn down and a new one mounts. ghostty-web's renderer.dispose() does
-// not clear the canvas, and term.dispose() removes the node from the DOM, but
-// on mobile the browser can hold the last painted frame in the compositor for a
-// frame or two. Pre-painting the background makes any lingering frame a clean
-// blank instead of frozen white text.
-function clearCanvasBeforeDispose(inst: TerminalInstance) {
-  try {
-    const canvas = inst.term.renderer?.getCanvas?.()
-    const bg = getTerminalBackground()
-    if (canvas) {
-      const ctx = canvas.getContext('2d')
-      if (ctx) {
-        ctx.fillStyle = bg
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-      }
-    }
-  } catch { /* ignore — best-effort clear */ }
-}
-
 export interface TerminalInstance {
   leafId: string
   term: Terminal
@@ -752,9 +731,27 @@ export async function attachTerminal(
     // the terminal, so fit.fit() computes correct cols/rows and the terminal
     // doesn't render garbled output that requires a manual resize.
     await waitForLayout(el)
+    // React reuses the container <div> across tab switches (the component
+    // stays in the same tree position, only the terminalId prop changes).
+    // Although detachTerminal disposes the previous term (which removes its
+    // canvas), defensive-clear any lingering children so a stale canvas from
+    // a prior terminal never ghosts through into the new one.
+    while (el.firstChild) el.removeChild(el.firstChild)
+    // Hide the container until the buffered scrollback has been written so
+    // the user never sees a blank/empty frame flash before the real content
+    // appears (which read as "ghosting" / "not cleared" on tab switch). The
+    // container's background already matches the terminal theme, so hiding
+    // just shows a clean blank instead of an empty terminal canvas.
+    const prevVisibility = el.style.visibility
+    el.style.visibility = 'hidden'
     term.open(el)
     fit.fit()
     exposeDebugTerm(term)
+
+    const reveal = () => { el.style.visibility = prevVisibility }
+    // Safety fallback: if the write callback never fires (e.g. the terminal is
+    // disposed mid-replay), never leave the pane stuck invisible.
+    const revealTimer = setTimeout(reveal, 1000)
 
     // Re-wire input handlers since the old term was disposed.
     wireInput(existing)
@@ -774,12 +771,17 @@ export async function attachTerminal(
           const sync = syncModes(existing)
           if (sync) term.write(sync)
           flushPending(existing)
+          // Reveal on the next frame so the just-written content has rendered.
+          clearTimeout(revealTimer)
+          requestAnimationFrame(reveal)
         })
       } else {
         existing._replaying = false
         const sync = syncModes(existing)
         if (sync) term.write(sync)
         flushPending(existing)
+        clearTimeout(revealTimer)
+        requestAnimationFrame(reveal)
       }
 
       // Send a resize for the new dimensions.
@@ -794,6 +796,11 @@ export async function attachTerminal(
       if (!existing.exited && existing.backendId) {
         connectWs(existing, existing.backendId)
       }
+      // No local buffer to replay; reveal once the WS scrollback lands (the
+      // backend replays on connect) or after the safety fallback so the pane
+      // doesn't stay invisible if the backend is unreachable.
+      clearTimeout(revealTimer)
+      requestAnimationFrame(() => setTimeout(reveal, 100))
     }
 
     return existing
@@ -804,6 +811,9 @@ export async function attachTerminal(
   // the terminal, so fit.fit() computes correct cols/rows and the terminal
   // doesn't render garbled output that requires a manual resize.
   await waitForLayout(el)
+  // Defensive-clear any lingering children (React reuses the container div
+  // across tab switches; see the re-attach branch above).
+  while (el.firstChild) el.removeChild(el.firstChild)
   term.open(el)
   fit.fit()
   exposeDebugTerm(term)
@@ -847,7 +857,6 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   if (!inst) return
   cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
-  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   exposeDebugTerm(null)
@@ -869,7 +878,6 @@ export function detachTerminal(leafId: string) {
   // backend. Closing the WS here is what caused the "reload on every tab
   // switch" regression the ring buffer was meant to prevent.
   inst._detached = true
-  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   exposeDebugTerm(null)
 }
@@ -891,7 +899,6 @@ export function releaseTerminal(leafId: string) {
   // model). A later attachTerminal call clears this flag and reconnects.
   inst._released = true
   try { inst.ws?.close() } catch { /* ignore */ }
-  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   exposeDebugTerm(null)
