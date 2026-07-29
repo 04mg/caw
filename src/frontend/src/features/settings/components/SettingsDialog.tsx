@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2 } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -72,7 +72,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [claudeInstalled, setClaudeInstalled] = useState(true)
   const [codexInstalled, setCodexInstalled] = useState(true)
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
-  const [defaultNewAgent, setDefaultNewAgent] = useState('terminal')
+  const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -196,7 +196,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05'))
       setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
 
-      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
+      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'none')
 
       fetch('/api/agents')
         .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
@@ -1048,9 +1048,24 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
 
               <div className="flex flex-col gap-2 mt-2">
-                <label className="text-xs font-medium">Default Agent / Terminal</label>
+                <label className="text-xs font-medium">On Workspace Created</label>
                 <p className="text-[10px] text-muted-foreground">Choose what gets launched as the first tab when a new workspace is created.</p>
                 <div className="flex flex-col gap-1.5 mt-1">
+                  <button
+                    onClick={() => {
+                      setDefaultNewAgent('none')
+                      localStorage.setItem('caw:defaultNewAgent', 'none')
+                    }}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                      defaultNewAgent === 'none'
+                        ? 'border-primary ring-1 ring-ring bg-primary/10'
+                        : 'border-border hover:bg-accent/20'
+                    }`}
+                  >
+                    <Minus className="h-4 w-4" />
+                    <span className="flex-1 text-left">Do nothing</span>
+                    {defaultNewAgent === 'none' && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
                   <button
                     onClick={() => {
                       setDefaultNewAgent('terminal')
