@@ -40,6 +40,8 @@ import { Checkbox } from '@/components/checkbox'
 import { TerminalPanel } from '@/features/terminal/components/TerminalPanel'
 import { EditorPanel } from '@/features/editor/components/EditorPanel'
 import { isFileDirty, discardFileEdits, saveFileFromCache } from '@/features/editor/services/editorDirtyStore'
+import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
+import { normalizePath, pathsEqual } from '@/features/shared/utils/path'
 import { MobileControlBar } from '@/features/terminal/components/MobileControlBar'
 import { NewTabMenu } from '@/features/workspaces/components/NewTabMenu'
 
@@ -413,6 +415,105 @@ export function AppLayout() {
     const unsub = subscribeToGitStatus(currentWorkspacePath, handle)
     return unsub
   }, [currentWorkspacePath])
+
+  // Subscribe to file-tree events so we can close editor panes for deleted
+  // files, matching VS Code behavior.
+  useEffect(() => {
+    if (!activeWorkspace) return
+    const cwd = activeWorkspace.path
+    if (!cwd) return
+
+    const unsub = subscribeToFileTree(cwd, (event: FileTreeEvent) => {
+      if (event.type !== 'file-deleted') return
+      const isDir = event.isDir ?? false
+      const wsId = activeWorkspace.id
+
+      patchWorkspace(wsId, (ws) => {
+        const panesToRemove: { tabIndex: number; paneId: string }[] = []
+
+        ws.layouts.forEach((tab, ti) => {
+          const walk = (node: LayoutNode) => {
+            if (node.type === 'leaf' && node.filePath) {
+              if (isDir) {
+                const dirPrefix = normalizePath(event.path) + '/'
+                if (normalizePath(node.filePath).startsWith(dirPrefix)) {
+                  panesToRemove.push({ tabIndex: ti, paneId: node.id })
+                }
+              } else if (pathsEqual(node.filePath, event.path)) {
+                panesToRemove.push({ tabIndex: ti, paneId: node.id })
+              }
+            } else if (node.type === 'split') {
+              node.children.forEach(walk)
+            }
+          }
+          walk(tab.layout)
+        })
+
+        if (panesToRemove.length === 0) return ws
+
+        // Destroy terminals for the removed panes (noop for editor panes)
+        for (const { paneId } of panesToRemove) {
+          destroyTerminal(paneId)
+        }
+
+        let newLayouts = ws.layouts.map((t) => ({ ...t }))
+        let newActivePaneId = ws.activePaneId
+
+        for (const { tabIndex, paneId } of panesToRemove) {
+          const tab = newLayouts[tabIndex]
+          if (!tab) continue
+          newLayouts[tabIndex] = { ...tab, layout: removeLeaf(tab.layout, paneId) }
+          if (paneId === newActivePaneId) {
+            newActivePaneId = ''
+          }
+        }
+
+        // Remove empty tabs
+        const removedTabIds = new Set<string>()
+        newLayouts = newLayouts.filter((tab) => {
+          const empty = tab.layout.type === 'empty' || collectLeafIds(tab.layout).length === 0
+          if (empty) removedTabIds.add(tab.id)
+          return !empty
+        })
+
+        if (newLayouts.length === 0) {
+          return {
+            ...ws,
+            layouts: [],
+            tabGroups: undefined,
+            activeTabIndex: 0,
+            activePaneId: '',
+          }
+        }
+
+        // Update tabGroups to reflect removed tabs
+        let tabGroups = ws.tabGroups
+        if (tabGroups && removedTabIds.size > 0) {
+          const tabIds = newLayouts.map((l) => l.id)
+          for (const id of removedTabIds) {
+            tabGroups = removeTabFromTree(tabGroups, id, tabIds)
+          }
+        }
+
+        // Pick a new active pane if the old one was removed
+        let newActiveTabIndex = ws.activeTabIndex
+        if (!newActivePaneId || !collectLeafIds(newLayouts[newActiveTabIndex]?.layout ?? { type: 'empty' }).includes(newActivePaneId)) {
+          newActiveTabIndex = 0
+          newActivePaneId = collectLeafIds(newLayouts[0]?.layout ?? { type: 'empty' })[0] ?? ''
+        }
+
+        return {
+          ...ws,
+          layouts: newLayouts,
+          tabGroups: tabGroups as TabGroupsNode | undefined,
+          activeTabIndex: newActiveTabIndex,
+          activePaneId: newActivePaneId,
+        }
+      })
+    })
+
+    return unsub
+  }, [activeWorkspace, patchWorkspace])
 
 
   const toggleFolderSidebar = useCallback(() => {
