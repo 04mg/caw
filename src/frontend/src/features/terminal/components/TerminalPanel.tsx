@@ -157,6 +157,13 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       }
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
+      // Immediately strip the terminal's canvas/textarea from the DOM so the
+      // previous terminal's last-rendered frame can't ghost through the React
+      // commit when the container <div> is reused for the next tab's terminal.
+      // detachTerminal/releaseTerminal also dispose the term (which removes the
+      // canvas), but doing it here first guarantees it happens synchronously in
+      // the cleanup phase, before the new terminal's async open() runs.
+      while (el.firstChild) el.removeChild(el.firstChild)
       // Desktop buffers non-active terminals (detach keeps the WS open so
       // re-attaching replays the local ring buffer instantly). Mobile
       // renders only the selected terminal, so switching terminals must
@@ -254,17 +261,34 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let graceTimer: ReturnType<typeof setTimeout> | null = null
     let accumDelta = 0
 
+    // SGR mouse wheel encoding: when a TUI enables mouse tracking (modes
+    // 1000/1002/1003 + SGR 1006), wheel events must be sent as SGR mouse
+    // escape sequences (ESC[<button;col;row M/m), NOT arrow keys — a TUI like
+    // OpenCode interprets arrow keys as chat-history navigation, while SGR
+    // wheel sequences scroll its own viewport. ghostty-web's handleWheel only
+    // sends arrow keys for alt-screen, so we encode SGR mouse ourselves when
+    // mouse tracking is active. Wheel button codes: 64 = up, 65 = down.
+    const encodeSgrWheel = (inst: TerminalInstance, button: number, clientX: number, clientY: number) => {
+      const canvas = inst.term.renderer?.getCanvas?.()
+      if (!canvas) return null
+      const rect = canvas.getBoundingClientRect()
+      const cw = inst.term.renderer?.charWidth
+      const ch = inst.term.renderer?.charHeight
+      if (!cw || !ch || cw <= 0 || ch <= 0) return null
+      const col = Math.max(1, Math.min(inst.term.cols, Math.floor((clientX - rect.left) / cw) + 1))
+      const row = Math.max(1, Math.min(inst.term.rows, Math.floor((clientY - rect.top) / ch) + 1))
+      // SGR mouse: ESC[<button;col;row M (press) then m (release) for a wheel
+      // tick. Some TUIs want the release; sending both is safest.
+      return `\x1b[<${button};${col};${row}M\x1b[<${button};${col};${row}m`
+    }
+
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
       // ghostty-web has no DOM scroll container — scrolling is programmatic
-      // via the Terminal's viewport API. Rather than synthesizing a WheelEvent
-      // (which is fragile and relies on ghostty-web's internal wheel handler
-      // reaching the right branch), drive the terminal directly:
-      //  - alt-screen (TUI): send up/down arrow-key input so the TUI scrolls
-      //    its own view (mirrors ghostty-web's handleWheel alt-screen branch).
-      //  - normal buffer (shell): call scrollLines to move the scrollback
-      //    viewport. Positive = scroll down, negative = scroll up.
-      void clientX
-      void clientY
+      // via the Terminal's viewport API. Drive the terminal directly:
+      //  - mouse tracking active (TUI like OpenCode): encode SGR mouse wheel
+      //    sequences so the TUI scrolls its own viewport.
+      //  - alt-screen without mouse tracking: send up/down arrow keys.
+      //  - normal buffer (shell): call scrollLines to move the scrollback.
       accumDelta += deltaY
       const wholeLines = Math.trunc(accumDelta)
       if (wholeLines === 0) return
@@ -272,13 +296,20 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       const inst = getTerminal(terminalId)
       if (!inst) return
       const term = inst.term
+      if (!inst.ws || inst.ws.readyState !== WebSocket.OPEN) return
       try {
+        const mouseTracking = (inst._modes.get(1000) || inst._modes.get(1002) || inst._modes.get(1003)) && inst._modes.get(1006)
+        if (mouseTracking) {
+          const button = wholeLines > 0 ? 65 : 64
+          const count = Math.min(Math.abs(wholeLines), 5)
+          const seq = encodeSgrWheel(inst, button, clientX, clientY)
+          if (seq) inst.ws.send(JSON.stringify({ type: 'input', data: seq.repeat(count) }))
+          return
+        }
         if (term.buffer.active.type === 'alternate') {
           const dir = wholeLines > 0 ? '\x1B[B' : '\x1B[A'
           const count = Math.min(Math.abs(wholeLines), 5)
-          if (inst.ws?.readyState === WebSocket.OPEN) {
-            inst.ws.send(JSON.stringify({ type: 'input', data: dir.repeat(count) }))
-          }
+          inst.ws.send(JSON.stringify({ type: 'input', data: dir.repeat(count) }))
         } else {
           term.scrollLines(wholeLines)
         }

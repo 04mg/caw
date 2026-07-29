@@ -749,9 +749,13 @@ export async function attachTerminal(
     exposeDebugTerm(term)
 
     const reveal = () => { el.style.visibility = prevVisibility }
+    // Reveal after two animation frames so the replayed content has been
+    // written AND painted (write() fires its callback via rAF, then the
+    // render loop paints on the next rAF).
+    const revealSoon = () => requestAnimationFrame(() => requestAnimationFrame(reveal))
     // Safety fallback: if the write callback never fires (e.g. the terminal is
     // disposed mid-replay), never leave the pane stuck invisible.
-    const revealTimer = setTimeout(reveal, 1000)
+    const revealTimer = setTimeout(reveal, 500)
 
     // Re-wire input handlers since the old term was disposed.
     wireInput(existing)
@@ -771,9 +775,8 @@ export async function attachTerminal(
           const sync = syncModes(existing)
           if (sync) term.write(sync)
           flushPending(existing)
-          // Reveal on the next frame so the just-written content has rendered.
           clearTimeout(revealTimer)
-          requestAnimationFrame(reveal)
+          revealSoon()
         })
       } else {
         existing._replaying = false
@@ -781,7 +784,7 @@ export async function attachTerminal(
         if (sync) term.write(sync)
         flushPending(existing)
         clearTimeout(revealTimer)
-        requestAnimationFrame(reveal)
+        revealSoon()
       }
 
       // Send a resize for the new dimensions.
@@ -800,7 +803,7 @@ export async function attachTerminal(
       // backend replays on connect) or after the safety fallback so the pane
       // doesn't stay invisible if the backend is unreachable.
       clearTimeout(revealTimer)
-      requestAnimationFrame(() => setTimeout(reveal, 100))
+      revealSoon()
     }
 
     return existing
