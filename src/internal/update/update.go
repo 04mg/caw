@@ -1,6 +1,8 @@
 package update
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type githubRelease struct {
@@ -34,10 +37,10 @@ func getAssetName() (string, error) {
 		}
 	case "darwin":
 		if archName == "amd64" {
-			return "caw-darwin-amd64", nil
+			return "caw-darwin-amd64.tar.gz", nil
 		}
 		if archName == "arm64" {
-			return "caw-darwin-arm64", nil
+			return "caw-darwin-arm64.tar.gz", nil
 		}
 	case "windows":
 		if archName == "amd64" {
@@ -141,9 +144,44 @@ func Run(currentVersion string) error {
 		}
 	}()
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("failed to write binary to temp file: %w", err)
+	if strings.HasSuffix(assetName, ".tar.gz") {
+		gr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		tr := tar.NewReader(gr)
+		var extracted bool
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				gr.Close()
+				tmpFile.Close()
+				return fmt.Errorf("failed to read tar archive: %w", err)
+			}
+			if hdr.Typeflag == tar.TypeReg {
+				if _, err := io.Copy(tmpFile, tr); err != nil {
+					gr.Close()
+					tmpFile.Close()
+					return fmt.Errorf("failed to extract binary from archive: %w", err)
+				}
+				extracted = true
+				break
+			}
+		}
+		gr.Close()
+		if !extracted {
+			tmpFile.Close()
+			return fmt.Errorf("no binary found in release archive")
+		}
+	} else {
+		if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write binary to temp file: %w", err)
+		}
 	}
 
 	if err := tmpFile.Sync(); err != nil {
