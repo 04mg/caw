@@ -13,6 +13,30 @@ function ensureInit(): Promise<void> {
   return initPromise ??= init()
 }
 
+// Wait for the terminal font to be loaded so the renderer's measureFont()
+// gets accurate metrics. ghostty-web measures the font synchronously in
+// the renderer constructor (via canvas 2d measureText("M")). If the web
+// font hasn't loaded yet, it measures the fallback font — but then renders
+// with the real font once it loads, causing character misalignment, odd
+// spacing, and sub-pixel gaps (black lines). font-display: swap means the
+// browser may not have loaded the woff2 yet when term.open() runs.
+let fontReadyPromise: Promise<void> | null = null
+function ensureFontReady(): Promise<void> {
+  if (fontReadyPromise) return fontReadyPromise
+  if (!('fonts' in document)) {
+    fontReadyPromise = Promise.resolve()
+    return fontReadyPromise
+  }
+  fontReadyPromise = (document as any).fonts.ready.then(() => {
+    // Also explicitly load the specific font face used by the terminal,
+    // since fonts.ready resolves when ALL pending fonts are loaded, but
+    // the terminal font might not have been requested yet (no DOM element
+    // uses it before the canvas is created).
+    return (document as any).fonts.load(`${13}px 'JetBrainsMono Nerd Font'`).then(() => {})
+  }).catch(() => { /* ignore font load errors */ })
+  return fontReadyPromise as Promise<void>
+}
+
 // In development / test builds, expose the most recently attached terminal
 // instance on window so Playwright e2e tests can read the canvas-rendered
 // buffer text via term.buffer.active.getLine(i).translateToString() (there
@@ -452,6 +476,79 @@ function wireInput(inst: TerminalInstance) {
       inst.ws.send(JSON.stringify({ type: 'input', data: finalData }))
     }
   })
+
+  // Mouse tracking: ghostty-web's InputHandler only handles keyboard events
+  // — it does NOT encode mouse clicks as escape sequences to the PTY. When a
+  // TUI enables mouse tracking (modes 1000/1002/1003), click events must be
+  // encoded and sent so TUI apps (OpenCode, vim, htop) receive them. We
+  // attach capture-phase mousedown/mouseup listeners on the terminal element
+  // that check the terminal's mode state and encode the click as SGR (1006)
+  // or legacy mouse sequences.
+  const el = inst.term.element
+  if (el) {
+    const encodeMouseEvent = (e: MouseEvent, press: boolean): string | null => {
+      try {
+        if (!inst.term.hasMouseTracking()) return null
+        const canvas = inst.term.renderer?.getCanvas?.()
+        if (!canvas) return null
+        const rect = canvas.getBoundingClientRect()
+        const cw = inst.term.renderer?.charWidth
+        const ch = inst.term.renderer?.charHeight
+        if (!cw || !ch || cw <= 0 || ch <= 0) return null
+        const col = Math.max(1, Math.min(inst.term.cols, Math.floor((e.clientX - rect.left) / cw) + 1))
+        const row = Math.max(1, Math.min(inst.term.rows, Math.floor((e.clientY - rect.top) / ch) + 1))
+        // Button encoding: 0=left, 1=middle, 2=right, 3=release(legacy)
+        const button = e.button === 0 ? 0 : e.button === 1 ? 1 : e.button === 2 ? 2 : 0
+        // Modifier encoding: bit 0=shift(4), bit 1=meta(8), bit 2=ctrl(16)
+        const mods = (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0) | (e.ctrlKey ? 16 : 0)
+        const sgr = inst.term.getMode(1006)
+        if (sgr) {
+          // SGR mouse format: ESC[<button;col;row M (press) or m (release)
+          const code = button + mods
+          return `\x1b[<${code};${col};${row}${press ? 'M' : 'm'}`
+        }
+        // Legacy X10/X11 mouse: button+mods+32, then col+32, then row+32
+        // Only send on press (legacy mode doesn't distinguish release well)
+        if (press) {
+          const b = Math.min(255, button + mods + 32)
+          return `\x1b[M${String.fromCharCode(b)}${String.fromCharCode(Math.min(255, col + 31))}${String.fromCharCode(Math.min(255, row + 31))}`
+        }
+        // For legacy mode release (button 3)
+        const b = Math.min(255, 3 + mods + 32)
+        return `\x1b[M${String.fromCharCode(b)}${String.fromCharCode(Math.min(255, col + 31))}${String.fromCharCode(Math.min(255, row + 31))}`
+      } catch {
+        return null
+      }
+    }
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button > 2) return
+      const seq = encodeMouseEvent(e, true)
+      if (seq && inst.ws?.readyState === WebSocket.OPEN) {
+        inst.ws.send(JSON.stringify({ type: 'input', data: seq }))
+        // Prevent the SelectionManager from starting a text selection when
+        // the TUI is handling the click itself.
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button > 2) return
+      const seq = encodeMouseEvent(e, false)
+      if (seq && inst.ws?.readyState === WebSocket.OPEN) {
+        inst.ws.send(JSON.stringify({ type: 'input', data: seq }))
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    el.addEventListener('mousedown', onMouseDown, true)
+    el.addEventListener('mouseup', onMouseUp, true)
+    // Store cleanup on the instance so releaseTerminal/detachTerminal can
+    // remove them when the terminal is disposed.
+    ;(inst as any)._mouseCleanup = () => {
+      el.removeEventListener('mousedown', onMouseDown, true)
+      el.removeEventListener('mouseup', onMouseUp, true)
+    }
+  }
 }
 
 // DEC private modes whose state must be re-applied to a re-attached
@@ -717,6 +814,10 @@ export async function attachTerminal(
   // constructed. init() is idempotent; ensureInit memoizes the promise so all
   // concurrent attaches share a single load.
   await ensureInit()
+  // Ensure the terminal font is loaded before the renderer measures it.
+  // Without this, measureFont() uses fallback metrics and the canvas has
+  // misaligned text and sub-pixel gaps.
+  await ensureFontReady()
   const existing = registry.get(leafId)
   if (existing) {
     // Recreate the terminal instance bound to the new DOM element, while
@@ -747,13 +848,14 @@ export async function attachTerminal(
     // appears (which read as "ghosting" / "not cleared" on tab switch). The
     // container's background already matches the terminal theme, so hiding
     // just shows a clean blank instead of an empty terminal canvas.
-    const prevVisibility = el.style.visibility
+    // Note: the TerminalPanel cleanup may have already set visibility:hidden;
+    // we keep it hidden and reveal only after content is painted.
     el.style.visibility = 'hidden'
     term.open(el)
     fit.fit()
     exposeDebugTerm(term)
 
-    const reveal = () => { el.style.visibility = prevVisibility }
+    const reveal = () => { el.style.visibility = '' }
     // Reveal after two animation frames so the replayed content has been
     // written AND painted (write() fires its callback via rAF, then the
     // render loop paints on the next rAF).
@@ -826,13 +928,12 @@ export async function attachTerminal(
   // opened terminal canvas is blank until the WS scrollback is written —
   // showing it prematurely reads as a flash/ghost. The container's background
   // already matches the terminal theme, so hiding just shows a clean blank.
-  const prevVisibility = el.style.visibility
   el.style.visibility = 'hidden'
   term.open(el)
   fit.fit()
   exposeDebugTerm(term)
 
-  const reveal = () => { el.style.visibility = prevVisibility }
+  const reveal = () => { el.style.visibility = '' }
   const revealSoon = () => requestAnimationFrame(() => requestAnimationFrame(reveal))
   // Safety fallback: never leave the pane stuck invisible if no output arrives.
   const revealTimer = setTimeout(reveal, 1000)
@@ -882,10 +983,18 @@ export function setAllTerminalThemes(theme: 'dark' | 'light') {
   localStorage.setItem('caw:terminalTheme', theme)
 }
 
+// Remove mouse tracking listeners and any other per-instance DOM listeners
+// added by wireInput. Called from all disposal paths (destroy/detach/release).
+function cleanupInstanceListeners(inst: TerminalInstance) {
+  const cleanup = (inst as any)._mouseCleanup
+  if (cleanup) { cleanup(); delete (inst as any)._mouseCleanup }
+}
+
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  cleanupInstanceListeners(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
@@ -908,6 +1017,7 @@ export function detachTerminal(leafId: string) {
   // backend. Closing the WS here is what caused the "reload on every tab
   // switch" regression the ring buffer was meant to prevent.
   inst._detached = true
+  cleanupInstanceListeners(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   exposeDebugTerm(null)
 }
@@ -928,6 +1038,7 @@ export function releaseTerminal(leafId: string) {
   // and re-pin the backend PTY (used by the mobile single-active-terminal
   // model). A later attachTerminal call clears this flag and reconnects.
   inst._released = true
+  cleanupInstanceListeners(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)

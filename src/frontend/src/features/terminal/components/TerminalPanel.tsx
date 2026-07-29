@@ -175,12 +175,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       // canvas), but doing it here first guarantees it happens synchronously in
       // the cleanup phase, before the new terminal's async open() runs.
       while (el.firstChild) el.removeChild(el.firstChild)
+      // Hide the container immediately in the cleanup phase — before the
+      // browser composites the next frame. The new terminal's attachTerminal
+      // will un-hide it once content has been written and painted. Combined
+      // with the rAF deferral in the effect body, this guarantees no stale
+      // GPU texture from the previous terminal's canvas can ghost through:
+      // the container is invisible for at least one full composite cycle.
+      el.style.visibility = 'hidden'
       // Paint a solid placeholder that matches the terminal's background over
-      // the cleared container. The mobile GPU compositor can hold the
-      // previous terminal's last canvas frame for a frame or two after the DOM
-      // node is removed (showing it as a white-text "ghost"), and a plain empty
-      // div isn't always enough to overwrite that cached layer. A solid block
-      // of the theme background forces the compositor to repaint a clean blank.
+      // the cleared container. Even though the container is hidden, this
+      // gives the GPU compositor a solid layer to composite (instead of a
+      // transparent hole) when visibility is restored.
       const placeholder = document.createElement('div')
       placeholder.style.position = 'absolute'
       placeholder.style.inset = '0'

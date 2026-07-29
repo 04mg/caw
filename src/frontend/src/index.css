@@ -139,12 +139,20 @@ html, body, #root {
    itself never shows a native scrollbar.
    ========================================================================== */
 
-.terminal-container,
-.terminal-container canvas {
-  height: 100%;
-  width: 100%;
+.terminal-container {
   display: block;
   touch-action: none;
+  scrollbar-width: none !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-container canvas {
+  display: block;
+  touch-action: none;
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .terminal-keyboard-open,
