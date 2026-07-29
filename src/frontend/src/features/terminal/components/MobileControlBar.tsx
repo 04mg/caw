@@ -130,6 +130,12 @@ export function MobileControlBar({ terminalId }: MobileControlBarProps) {
         <Button variant="outline" className="h-7 px-2 text-xs text-foreground font-semibold border-border/30 bg-background/50" onClick={() => triggerKey('\t')}>
           TAB
         </Button>
+        <Button variant="outline" className="h-7 px-2 text-xs text-foreground font-semibold border-border/30 bg-background/50" onClick={() => triggerKey('\x1b[H')}>
+          HOME
+        </Button>
+        <Button variant="outline" className="h-7 px-2 text-xs text-foreground font-semibold border-border/30 bg-background/50" onClick={() => triggerKey('\x1b[F')}>
+          END
+        </Button>
       </div>
 
       {/* Common TUI shortcuts */}
