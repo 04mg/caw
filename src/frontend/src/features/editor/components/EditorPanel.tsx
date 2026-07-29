@@ -241,8 +241,13 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
         originalContentRef.current = text
         clearFileDirty(filePath)
         const model = getLiveModel()
-        if (model) model.setValue(text)
-        if (editorRef.current) editorRef.current.setValue(text)
+        if (model) {
+          const currentValue = model.getValue()
+          if (currentValue !== text) {
+            const fullRange = model.getFullModelRange()
+            model.applyEdits([{ range: fullRange, text, forceMoveMarkers: true }])
+          }
+        }
       }
     } catch { /* ignore */ }
   }, [filePath, isDiff, getLiveModel])
@@ -289,6 +294,13 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
       // and survives across tab switches).
       const model = getLiveModel()
       const bodyContent = model ? model.getValue() : editedContent
+
+      // Set optimistic timestamp BEFORE the request so that the WS echo of our
+      // own save (EmitEvent → file-modified) is reliably suppressed by the 500
+      // ms guard in the file-modified listener. Without this, the WS broadcast
+      // can arrive before the HTTP response, bypassing the guard and triggering
+      // silentReload which clears the undo stack.
+      lastSavedAtRef.current = Date.now()
 
       const res = await fetch('/api/workspaces/files', {
         method: 'PUT',
