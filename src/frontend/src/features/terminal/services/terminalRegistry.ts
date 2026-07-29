@@ -23,6 +23,27 @@ function exposeDebugTerm(term: Terminal | null) {
   ;(globalThis as any).__cawTerm = term
 }
 
+// Clear the terminal's canvas to the theme background before disposing so the
+// mobile compositor doesn't briefly show stale text ("ghosting") when the old
+// pane is torn down and a new one mounts. ghostty-web's renderer.dispose() does
+// not clear the canvas, and term.dispose() removes the node from the DOM, but
+// on mobile the browser can hold the last painted frame in the compositor for a
+// frame or two. Pre-painting the background makes any lingering frame a clean
+// blank instead of frozen white text.
+function clearCanvasBeforeDispose(inst: TerminalInstance) {
+  try {
+    const canvas = inst.term.renderer?.getCanvas?.()
+    const bg = getTerminalBackground()
+    if (canvas) {
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.fillStyle = bg
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+      }
+    }
+  } catch { /* ignore — best-effort clear */ }
+}
+
 export interface TerminalInstance {
   leafId: string
   term: Terminal
@@ -210,6 +231,37 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
+  // ghostty-web's FitAddon subtracts a fixed 15px scrollbar width from the
+  // available terminal width (mirroring xterm.js' behavior). Since ghostty-web
+  // draws its scrollbar as a canvas overlay — there is no DOM scrollbar
+  // occupying that space — reserving 15px leaves an unrendered black strip on
+  // the right side of the terminal. The canvas is then sized to exactly
+  // cellWidth*cols × cellHeight*rows, so any fractional remainder (plus the
+  // 15px) shows the container background as black bars on the right/bottom.
+  // Patch proposeDimensions to drop the scrollbar subtraction and recompute
+  // both cols and rows against the full container box so the terminal fills
+  // its container completely.
+  const originalProposeDimensions = fit.proposeDimensions.bind(fit)
+  fit.proposeDimensions = () => {
+    const dims = originalProposeDimensions()
+    if (!dims) return dims
+    const el = term.element
+    const metrics = term.renderer?.getMetrics()
+    if (!el || !metrics || metrics.width <= 0 || metrics.height <= 0) return dims
+    const style = window.getComputedStyle(el)
+    const padL = parseInt(style.getPropertyValue('padding-left')) || 0
+    const padR = parseInt(style.getPropertyValue('padding-right')) || 0
+    const padT = parseInt(style.getPropertyValue('padding-top')) || 0
+    const padB = parseInt(style.getPropertyValue('padding-bottom')) || 0
+    const availW = Math.max(0, el.clientWidth - padL - padR)
+    const availH = Math.max(0, el.clientHeight - padT - padB)
+    const cols = Math.max(2, Math.floor(availW / metrics.width))
+    const rows = Math.max(1, Math.floor(availH / metrics.height))
+    if (cols > dims.cols || rows > dims.rows) {
+      return { cols: Math.max(dims.cols, cols), rows: Math.max(dims.rows, rows) }
+    }
+    return dims
+  }
 
   return { term, fit }
 }
@@ -795,6 +847,7 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   if (!inst) return
   cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
+  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   exposeDebugTerm(null)
@@ -816,6 +869,7 @@ export function detachTerminal(leafId: string) {
   // backend. Closing the WS here is what caused the "reload on every tab
   // switch" regression the ring buffer was meant to prevent.
   inst._detached = true
+  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   exposeDebugTerm(null)
 }
@@ -837,6 +891,7 @@ export function releaseTerminal(leafId: string) {
   // model). A later attachTerminal call clears this flag and reconnects.
   inst._released = true
   try { inst.ws?.close() } catch { /* ignore */ }
+  clearCanvasBeforeDispose(inst)
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
   exposeDebugTerm(null)
