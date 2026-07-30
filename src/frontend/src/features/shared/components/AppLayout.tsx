@@ -2115,6 +2115,8 @@ export function AppLayout() {
         onAddTerminal={addTab}
         onAddAgent={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
+        enableWorktrees={activeWorkspace?.enableWorktrees ?? false}
+        onToggleWorktrees={toggleWorktrees}
       />
 
       <Dialog
