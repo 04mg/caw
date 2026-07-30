@@ -241,7 +241,7 @@ export function CommandPalette({
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',
                     )}
                   >
-                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                    <span className="shrink-0">{item.icon}</span>
                     <span className="truncate flex items-center">
                       {item.label.startsWith('> ') && (
                         <span className="text-xs text-muted-foreground mr-0.5 shrink-0">&gt;</span>
@@ -271,7 +271,7 @@ export function CommandPalette({
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',
                     )}
                   >
-                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                    <span className="shrink-0">{item.icon}</span>
                     <span className="truncate flex-1">{item.label}</span>
                     {item.description && (
                       <span className="text-xs text-muted-foreground truncate max-w-[200px]">{item.description}</span>
