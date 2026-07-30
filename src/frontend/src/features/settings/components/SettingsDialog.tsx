@@ -1882,12 +1882,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         ) : (
           <>
             <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none overflow-y-auto thin-scroll">
-              <DialogTitle className="text-[10px] font-semibold text-muted-foreground px-2.5 py-1 uppercase tracking-wider">
+              <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-0 uppercase tracking-wider">
                 Settings
               </DialogTitle>
+              <div className="border-t border-border mb-2" />
               {(() => {
                 let lastCategory: string | undefined
-                let hasRenderedCategory = true
+                let hasRenderedCategory = false
                 const out: any[] = []
                 for (const s of sections) {
                   const Icon = s.icon
