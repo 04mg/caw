@@ -47,6 +47,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const resizeObsRef = useRef<ResizeObserver | null>(null)
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
+  const lastResizeAtRef = useRef<number>(0)
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
   const keyboardOpenRef = useRef(false)
@@ -71,19 +72,39 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     let cancelled = false
     let inst: TerminalInstance | null = null
 
+    const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
+
     const flushResize = () => {
       fitTimerRef.current = null
       if (!inst) return
       try {
+        // Wrap the reflow + renderer resize in DEC private mode 2026
+        // (Synchronized Output). While enabled, the renderer buffers
+        // frames and swaps the new one atomically when the mode is reset,
+        // so the buffer reflow that fit()/resize() triggers doesn't
+        // appear as a visible intermediate frame where content is wrapped
+        // or looped to cover the in-between grid size. The mode is set
+        // before fit() and cleared right after; both writes parse on the
+        // next microtask, before the renderer's next animation frame, so
+        // the reflow renders as a single clean swap instead of a glitchy
+        // reflow-then-settle sequence.
+        inst.term.write('\x1b[?2026h')
         inst.fit.fit()
         const dims = inst.fit.proposeDimensions()
-        if (!dims) return
+        if (!dims) {
+          inst.term.write('\x1b[?2026l')
+          return
+        }
         const key = `${dims.cols}x${dims.rows}`
-        if (key === lastDimsRef.current) return
+        if (key === lastDimsRef.current) {
+          inst.term.write('\x1b[?2026l')
+          return
+        }
         lastDimsRef.current = key
         if (inst.ws?.readyState === WebSocket.OPEN) {
           inst.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
         }
+        inst.term.write('\x1b[?2026l')
       } catch { /* ignore */ }
     }
 
@@ -123,7 +144,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
       const ro = new ResizeObserver(() => {
         if (fitTimerRef.current) clearTimeout(fitTimerRef.current)
-        fitTimerRef.current = setTimeout(flushResize, 80)
+        // Coalesce rapid resizes (e.g. dragging a panel separator or the
+        // browser window edge). The observer fires for every intermediate
+        // size; reflowing the xterm buffer at each one is what causes the
+        // wrapping/looping glitch during a resize. If the previous resize
+        // fired less than 250ms ago we're in an active drag, so keep
+        // extending the debounce until the motion settles — the terminal
+        // stays at its current grid (the container's background fills the
+        // newly-gained area) and only reflows once at the final size.
+        const now = Date.now()
+        const dragging = now - lastResizeAtRef.current < 250
+        lastResizeAtRef.current = now
+        fitTimerRef.current = setTimeout(flushResize, dragging ? 150 : 80)
       })
       ro.observe(el)
       resizeObsRef.current = ro
@@ -142,6 +174,25 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
           flushResize()
         })
       })
+
+      // Re-attach / page reload case: when reopening an agent (e.g. by
+      // reloading the page or returning from another workspace) the terminal
+      // container is mounted into a panel whose CSS transitions and flex
+      // sizing settle *after* the double-rAF above — sometimes only after
+      // several hundred milliseconds. The ResizeObserver fires while these
+      // are still animating, so proposeDimensions reads the in-between
+      // dimensions and the terminal only renders a partial grid with large
+      // empty/black areas until something else (toggling a sidebar, making
+      // the panel a touch wider) nudges a real resize. To make the terminal
+      // reliably fill its container on every reload, schedule a few
+      // staggered re-fits past the common transition durations. Each is
+      // cheap (a no-op if the dimensions haven't changed) and the last one
+      // catches the fully settled layout.
+      const FORCE_RESIZE_DELAYS_MS = [250, 500, 1000]
+      for (const delay of FORCE_RESIZE_DELAYS_MS) {
+        const t = setTimeout(() => { flushResize() }, delay)
+        forceResizeTimers.push(t)
+      }
     })()
 
     return () => {
@@ -155,6 +206,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
       }
+      for (const t of forceResizeTimers) clearTimeout(t)
+      forceResizeTimers.length = 0
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
       // Desktop buffers non-active terminals (detach keeps the WS open so
