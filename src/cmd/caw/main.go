@@ -9,6 +9,7 @@ import (
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/server"
 	"github.com/04mg/caw/internal/update"
+	"github.com/04mg/caw/internal/version"
 )
 
 var Version = "dev"
@@ -56,6 +57,7 @@ func main() {
 }
 
 func startServer() {
+	version.Current = Version
 	host := envOrDefault("HOST", "localhost")
 	port := envOrDefault("PORT", "8080")
 	server.New().ListenAndServe(host, port)
