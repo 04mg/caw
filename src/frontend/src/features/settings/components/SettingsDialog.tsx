@@ -1718,7 +1718,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'updates' && (
-            <div className="flex flex-col items-center justify-center gap-6 py-12">
+            <div className="flex flex-col items-center justify-center gap-6 flex-1">
               <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
               <div className="flex flex-col items-center gap-1">
                 <h3 className="text-2xl font-semibold">Caw</h3>
@@ -1881,10 +1881,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           </>
         ) : (
           <>
-            <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none">
-              <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-2">
+            <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none overflow-y-auto thin-scroll">
+              <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-0 uppercase tracking-wider">
                 Settings
               </DialogTitle>
+              <div className="border-t border-border mb-2" />
               {(() => {
                 let lastCategory: string | undefined
                 let hasRenderedCategory = false
