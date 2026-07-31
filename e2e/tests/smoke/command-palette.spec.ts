@@ -19,6 +19,18 @@ test.describe('Command Palette', () => {
     await expect(page.getByTestId('command-palette-input')).toBeVisible()
   })
 
+  test('opens with Alt+Shift+P and pre-fills command prompt', async ({ page }) => {
+    await waitForAppReady(page)
+    await page.keyboard.press('Alt+Shift+P')
+    await expect(page.getByTestId('command-palette-input')).toBeVisible()
+    await expect(page.getByTestId('command-palette-input')).toHaveValue('>')
+    await expect(page.getByTestId('command-palette-item-new-terminal')).toBeVisible()
+    await expect(page.getByTestId('command-palette-item-new-workspace')).toBeVisible()
+    await page.getByTestId('command-palette-input').fill('> workspace')
+    await expect(page.getByTestId('command-palette-item-new-workspace')).toBeVisible()
+    await expect(page.getByTestId('command-palette-item-new-terminal')).toBeHidden()
+  })
+
   test('lists built-in commands when empty', async ({ page }) => {
     await waitForAppReady(page)
     await openCommandPalette(page)

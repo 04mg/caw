@@ -114,6 +114,7 @@ export function AppLayout() {
   const [gitIgnored, setGitIgnored] = useState<Record<string, boolean>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
   const [kanbanClosing, setKanbanClosing] = useState(false)
   // Ref to the StatusBar control-center button so we can blur it when the
@@ -1590,7 +1591,8 @@ export function AppLayout() {
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
-    'Alt+P': () => setCommandPaletteOpen(true),
+    'Alt+P': () => { setCommandPaletteInitialQuery(''); setCommandPaletteOpen(true) },
+    'Alt+Shift+P': () => { setCommandPaletteInitialQuery('>'); setCommandPaletteOpen(true) },
   })
 
   useEffect(() => {
@@ -1634,6 +1636,7 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
+          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
@@ -1650,6 +1653,7 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
+          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
@@ -1666,6 +1670,7 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
+          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
@@ -2110,6 +2115,7 @@ export function AppLayout() {
       <CommandPalette
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}
+        initialQuery={commandPaletteInitialQuery}
         workspacePath={activeWorkspace?.path || ''}
         onOpenFile={openFile}
         onAddTerminal={addTab}
