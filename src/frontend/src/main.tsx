@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import '@/assets'
 import App from './App'
 import { ErrorBoundary } from '@/features/shared/errors/ErrorBoundary'
 import { installGlobalErrorHandler } from '@/features/shared/errors/errorReporter'
