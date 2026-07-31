@@ -37,6 +37,7 @@ interface CommandPaletteProps {
   onOpenWorkspacePicker: () => void
   enableWorktrees: boolean
   onToggleWorktrees: () => void
+  initialQuery?: string
 }
 
 export function CommandPalette({
@@ -49,6 +50,7 @@ export function CommandPalette({
   onOpenWorkspacePicker,
   enableWorktrees,
   onToggleWorktrees,
+  initialQuery = '',
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -86,6 +88,13 @@ export function CommandPalette({
       setSearching(false)
     }
   }, [open])
+
+  useEffect(() => {
+    if (open) {
+      setQuery(initialQuery)
+      setSelectedIndex(0)
+    }
+  }, [open, initialQuery])
 
   const commandMode = query.startsWith('>')
   const commandQuery = commandMode ? query.slice(1).trim() : query
