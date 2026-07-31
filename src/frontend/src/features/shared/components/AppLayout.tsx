@@ -1636,7 +1636,6 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
-          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
@@ -1653,7 +1652,6 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
-          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
@@ -1670,7 +1668,6 @@ export function AppLayout() {
           <Shortcut keys="Alt+H" label="Horizontal split" />
           <Shortcut keys="Alt+V" label="Vertical split" />
           <Shortcut keys="Alt+P" label="Command palette" />
-          <Shortcut keys="Alt+Shift+P" label="Command palette (> prefilled)" />
         </div>
       </div>
     </div>
