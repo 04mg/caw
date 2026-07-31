@@ -35,7 +35,7 @@ interface SettingsDialogProps {
 type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
-  const [activeSection, setActiveSection] = useState<Section>('appearance')
+  const [activeSection, setActiveSection] = useState<Section>('updates')
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
