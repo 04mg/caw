@@ -2,7 +2,9 @@ export interface AgentStatus {
   sessionId: string
   agentId: string
   cwd?: string
-  status: string // "thinking", "executing", "waiting_input", "idle", "crashed"
+  status: string // "thinking", "executing", "waiting_input", "idle", "crashed",
+                 // "interrupted" (user cancelled the turn — red dot, no push),
+                 // "tool_failed" (last tool call failed — red dot, error in details)
   tool?: string
   details?: string
   title?: string

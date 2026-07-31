@@ -21,8 +21,14 @@ type AgentStatus struct {
 	AgentID   string `json:"agentId"`
 	Cwd       string `json:"cwd,omitempty"`
 	// Status is the live state: "thinking", "executing", "waiting_input",
-	// "idle". When the session has terminated and is being kept on the board
-	// as a dismissable card, Status is set to "crashed" and EndedAt/ExitCode/
+	// "idle", "interrupted", "tool_failed". "interrupted" means the user
+	// cancelled the in-flight turn (e.g. pressed ESC twice) — the agent is no
+	// longer working but the card stays where it was with a red dot and no
+	// push notification. "tool_failed" means the agent's last tool call
+	// failed — the agent keeps running, but the failure is surfaced with a
+	// red dot and the error text in Details (still in the working column).
+	// When the session has terminated and is being kept on the board as a
+	// dismissable card, Status is set to "crashed" and EndedAt/ExitCode/
 	// ExitReason are populated.
 	Status    string    `json:"status"`
 	Tool      string    `json:"tool,omitempty"`
@@ -367,6 +373,14 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
 		case "thinking", "executing":
 			push.CancelFinishedDebounced(sessionID)
+		case "interrupted", "tool_failed":
+			// The user interrupted the agent, or a tool call failed. Neither
+			// is something the user needs a push notification for: an
+			// interrupt is the user's own action, and a tool failure is
+			// surfaced in the UI (red dot + error text) but the agent keeps
+			// running. Cancel any pending "finished" notification so a
+			// transition into these states from working doesn't fire one.
+			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
 			// Suppress the "finished" notification when the agent was running
 			// a background task or subagent — the agent is still working, it
@@ -565,11 +579,15 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 // it in rather than moving it on crash.
 func lastColumnForStatus(liveStatus string) string {
 	switch liveStatus {
-	case "thinking", "executing":
+	case "thinking", "executing", "tool_failed":
+		// tool_failed stays in "working": the agent is still active, the
+		// failure is just surfaced with a red dot.
 		return "working"
 	case "waiting_input":
 		return "needs_input"
 	default:
+		// "idle" and "interrupted": an interrupted turn is no longer
+		// working, so it sits in idle.
 		return "idle"
 	}
 }
@@ -774,9 +792,12 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 					statusesMu.RUnlock()
 					// Do NOT auto-revert "waiting_input": the agent is blocked
 					// waiting for the user to answer — this can take minutes.
-					// Only revert transient "working" states (thinking/executing)
+					// Do NOT auto-revert "interrupted" or "tool_failed":
+					// those are sticky UI states the user must see (red dot)
+					// and they're not transient "working" states. Only
+					// revert transient "working" states (thinking/executing)
 					// that have stalled.
-					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" {
+					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" && s.Status != "interrupted" && s.Status != "tool_failed" {
 						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
 					}
 				}
