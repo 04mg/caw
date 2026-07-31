@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { SplitLayout } from '@/features/shared/components/SplitLayout'
 import { Toaster, toast } from 'sonner'
-import cawSvg from '@/assets/LOGO.svg'
+import cawSvg from '@/assets/logo.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
 import { KanbanBoard } from '@/features/kanban/components/KanbanBoard'
