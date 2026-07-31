@@ -166,6 +166,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // it was last in (recorded by the backend in agent.lastColumn) rather than
   // being bucketed into Idle — this keeps the crash visible where the user
   // last saw the agent working.
+  //
+  // "interrupted" maps to idle (the user cancelled; the agent is no longer
+  // working) but renders with a red dot. "tool_failed" maps to working (the
+  // agent keeps running after a tool error) and also renders with a red dot.
   const getColumnForStatus = (agent: AgentStatus): ColumnId => {
     if (agent.status === 'crashed') {
       const lc = agent.lastColumn
@@ -173,7 +177,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
       return 'idle'
     }
     const status = agent.status.toLowerCase()
-    if (status === 'thinking' || status === 'executing') {
+    if (status === 'thinking' || status === 'executing' || status === 'tool_failed') {
       return 'working'
     }
     if (status === 'waiting_input') {
@@ -279,6 +283,10 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     const label = agentDef?.label || agent.agentId
 
     const isCrashed = agent.status === 'crashed'
+    // An error state (interrupted or tool_failed) shows a red dot and red
+    // error text but keeps the card live and navigable — unlike crashed,
+    // which becomes a dismissable dead card.
+    const isErrorState = agent.status === 'interrupted' || agent.status === 'tool_failed'
 
     // Choose column classes for styling card headers/borders
     const colId = getColumnForStatus(agent)
@@ -318,7 +326,9 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         className={`group relative overflow-hidden rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 select-none flex flex-col gap-3.5 shadow-sm ${
           isCrashed
             ? 'cursor-default border-red-500/30 hover:shadow-[0_0_15px_rgba(239,68,68,0.12)] hover:border-red-500/40'
-            : `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`
+            : isErrorState
+              ? `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 border-red-500/30 hover:border-red-500/40 ${colConf?.glowClass || ''}`
+              : `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`
         }`}
       >
         {/* Large semi-transparent background brand logo watermark */}
@@ -340,18 +350,26 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
           </div>
           
           {/* Status Indicator Dot/Badge — for a crashed card this becomes a
-              red dot that, on hover, is replaced by a small Dismiss button. */}
+              red dot that, on hover, is replaced by a small Dismiss button.
+              For an error state (interrupted / tool_failed) the dot turns red
+              and pulses, but the card stays live and navigable. */}
           <div className="flex items-center gap-1.5">
             {!isCrashed ? (
               <span className={`relative flex h-2 w-2`}>
-                {colId === 'working' && (
+                {(colId === 'working' || isErrorState) && !isErrorState && (
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                 )}
-                {colId === 'needs_input' && (
+                {colId === 'needs_input' && !isErrorState && (
                   <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                 )}
+                {isErrorState && (
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                )}
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                  colId === 'working' ? 'bg-blue-400' : colId === 'needs_input' ? 'bg-amber-400' : 'bg-slate-400'
+                  isErrorState ? 'bg-red-500'
+                    : colId === 'working' ? 'bg-blue-400'
+                    : colId === 'needs_input' ? 'bg-amber-400'
+                    : 'bg-slate-400'
                 }`}></span>
               </span>
             ) : (
@@ -394,16 +412,16 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted-foreground/90">
               {agent.tool && (
                 <div className="flex items-center gap-1">
-                  <span className="text-primary/70 shrink-0 font-sans text-[10px] uppercase tracking-wider">Tool:</span>
-                  <span className="bg-background/80 px-1.5 py-0.5 rounded border border-border/30 text-foreground/80 truncate">
+                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Tool:</span>
+                  <span className={`bg-background/80 px-1.5 py-0.5 rounded border border-border/30 truncate ${isErrorState ? 'text-red-400 border-red-500/30' : 'text-foreground/80'}`}>
                     {agent.tool}
                   </span>
                 </div>
               )}
               {agent.details && (
                 <div className="flex items-start gap-1 mt-0.5">
-                  <span className="text-primary/70 shrink-0 font-sans text-[10px] uppercase tracking-wider">Info:</span>
-                  <span className="text-foreground/70 truncate max-w-[250px]" title={agent.details}>
+                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Info:</span>
+                  <span className={`truncate max-w-[250px] ${isErrorState ? 'text-red-400 dark:text-red-400' : 'text-foreground/70'}`} title={agent.details}>
                     {agent.details}
                   </span>
                 </div>

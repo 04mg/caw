@@ -32,6 +32,12 @@ type ClaudeBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name for tool_use blocks
+	// ID is the tool_use id, used to link a tool_result back to its tool_use.
+	ID string `json:"id,omitempty"`
+	// IsError is set on tool_result blocks: Claude writes "is_error": true
+	// when a tool call failed. Used to surface tool failures with a red dot.
+	IsError   bool   `json:"is_error,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"` // links a tool_result to its tool_use
 }
 
 // parseClaudeContent decodes the Content field of a ClaudeMessage, which may
@@ -269,6 +275,17 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	var seenUser bool
 	var seenInterrupt bool
 	var turnCompleted bool
+	// failedTool tracks the most recent tool_result with is_error:true. When
+	// it is the last meaningful entry (the assistant hasn't yet produced a
+	// follow-up tool_use or text), the agent is mid-recovery from a tool
+	// failure → report "tool_failed" with the tool name and error text.
+	var failedTool string
+	var failedErrText string
+	// failedIdx/lastAssistantIdx record the line indices of the failed
+	// tool_result and the most recent assistant tool_use/text, so we can tell
+	// whether the failed result is the newest (no recovery yet).
+	var failedIdx int = -1
+	var lastAssistantIdx int = -1
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine ClaudeLogLine
@@ -300,6 +317,19 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 					// that was interrupted, so we can report it correctly.
 					continue
 				}
+				// A tool_result lives in a user message. If it carries
+				// is_error:true, it's a failed tool call. Record the newest
+				// one (the reverse pass hits the newest first).
+				if failedTool == "" {
+					for _, b := range blocks {
+						if b.Type == "tool_result" && b.IsError {
+							failedErrText = b.Text
+							failedTool = b.ToolUseID
+							failedIdx = i
+							break
+						}
+					}
+				}
 				// Skip empty-content user messages — Claude writes a
 				// placeholder user entry with empty content immediately
 				// before the interrupt message. Treating it as a real
@@ -312,22 +342,72 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 				break
 			} else if msg.Role == "assistant" {
 				blocks, _ := parseClaudeContent(msg.Content)
-				for _, b := range blocks {
-					if b.Type == "tool_use" && b.Name != "" {
-						lastAssistantTool = b.Name
-					} else if b.Type == "text" && b.Text != "" {
-						lastAssistantText = b.Text
+				// Only record the most recent assistant action (the first
+				// assistant line hit in this reverse pass). Later (older)
+				// assistant lines must not overwrite it — that would hide a
+				// recovery that happened after a failed tool result.
+				if lastAssistantIdx == -1 {
+					for _, b := range blocks {
+						if b.Type == "tool_use" && b.Name != "" {
+							lastAssistantTool = b.Name
+						} else if b.Type == "text" && b.Text != "" {
+							lastAssistantText = b.Text
+						}
 					}
+					lastAssistantIdx = i
 				}
 			}
 		}
 	}
 
+	// If we recorded a failed tool_result by its tool_use_id, resolve the
+	// tool name from the matching assistant tool_use block. lastAssistantTool
+	// (from the reverse pass) is the most recent tool_use name; when the
+	// failed result is the last entry, that name is the one that failed.
+	if failedTool != "" {
+		if lastAssistantTool != "" {
+			failedTool = lastAssistantTool
+		} else {
+			// Build a tool_use id -> name map from the whole transcript and
+			// resolve the failed result's id.
+			idToName := make(map[string]string)
+			for _, line := range lines {
+				var ll ClaudeLogLine
+				if json.Unmarshal([]byte(line), &ll) != nil || ll.Message == nil || ll.Message.Role != "assistant" {
+					continue
+				}
+				bs, _ := parseClaudeContent(ll.Message.Content)
+				for _, b := range bs {
+					if b.Type == "tool_use" && b.Name != "" && b.ID != "" {
+						idToName[b.ID] = b.Name
+					}
+				}
+			}
+			if n, ok := idToName[failedTool]; ok {
+				failedTool = n
+			}
+		}
+	}
+
 	// An interruption means the agent is no longer actively working — the
-	// user cancelled the in-flight tool call. Report idle so the UI doesn't
-	// show "working" indefinitely.
+	// user cancelled the in-flight turn. Report "interrupted" (not idle) so
+	// the UI surfaces it with a red dot, and keep the interrupted tool name
+	// if one was in flight. No push notification is sent for this status.
 	if seenInterrupt {
-		callback("idle", "", "", sessionTitle)
+		callback("interrupted", lastAssistantTool, "", sessionTitle)
+		return
+	}
+
+	// A tool call failed and the assistant hasn't yet produced a follow-up
+	// tool_use or text after it (the failed result is the newest meaningful
+	// entry) → surface the failure with a red dot. The agent keeps running,
+	// so it stays in the working column.
+	if failedTool != "" && failedIdx > lastAssistantIdx {
+		details := failedErrText
+		if details == "" {
+			details = "tool call failed"
+		}
+		callback("tool_failed", failedTool, details, sessionTitle)
 		return
 	}
 
