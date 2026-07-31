@@ -356,16 +356,26 @@ func (w *HermesWatcher) parseHermesDB(dbPath, sid string, callback func(status, 
 		sessionTitle = CleanPrompt(firstUser)
 	}
 
-	var role, content, toolCallsJSON, finishReason string
+	var role, content, toolCallsJSON, finishReason, toolName string
 	if err := db.QueryRow(
-		`SELECT role, COALESCE(content,''), COALESCE(tool_calls,''), COALESCE(finish_reason,'') FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+		`SELECT role, COALESCE(content,''), COALESCE(tool_calls,''), COALESCE(finish_reason,''), COALESCE(tool_name,'') FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
 		sid,
-	).Scan(&role, &content, &toolCallsJSON, &finishReason); err != nil {
+	).Scan(&role, &content, &toolCallsJSON, &finishReason, &toolName); err != nil {
 		callback("idle", "", "", sessionTitle)
 		return
 	}
 
 	status, tool := hermesStatusForMessage(role, content, toolCallsJSON, finishReason)
+	// For a failed tool result, report the tool name (from the tool_name
+	// column) and the error text from the content JSON as the details.
+	if status == "tool_failed" {
+		errText := hermesToolErrorText(content)
+		if tool == "" {
+			tool = toolName
+		}
+		callback(status, tool, errText, sessionTitle)
+		return
+	}
 	callback(status, tool, "", sessionTitle)
 }
 
@@ -381,19 +391,26 @@ func hermesStatusForMessage(role, content, toolCallsJSON, finishReason string) (
 		return "thinking", ""
 	case "tool":
 		// A tool result was just posted — the agent will continue, so it is
-		// thinking/working on the next step.
+		// thinking/working on the next step. If the result content JSON
+		// carries an "error" field, the tool call failed; surface it as
+		// tool_failed with the tool name (passed in via the caller) so the
+		// UI shows a red dot and the error text.
+		if hermesToolContentHasError(content) {
+			return "tool_failed", ""
+		}
 		return "thinking", ""
 	case "assistant", "agent":
 		// An aborted turn (Ctrl+C during generation) is reported by Hermes as
 		// an assistant message whose content begins with "Operation
-		// interrupted" and which carries no finish_reason. Treat that as idle
-		// so the card returns to Idle instead of staying Working forever.
+		// interrupted" and which carries no finish_reason. Treat that as
+		// "interrupted" (not idle) so the UI surfaces it with a red dot and
+		// no push notification is sent.
 		if strings.HasPrefix(strings.TrimSpace(content), "Operation interrupted") {
-			return "idle", ""
+			return "interrupted", ""
 		}
 		finishLower := strings.ToLower(finishReason)
 		if finishLower == "aborted" {
-			return "idle", ""
+			return "interrupted", ""
 		}
 		if finishLower == "tool_calls" {
 			toolName := lastHermesToolName(toolCallsJSON)
@@ -435,4 +452,34 @@ func lastHermesToolName(toolCallsJSON string) string {
 		return ""
 	}
 	return calls[len(calls)-1].Function.Name
+}
+
+// hermesToolContentHasError reports whether a tool-role message's content
+// JSON carries a non-empty "error" field. Hermes writes the tool result as a
+// JSON object whose "error" key is populated when the tool call failed (e.g.
+// "File not found: ..."), and absent/empty on success.
+func hermesToolContentHasError(content string) bool {
+	return hermesToolErrorText(content) != ""
+}
+
+// hermesToolErrorText extracts the "error" string from a tool-role message's
+// content JSON, or "" when there is no error field or the content isn't JSON.
+func hermesToolErrorText(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" || content[0] != '{' {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &obj) != nil {
+		return ""
+	}
+	raw, ok := obj["error"]
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
 }

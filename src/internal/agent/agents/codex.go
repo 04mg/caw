@@ -53,6 +53,12 @@ type CodexPayload struct {
 	Role string `json:"role,omitempty"`
 	// Name is the tool name for response_item "function_call" entries.
 	Name string `json:"name,omitempty"`
+	// Error is set on event_msg "task_complete" entries when the turn ended
+	// in failure (e.g. an API error). Carries a message and codex_error_info.
+	Error *struct {
+		Message       string `json:"message,omitempty"`
+		CodexErrorInfo string `json:"codex_error_info,omitempty"`
+	} `json:"error,omitempty"`
 }
 
 func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
@@ -240,6 +246,8 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	// executing and idle. We now treat "commentary" as still working and only
 	// "final_answer" (or an explicit task_complete) as idle.
 	var turnCompleted bool
+	var turnAborted bool
+	var taskError string
 	var lastAssistantText string
 	var lastAssistantTool string
 	var foundTool bool
@@ -255,7 +263,14 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		}
 		p := logLine.Payload
 		switch p.Type {
-		case "task_complete", "turn_aborted":
+		case "task_complete":
+			turnCompleted = true
+			if p.Error != nil && p.Error.Message != "" {
+				taskError = p.Error.Message
+			}
+			continue
+		case "turn_aborted":
+			turnAborted = true
 			turnCompleted = true
 			continue
 		case "function_call":
@@ -317,6 +332,20 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		case "task_started":
 			continue
 		}
+	}
+
+	// An aborted turn means the user cancelled — report "interrupted" so the
+	// UI surfaces it with a red dot and no push notification is sent.
+	if turnAborted {
+		callback("interrupted", lastAssistantTool, "", sessionTitle)
+		return
+	}
+
+	// A task_complete carrying an error means the turn failed (e.g. an API
+	// or server tool error). Surface it with a red dot.
+	if taskError != "" {
+		callback("tool_failed", lastAssistantTool, taskError, sessionTitle)
+		return
 	}
 
 	if lastAssistantTool != "" {

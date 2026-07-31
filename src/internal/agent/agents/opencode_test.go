@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,191 @@ func resetClaimRegistry() {
 	claimsMu.Lock()
 	claims = make(map[string]map[string]bool)
 	claimsMu.Unlock()
+}
+
+// setupOpenCodeDBWithMessages builds a temp opencode.db with the session,
+// message, and part tables (the subset the watcher queries), inserts the given
+// sessions, messages, and parts, and returns the db path + cleanup.
+//
+// A message is (id, sessionID, timeCreatedMs, dataJSON). A part is
+// (id, messageID, sessionID, timeCreatedMs, dataJSON). The session schema
+// matches setupOpenCodeDB so findUnclaimedOpenCodeSession still works.
+func setupOpenCodeDBWithMessages(t *testing.T, sessions []struct {
+	id              string
+	directory       string
+	timeCreatedMs   int64
+	timeUpdatedMs   int64
+	parentID        string
+}, messages []struct {
+	id            string
+	sessionID     string
+	timeCreatedMs int64
+	dataJSON      string
+}, parts []struct {
+	id            string
+	messageID     string
+	sessionID     string
+	timeCreatedMs int64
+	dataJSON      string
+}) (string, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE session (
+		id text PRIMARY KEY,
+		directory text NOT NULL,
+		parent_id text,
+		title text NOT NULL,
+		time_created integer NOT NULL,
+		time_updated integer NOT NULL
+	)`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("create session table: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE message (
+		id text PRIMARY KEY,
+		session_id text NOT NULL,
+		time_created integer NOT NULL,
+		time_updated integer NOT NULL,
+		data text NOT NULL
+	)`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("create message table: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE part (
+		id text PRIMARY KEY,
+		message_id text NOT NULL,
+		session_id text NOT NULL,
+		time_created integer NOT NULL,
+		time_updated integer NOT NULL,
+		data text NOT NULL
+	)`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("create part table: %v", err)
+	}
+	for _, s := range sessions {
+		if s.parentID == "" {
+			_, err = db.Exec(
+				`INSERT INTO session (id, directory, parent_id, title, time_created, time_updated) VALUES (?, ?, NULL, '', ?, ?)`,
+				s.id, s.directory, s.timeCreatedMs, s.timeUpdatedMs,
+			)
+		} else {
+			_, err = db.Exec(
+				`INSERT INTO session (id, directory, parent_id, title, time_created, time_updated) VALUES (?, ?, ?, '', ?, ?)`,
+				s.id, s.directory, s.parentID, s.timeCreatedMs, s.timeUpdatedMs,
+			)
+		}
+		if err != nil {
+			db.Close()
+			t.Fatalf("insert session %q: %v", s.id, err)
+		}
+	}
+	for _, m := range messages {
+		if _, err := db.Exec(
+			`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+			m.id, m.sessionID, m.timeCreatedMs, m.timeCreatedMs, m.dataJSON,
+		); err != nil {
+			db.Close()
+			t.Fatalf("insert message %q: %v", m.id, err)
+		}
+	}
+	for _, p := range parts {
+		if _, err := db.Exec(
+			`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`,
+			p.id, p.messageID, p.sessionID, p.timeCreatedMs, p.timeCreatedMs, p.dataJSON,
+		); err != nil {
+			db.Close()
+			t.Fatalf("insert part %q: %v", p.id, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	return dbPath, func() { _ = os.RemoveAll(dir) }
+}
+
+func TestParseOpenCodeDBToolFailureReportsToolFailed(t *testing.T) {
+	// An assistant message whose latest tool part has state.status "error"
+	// is a failed tool call. The watcher reports tool_failed with the tool
+	// name and the state.error text.
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"read","state":{"status":"error","error":"ENOENT: no such file"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status, tool, details string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status, tool, details = s, tl, d
+	})
+	if status != "tool_failed" {
+		t.Fatalf("status = %q, want tool_failed", status)
+	}
+	if tool != "read" {
+		t.Fatalf("tool = %q, want read", tool)
+	}
+	if !strings.Contains(details, "ENOENT") {
+		t.Fatalf("details = %q, want ENOENT text", details)
+	}
+}
+
+func TestParseOpenCodeDBInterruptedReportsInterrupted(t *testing.T) {
+	// An assistant message with finish="" and error.name "MessageAbortedError"
+	// means the user aborted the turn. The watcher reports "interrupted".
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":"","error":{"name":"MessageAbortedError"}}`}},
+		nil,
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", status)
+	}
 }
 
 // TestOldSessionClaimedWhenRecentlyUpdated covers the /sessions reattach case:

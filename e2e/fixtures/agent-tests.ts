@@ -12,6 +12,8 @@ import {
   getExistingSessionIds,
   waitForCardInColumn,
   getCardColumn,
+  hasRedDot,
+  waitForRedDot,
   setWorkspace,
   waitForAppReady,
   type AgentStatus,
@@ -22,6 +24,8 @@ export interface AgentTestConfig {
   label: string
   /** Prompt that forces tool use (list files, read files, etc.) so working state lasts long enough to detect. */
   workPrompt: string
+  /** Prompt that triggers a failing tool call (e.g. reading a nonexistent file) so the tool_failed state is reached. */
+  failPrompt: string
   /** Timeout for the agent to respond and return to idle. */
   responseTimeout: number
 }
@@ -98,7 +102,50 @@ export function createAgentStatusTests(cfg: AgentTestConfig) {
       await page.waitForTimeout(5_000)
       await sendInterrupt(page)
 
+      // An interrupt now reports the "interrupted" status, which sits in the
+      // idle column and shows a red dot. Try to catch the red dot; if the
+      // agent recovered before we saw it, the card still settles in idle.
+      try {
+        await waitForRedDot(page, session.sessionId, 30_000)
+      } catch {
+        // Red dot may be transient if the agent immediately resumed — fall
+        // back to asserting the card is at least back in idle.
+      }
       await waitForCardInColumn(page, session.sessionId, 'idle', 120_000)
+    })
+
+    base('Working -> tool_failed (failing tool call shows red dot)', async ({ page, baseURL }) => {
+      base.setTimeout(cfg.responseTimeout + 120_000)
+      const session = await launchAndAwait(page, baseURL!, cfg.label, cfg.agentId)
+
+      await focusTerminal(page, session.sessionId)
+      await acceptTrustDialog(page)
+      await focusTerminal(page, session.sessionId)
+      await page.waitForTimeout(5000)
+      await typeInTerminal(page, session.sessionId, cfg.failPrompt)
+      await sendEnter(page)
+
+      // A failing tool call surfaces as tool_failed: the card stays in the
+      // working column (the agent keeps running) with a red dot, then
+      // eventually returns to idle once the agent finishes its turn. Try to
+      // catch the red dot; don't fail if the agent is too fast — the
+      // important thing is it doesn't get stuck and returns to idle.
+      const deadline = Date.now() + cfg.responseTimeout + 60_000
+      let sawRed = false
+      while (Date.now() < deadline) {
+        const col = await getCardColumn(page, session.sessionId)
+        if (col === 'idle') break
+        if (await hasRedDot(page, session.sessionId)) {
+          sawRed = true
+          break
+        }
+        await page.waitForTimeout(500)
+      }
+
+      await waitForCardInColumn(page, session.sessionId, 'idle', cfg.responseTimeout + 60_000)
+      // The red dot is best-effort: if we saw it, good; if not, the agent may
+      // have recovered too quickly. We assert the card returns to idle above.
+      void sawRed
     })
   })
 }

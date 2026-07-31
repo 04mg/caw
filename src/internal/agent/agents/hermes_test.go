@@ -46,19 +46,20 @@ func TestHermesStatusForMessageToolCallsClarifyIsWaitingInput(t *testing.T) {
 	}
 }
 
-func TestHermesStatusForMessageInterruptedIsIdle(t *testing.T) {
+func TestHermesStatusForMessageInterruptedIsInterrupted(t *testing.T) {
 	// Hermes writes an assistant message starting with "Operation
 	// interrupted" (no finish_reason) when the user hits Ctrl+C mid-turn.
+	// The watcher reports "interrupted" (not idle) so the UI shows a red dot.
 	status, tool := hermesStatusForMessage("assistant", "Operation interrupted: waiting for model response (16.2s elapsed)", "", "")
-	if status != "idle" || tool != "" {
-		t.Fatalf("interrupted status = (%q, %q), want (idle, \"\")", status, tool)
+	if status != "interrupted" || tool != "" {
+		t.Fatalf("interrupted status = (%q, %q), want (interrupted, \"\")", status, tool)
 	}
 }
 
-func TestHermesStatusForMessageAbortedFinishIsIdle(t *testing.T) {
+func TestHermesStatusForMessageAbortedFinishIsInterrupted(t *testing.T) {
 	status, _ := hermesStatusForMessage("assistant", "", "", "aborted")
-	if status != "idle" {
-		t.Fatalf("aborted finish status = %q, want idle", status)
+	if status != "interrupted" {
+		t.Fatalf("aborted finish status = %q, want interrupted", status)
 	}
 }
 
@@ -68,6 +69,81 @@ func TestHermesStatusForMessageUnfinishedAssistantIsThinking(t *testing.T) {
 	status, tool := hermesStatusForMessage("assistant", "", "", "")
 	if status != "thinking" || tool != "" {
 		t.Fatalf("unfinished status = (%q, %q), want (thinking, \"\")", status, tool)
+	}
+}
+
+func TestHermesStatusForMessageToolFailureIsToolFailed(t *testing.T) {
+	// A tool-role message whose content JSON carries an "error" field means
+	// the tool call failed (e.g. a Read on a missing file).
+	content := `{"content":"","error":"File not found: /nonexistent/xyz.txt"}`
+	status, tool := hermesStatusForMessage("tool", content, "", "")
+	if status != "tool_failed" || tool != "" {
+		t.Fatalf("tool failure status = (%q, %q), want (tool_failed, \"\")", status, tool)
+	}
+}
+
+func TestHermesStatusForMessageToolSuccessIsThinking(t *testing.T) {
+	// A tool-role message with no "error" field is a successful result — the
+	// agent continues thinking.
+	content := `{"content":"hello world","total_lines":1}`
+	status, tool := hermesStatusForMessage("tool", content, "", "")
+	if status != "thinking" || tool != "" {
+		t.Fatalf("tool success status = (%q, %q), want (thinking, \"\")", status, tool)
+	}
+}
+
+func TestHermesToolErrorText(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{``, ""},
+		{`not json`, ""},
+		{`{"content":"hi"}`, ""},
+		{`{"error":"File not found: /x"}`, "File not found: /x"},
+		{`{"error":42}`, "42"},
+	}
+	for _, c := range cases {
+		got := hermesToolErrorText(c.in)
+		if got != c.want {
+			t.Fatalf("hermesToolErrorText(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseHermesDBToolFailureReportsToolFailed(t *testing.T) {
+	dbPath := createHermesTestDB(t)
+	now := float64(time.Now().Unix())
+	insertHermesSession(t, dbPath, "s4", now, nil, "probe")
+	insertHermesMessage(t, dbPath, "s4", "user", "read /nonexistent/xyz.txt", "", "", now)
+	insertHermesMessage(t, dbPath, "s4", "assistant", "", `[{"function":{"name":"read_file","arguments":"{}"}}]`, "tool_calls", now+1)
+	// The tool result row carries tool_name (read_file) and an "error" field
+	// in its content JSON. Insert it directly so tool_name is populated.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO messages (session_id, role, content, tool_calls, tool_name, finish_reason, timestamp) VALUES (?, 'tool', ?, '', 'read_file', '', ?)`,
+		"s4", `{"content":"","error":"File not found: /nonexistent/xyz.txt"}`, now+2,
+	)
+	db.Close()
+	if err != nil {
+		t.Fatalf("insert tool message: %v", err)
+	}
+
+	var status, tool, details string
+	(&HermesWatcher{}).parseHermesDB(dbPath, "s4", func(s, tl, d, ti string) {
+		status, tool, details = s, tl, d
+	})
+	if status != "tool_failed" {
+		t.Fatalf("status = %q, want tool_failed", status)
+	}
+	if tool != "read_file" {
+		t.Fatalf("tool = %q, want read_file", tool)
+	}
+	if details != "File not found: /nonexistent/xyz.txt" {
+		t.Fatalf("details = %q, want error text", details)
 	}
 }
 
