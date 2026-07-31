@@ -23,7 +23,7 @@ import {
 	type KrokoLanguage,
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
-import cawLogoSvg from '@/assets/caw-logo.svg'
+import cawLogoSvg from '@/assets/app-logo.svg'
 
 
 interface SettingsDialogProps {
