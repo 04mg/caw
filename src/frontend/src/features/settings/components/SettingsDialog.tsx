@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2 } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
@@ -23,6 +23,7 @@ import {
 	type KrokoLanguage,
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
+import cawLogoSvg from '@/assets/app-logo.svg'
 
 
 interface SettingsDialogProps {
@@ -31,7 +32,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('appearance')
@@ -72,7 +73,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [claudeInstalled, setClaudeInstalled] = useState(true)
   const [codexInstalled, setCodexInstalled] = useState(true)
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
-  const [defaultNewAgent, setDefaultNewAgent] = useState('terminal')
+  const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -108,6 +109,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [krokoLoading, setKrokoLoading] = useState(true)
   const hasInstalledModel = Object.values(krokoModelCache).some(Boolean)
   const isSecureContext = typeof window !== 'undefined' && (window.isSecureContext || window.location.hostname === 'localhost')
+
+  const [appVersion, setAppVersion] = useState('')
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'updating' | 'updated' | 'latest' | 'error'>('idle')
+  const [updateLatestVersion, setUpdateLatestVersion] = useState('')
+  const [updateMessage, setUpdateMessage] = useState('')
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -196,7 +202,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05'))
       setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
 
-      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'terminal')
+      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'none')
 
       fetch('/api/agents')
         .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
@@ -279,6 +285,14 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setCopilotInterval(5)
       copilotIntervalRef.current = 5
       setCopilotDeviceError('')
+
+      fetch('/api/version')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: null }))
+        .then((json) => {
+          const v = json?.data?.version
+          if (v) setAppVersion(v)
+        })
+        .catch(() => {})
     }
   }, [open, loadQuotaSettings, loadQuotas, initialSection, pushSupported, pushIOSPWA])
 
@@ -294,7 +308,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     orKey: string,
   ) => {
     try {
-      await fetch('/api/quotas/settings', {
+      const res = await fetch('/api/quotas/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -307,6 +321,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           openrouter: { apiKey: orKey },
         }),
       })
+      if (!res.ok) {
+        console.error('Failed to save quota settings', res.status, await res.text().catch(() => ''))
+      }
     } catch (e) {
       console.error('Failed to save quota settings', e)
     }
@@ -442,14 +459,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     return outputArray
   }
 
-  const sections: { id: Section; label: string; icon: ElementType }[] = [
-    { id: 'appearance', label: 'Appearance', icon: Palette },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'workspaces', label: 'Workspaces', icon: Folder },
-    { id: 'terminal', label: 'Terminal', icon: Terminal },
-    { id: 'voice', label: 'Voice', icon: Mic },
-    { id: 'agents', label: 'Agents', icon: Bot },
-    { id: 'limits', label: 'Limits', icon: ChartSpline },
+  const sections: { id: Section; label: string; icon: ElementType; category?: string }[] = [
+    { id: 'updates', label: 'Updates', icon: RefreshCw },
+    { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
+    { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
+    { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
+    { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
+    { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
+    { id: 'agents', label: 'Agents', icon: Bot, category: 'Integrations' },
+    { id: 'limits', label: 'Limits', icon: ChartSpline, category: 'Integrations' },
   ]
 
   const renderSectionContent = () => (
@@ -1048,9 +1066,24 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
 
               <div className="flex flex-col gap-2 mt-2">
-                <label className="text-xs font-medium">Default Agent / Terminal</label>
+                <label className="text-xs font-medium">On Workspace Created</label>
                 <p className="text-[10px] text-muted-foreground">Choose what gets launched as the first tab when a new workspace is created.</p>
                 <div className="flex flex-col gap-1.5 mt-1">
+                  <button
+                    onClick={() => {
+                      setDefaultNewAgent('none')
+                      localStorage.setItem('caw:defaultNewAgent', 'none')
+                    }}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                      defaultNewAgent === 'none'
+                        ? 'border-primary ring-1 ring-ring bg-primary/10'
+                        : 'border-border hover:bg-accent/20'
+                    }`}
+                  >
+                    <Minus className="h-4 w-4" />
+                    <span className="flex-1 text-left">Do nothing</span>
+                    {defaultNewAgent === 'none' && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
                   <button
                     onClick={() => {
                       setDefaultNewAgent('terminal')
@@ -1683,6 +1716,78 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             </div>
           )}
+
+          {activeSection === 'updates' && (
+            <div className="flex flex-col items-center justify-center gap-6 flex-1">
+              <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
+              <div className="flex flex-col items-center gap-1">
+                <h3 className="text-2xl font-semibold">Caw</h3>
+                <p className="text-sm text-muted-foreground">{appVersion ? `v${appVersion}` : ''}</p>
+              </div>
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={async () => {
+                    if (updateState === 'updating' || updateState === 'checking') return
+                    if (updateState === 'available') {
+                      setUpdateState('updating')
+                      setUpdateMessage('')
+                      try {
+                        const res = await fetch('/api/update/apply', { method: 'POST' })
+                        const data = (await res.json())?.data
+                        if (data?.updated) {
+                          setUpdateState('updated')
+                          setUpdateLatestVersion(data.latestVersion)
+                          setUpdateMessage(data.message || 'Updated. Restart Caw to apply.')
+                        } else {
+                          setUpdateState('latest')
+                          setUpdateMessage(data?.message || "You're on the latest version.")
+                        }
+                      } catch {
+                        setUpdateState('error')
+                        setUpdateMessage('Failed to update. Try again later.')
+                      }
+                    } else {
+                      setUpdateState('checking')
+                      setUpdateMessage('')
+                      try {
+                        const res = await fetch('/api/update/check', { method: 'POST' })
+                        const data = (await res.json())?.data
+                        if (data?.updateAvailable) {
+                          setUpdateState('available')
+                          setUpdateLatestVersion(data.latestVersion)
+                          setUpdateMessage(`Update ${data.latestVersion} available`)
+                        } else {
+                          setUpdateState('latest')
+                          setUpdateMessage("You're on the latest version.")
+                        }
+                      } catch {
+                        setUpdateState('error')
+                        setUpdateMessage('Failed to check for updates. Check your internet connection.')
+                      }
+                    }
+                  }}
+                  disabled={updateState === 'checking' || updateState === 'updating'}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {(updateState === 'checking' || updateState === 'updating') && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  {updateState === 'idle' && 'Check for updates'}
+                  {updateState === 'checking' && 'Checking...'}
+                  {updateState === 'available' && `Update to ${updateLatestVersion}`}
+                  {updateState === 'updating' && 'Updating...'}
+                  {updateState === 'updated' && 'Restart Caw'}
+                  {updateState === 'latest' && 'Check for updates'}
+                  {updateState === 'error' && 'Try again'}
+                </button>
+                {updateMessage && (
+                  <p className={`text-xs ${updateState === 'error' ? 'text-red-400' : updateState === 'updated' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                    {updateMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
     </>
   )
 
@@ -1706,20 +1811,38 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   </DialogClose>
                 </DialogTitle>
                 <div className="flex-1 flex flex-col p-3 gap-1.5">
-                  {sections.map((s) => {
-                    const Icon = s.icon
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => selectSection(s.id)}
-                        data-testid={`settings-section-${s.id}`}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-foreground hover:bg-accent/40 transition-all"
-                      >
-                        <Icon className="h-4 w-4" />
-                        {s.label}
-                      </button>
-                    )
-                  })}
+                  {(() => {
+                    let lastCategory: string | undefined
+                    let hasRenderedCategory = false
+                    const out: any[] = []
+                    for (const s of sections) {
+                      const Icon = s.icon
+                      if (s.category !== undefined && s.category !== lastCategory) {
+                        out.push(
+                          <div
+                            key={`cat-${s.category}`}
+                            className={`text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 pt-3 pb-1${hasRenderedCategory ? ' mt-2 border-t border-border' : ''}`}
+                          >
+                            {s.category}
+                          </div>
+                        )
+                        hasRenderedCategory = true
+                        lastCategory = s.category
+                      }
+                      out.push(
+                        <button
+                          key={s.id}
+                          onClick={() => selectSection(s.id)}
+                          data-testid={`settings-section-${s.id}`}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-foreground hover:bg-accent/40 transition-all"
+                        >
+                          <Icon className="h-4 w-4" />
+                          {s.label}
+                        </button>
+                      )
+                    }
+                    return out
+                  })()}
                 </div>
               </div>
             ) : (
@@ -1758,28 +1881,46 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           </>
         ) : (
           <>
-            <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none">
-              <DialogTitle className="text-xs font-semibold text-muted-foreground px-2 py-1 mb-2">
+            <div className="w-[180px] border-r border-border bg-muted/20 flex flex-col p-3 gap-1.5 shrink-0 select-none overflow-y-auto thin-scroll">
+              <DialogTitle className="text-[10px] font-semibold text-muted-foreground px-2.5 py-1 uppercase tracking-wider">
                 Settings
               </DialogTitle>
-              {sections.map((s) => {
-                const Icon = s.icon
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setActiveSection(s.id)}
-                    data-testid={`settings-section-${s.id}`}
-                    className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      activeSection === s.id
-                        ? 'bg-accent text-accent-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {s.label}
-                  </button>
-                )
-              })}
+              {(() => {
+                let lastCategory: string | undefined
+                let hasRenderedCategory = true
+                const out: any[] = []
+                for (const s of sections) {
+                  const Icon = s.icon
+                  if (s.category !== undefined && s.category !== lastCategory) {
+                    out.push(
+                      <div
+                        key={`cat-${s.category}`}
+                        className={`text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2.5 pt-3 pb-1${hasRenderedCategory ? ' mt-2 border-t border-border' : ''}`}
+                      >
+                        {s.category}
+                      </div>
+                    )
+                    hasRenderedCategory = true
+                    lastCategory = s.category
+                  }
+                  out.push(
+                    <button
+                      key={s.id}
+                      onClick={() => setActiveSection(s.id)}
+                      data-testid={`settings-section-${s.id}`}
+                      className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        activeSection === s.id
+                          ? 'bg-accent text-accent-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {s.label}
+                    </button>
+                  )
+                }
+                return out
+              })()}
             </div>
 
             <div className="flex-1 flex flex-col">

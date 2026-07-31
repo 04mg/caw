@@ -111,7 +111,7 @@ func (h *Handler) Settings(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 	var req map[string]map[string]string
-	if !httpx.BindRequest(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.svc.SaveSettings(req); err != nil {

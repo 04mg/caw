@@ -16,6 +16,7 @@ import (
 	_ "github.com/04mg/caw/internal/quota/providers"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
+	"github.com/04mg/caw/internal/version"
 	"github.com/04mg/caw/internal/workspace"
 	"github.com/04mg/caw/internal/ws"
 )
@@ -57,6 +58,15 @@ func New() *Server {
 	// server starts serving.
 	agent.LoadCrashedSessions()
 	s.gitSvc = gitSvc
+	// Wire the orphan-session reconciler: after every layout-state save,
+	// kill PTY sessions whose leaf id is no longer in any workspace and
+	// that have no connected WebSocket viewers. This prevents ghost agent
+	// cards and orphaned agent processes when a leaf is dropped from the
+	// layout without an explicit kill (e.g. the multi-client
+	// releaseTerminal path).
+	state.OnLayoutSaved = func(as state.AppState) {
+		terminal.ReconcileOrphans(as.CollectLeafIDs())
+	}
 	return s
 }
 
@@ -69,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
 	agent.Register(api)
 	workspace.Register(api)
+	version.Register(api)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", api))

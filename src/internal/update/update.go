@@ -1,6 +1,8 @@
 package update
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type githubRelease struct {
@@ -22,6 +25,59 @@ type githubRelease struct {
 var apiURL = "https://api.github.com/repos/04mg/caw/releases/latest"
 var testExePath string
 
+type CheckResult struct {
+	LatestVersion  string `json:"latestVersion"`
+	CurrentVersion string `json:"currentVersion"`
+	UpdateAvailable bool `json:"updateAvailable"`
+}
+
+func fetchLatestRelease() (*githubRelease, error) {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "caw-updater")
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("no release found (the repository might not have any releases yet)")
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("github API rate limit exceeded or access forbidden (status 403)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %s", resp.Status)
+	}
+
+	var rel githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, fmt.Errorf("failed to parse release JSON: %w", err)
+	}
+	return &rel, nil
+}
+
+func Check(currentVersion string) (*CheckResult, error) {
+	rel, err := fetchLatestRelease()
+	if err != nil {
+		return nil, err
+	}
+	updateAvailable := currentVersion != "dev" && currentVersion != rel.TagName
+	return &CheckResult{
+		LatestVersion:   rel.TagName,
+		CurrentVersion:  currentVersion,
+		UpdateAvailable: updateAvailable,
+	}, nil
+}
+
 // getAssetName returns the binary release asset name based on the current GOOS and GOARCH.
 func getAssetName() (string, error) {
 	osName := runtime.GOOS
@@ -34,10 +90,10 @@ func getAssetName() (string, error) {
 		}
 	case "darwin":
 		if archName == "amd64" {
-			return "caw-darwin-amd64", nil
+			return "caw-darwin-amd64.tar.gz", nil
 		}
 		if archName == "arm64" {
-			return "caw-darwin-arm64", nil
+			return "caw-darwin-arm64.tar.gz", nil
 		}
 	case "windows":
 		if archName == "amd64" {
@@ -54,36 +110,9 @@ func Run(currentVersion string) error {
 		return err
 	}
 
-	log.Printf("Checking for updates from GitHub...")
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	rel, err := fetchLatestRelease()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("User-Agent", "caw-updater")
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to query GitHub API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("no release found (the repository might not have any releases yet)")
-	}
-	if resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("github API rate limit exceeded or access forbidden (status 403)")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("github API returned status %s", resp.Status)
-	}
-
-	var rel githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return fmt.Errorf("failed to parse release JSON: %w", err)
+		return err
 	}
 
 	log.Printf("Current version: %s, latest version: %s", currentVersion, rel.TagName)
@@ -110,7 +139,6 @@ func Run(currentVersion string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get executable path: %w", err)
 		}
-		// Resolve symlinks to target the real executable
 		evalPath, err := filepath.EvalSymlinks(exePath)
 		if err == nil {
 			exePath = evalPath
@@ -118,7 +146,7 @@ func Run(currentVersion string) error {
 	}
 
 	log.Printf("Downloading latest binary from %s...", downloadURL)
-	resp, err = http.Get(downloadURL)
+	resp, err := http.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download release binary: %w", err)
 	}
@@ -135,15 +163,49 @@ func Run(currentVersion string) error {
 	}
 	tmpPath := tmpFile.Name()
 	defer func() {
-		// Clean up the temp file if it's still around
 		if _, err := os.Stat(tmpPath); err == nil {
 			os.Remove(tmpPath)
 		}
 	}()
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("failed to write binary to temp file: %w", err)
+	if strings.HasSuffix(assetName, ".tar.gz") {
+		gr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		tr := tar.NewReader(gr)
+		var extracted bool
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				gr.Close()
+				tmpFile.Close()
+				return fmt.Errorf("failed to read tar archive: %w", err)
+			}
+			if hdr.Typeflag == tar.TypeReg {
+				if _, err := io.Copy(tmpFile, tr); err != nil {
+					gr.Close()
+					tmpFile.Close()
+					return fmt.Errorf("failed to extract binary from archive: %w", err)
+				}
+				extracted = true
+				break
+			}
+		}
+		gr.Close()
+		if !extracted {
+			tmpFile.Close()
+			return fmt.Errorf("no binary found in release archive")
+		}
+	} else {
+		if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write binary to temp file: %w", err)
+		}
 	}
 
 	if err := tmpFile.Sync(); err != nil {
@@ -164,23 +226,19 @@ func Run(currentVersion string) error {
 	}
 
 	backupPath := exePath + ".old"
-	os.Remove(backupPath) // ignore error if it doesn't exist
+	os.Remove(backupPath)
 
-	// Rename current binary to backup path
 	if err := os.Rename(exePath, backupPath); err != nil {
 		return fmt.Errorf("failed to backup current executable: %w", err)
 	}
 
-	// Move new binary to replace the current binary path
 	if err := os.Rename(tmpPath, exePath); err != nil {
-		// Rollback if possible
 		if rollbackErr := os.Rename(backupPath, exePath); rollbackErr != nil {
 			return fmt.Errorf("failed to apply update (%w) and rollback failed: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("failed to apply update, rolled back: %w", err)
 	}
 
-	// Attempt cleanup of the backup file
 	if err := os.Remove(backupPath); err != nil {
 		log.Printf("Successfully updated, but could not remove backup file %s: %v", backupPath, err)
 		if runtime.GOOS == "windows" {

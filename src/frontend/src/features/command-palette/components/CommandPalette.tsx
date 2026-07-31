@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Search, SquareTerminal, FolderPlus, Bot, File, Loader2 } from 'lucide-react'
+import { Search, SquareTerminal, FolderPlus, Bot, File, Loader2, Workflow } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/dialog'
 import { Input } from '@/components/input'
 
@@ -35,6 +35,8 @@ interface CommandPaletteProps {
   onAddTerminal: () => void
   onAddAgent: (cmd: string[], agentId: string, label: string, env?: [string, string][]) => void
   onOpenWorkspacePicker: () => void
+  enableWorktrees: boolean
+  onToggleWorktrees: () => void
 }
 
 export function CommandPalette({
@@ -45,6 +47,8 @@ export function CommandPalette({
   onAddTerminal,
   onAddAgent,
   onOpenWorkspacePicker,
+  enableWorktrees,
+  onToggleWorktrees,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -130,6 +134,14 @@ export function CommandPalette({
       action: () => { onOpenWorkspacePicker(); onOpenChange(false) },
     })
 
+    result.push({
+      id: 'toggle-worktrees',
+      label: enableWorktrees ? '> Disable Worktrees' : '> Enable Worktrees',
+      type: 'command',
+      icon: <Workflow className="h-4 w-4" />,
+      action: () => { onToggleWorktrees(); onOpenChange(false) },
+    })
+
     for (const agent of agents) {
       if (disabledAgents.includes(agent.id)) continue
       const agentMeta = agentTypes[agent.id]
@@ -156,7 +168,7 @@ export function CommandPalette({
     }
 
     return result
-  }, [agents, disabledAgents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onOpenFile])
+  }, [agents, disabledAgents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onOpenFile, enableWorktrees, onToggleWorktrees])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items
@@ -241,7 +253,7 @@ export function CommandPalette({
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',
                     )}
                   >
-                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                    <span className="shrink-0">{item.icon}</span>
                     <span className="truncate flex items-center">
                       {item.label.startsWith('> ') && (
                         <span className="text-xs text-muted-foreground mr-0.5 shrink-0">&gt;</span>
@@ -271,7 +283,7 @@ export function CommandPalette({
                       globalIdx === safeSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground',
                     )}
                   >
-                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                    <span className="shrink-0">{item.icon}</span>
                     <span className="truncate flex-1">{item.label}</span>
                     {item.description && (
                       <span className="text-xs text-muted-foreground truncate max-w-[200px]">{item.description}</span>

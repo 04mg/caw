@@ -38,6 +38,7 @@ Thumbs.db
 graphify-out/
 .agents/
 .opencode/
+.caw/
 .serena/
 .playwright-mcp/
 .wterm_trash/
