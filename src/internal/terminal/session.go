@@ -34,6 +34,17 @@ var syncModes = map[int]bool{
 	2004: true, // bracketed paste
 }
 
+// altScreenModes are the DEC private modes that switch the terminal to the
+// alternate screen buffer. A TUI sets one of these on startup and clears it
+// on exit; the running program is "on the alt screen" while any one is set.
+// Used by updateModes to maintain s.altScreen so a reconnecting client can
+// be driven into the same buffer the TUI is drawing to.
+var altScreenModes = map[int]bool{
+	47:   true, // alternate screen buffer
+	1047: true, // alternate screen buffer (xterm)
+	1049: true, // save cursor + switch to alternate screen
+}
+
 // connWriter wraps a gorilla websocket.Conn with a per-connection write
 // mutex. gorilla/websocket does not allow concurrent writes to the same
 // connection, and the terminal Session has multiple goroutines writing to
@@ -87,6 +98,16 @@ type Session struct {
 	// syncModes, tracked incrementally from the live PTY stream. It is the
 	// authoritative source used to re-sync a freshly-attached client.
 	modes map[int]bool
+	// altScreen tracks whether the running program is currently displaying
+	// the alternate screen (DEC 1049 / 47 / 1047 set). Tracked incrementally
+	// from the live PTY stream so that a reconnecting client can be driven
+	// into the same buffer the TUI is drawing to. Without it, scrollback
+	// replay strips the alt-screen toggles and writes the TUI's frame into
+	// the normal buffer, so the live incremental updates the TUI sends
+	// (which assume the alt screen) land in the wrong buffer — leaving
+	// regions such as a sidebar unrendered — and the redraw history that
+	// accumulates in the normal buffer surfaces as scroll artifacts.
+	altScreen bool
 	// killed is set when the user explicitly kills this session via
 	// SessionManager.Delete, so the onExit path can tell an explicit kill
 	// apart from a crash that happened to be signalled. It is read once by
@@ -312,7 +333,10 @@ func (s *Session) broadcastResize(extra *connWriter) {
 // (\x1b[?1049h and \x1b[?1049l) from the buffer, keeping only normal
 // screen output so scrollback replay works correctly in xterm.js.
 func stripAlternateScreen(data []byte) []byte {
-	if !bytes.Contains(data, []byte("\x1b[?1049")) {
+	if !bytes.Contains(data, []byte("\x1b[?1049")) &&
+		!bytes.Contains(data, []byte("\x1b[?1047")) &&
+		!bytes.Contains(data, []byte("\x1b[?47")) &&
+		!bytes.Contains(data, []byte("\x1b[?1048")) {
 		return data
 	}
 
@@ -323,10 +347,40 @@ func stripAlternateScreen(data []byte) []byte {
 	// Also remove \x1b[?1047h and \x1b[?1047l (alternate screen buffer)
 	data = bytes.ReplaceAll(data, []byte("\x1b[?1047h"), nil)
 	data = bytes.ReplaceAll(data, []byte("\x1b[?1047l"), nil)
+	// Also remove \x1b[?47h and \x1b[?47l (alternate screen buffer, original)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?47h"), nil)
+	data = bytes.ReplaceAll(data, []byte("\x1b[?47l"), nil)
 	// Also remove \x1b[?1048h and \x1b[?1048l (save/restore cursor)
 	data = bytes.ReplaceAll(data, []byte("\x1b[?1048h"), nil)
 	data = bytes.ReplaceAll(data, []byte("\x1b[?1048l"), nil)
 	return data
+}
+
+// altScreenEnterSeqs are the sequences a program emits to switch to the
+// alternate screen. Used by currentAltScreenFrame to locate the start of
+// the frame the running TUI is currently drawing.
+var altScreenEnterSeqs = [][]byte{
+	[]byte("\x1b[?1049h"),
+	[]byte("\x1b[?1047h"),
+	[]byte("\x1b[?47h"),
+}
+
+// currentAltScreenFrame returns the tail of scrollback beginning at the last
+// alternate-screen-enter sequence, i.e. the bytes that drew the frame the
+// running TUI is currently displaying. Returns nil when the buffer contains
+// no enter sequence (e.g. the 256KiB ring trim already evicted it), in which
+// case the caller should fall back to replaying the full stripped buffer.
+func currentAltScreenFrame(scrollback []byte) []byte {
+	last := -1
+	for _, seq := range altScreenEnterSeqs {
+		if i := bytes.LastIndex(scrollback, seq); i > last {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	return scrollback[last:]
 }
 
 // stripSyncModes removes the DEC private mode set/reset sequences for the
@@ -374,10 +428,18 @@ func (s *Session) updateModes(data []byte) {
 		if err != nil {
 			continue
 		}
+		set := string(m[2]) == "h"
+		if altScreenModes[n] {
+			// Entering an alt-screen mode puts the program on the alt
+			// screen; leaving any of them returns it to the normal
+			// buffer. A TUI uses a single mode consistently, so tracking
+			// the union is safe in practice.
+			s.altScreen = set
+		}
 		if !syncModes[n] {
 			continue
 		}
-		s.modes[n] = string(m[2]) == "h"
+		s.modes[n] = set
 	}
 }
 
