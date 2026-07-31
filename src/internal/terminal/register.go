@@ -120,24 +120,39 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		scrollback := make([]byte, len(sess.scrollback))
 		copy(scrollback, sess.scrollback)
 		syncSeq := sess.syncMessage()
-
-		var scrollbackMsg []byte
-		if len(scrollback) > 0 {
-			stripped := stripAlternateScreen(scrollback)
-			if len(stripped) > 0 {
-				scrollbackMsg, _ = json.Marshal(map[string]any{
-					"type": "output",
-					"data": string(stripped),
-				})
-			}
-		}
-
+		onAltScreen := sess.altScreen
 		sess.pendingResizes--
 		sess.conns[wc] = true
 		sess.mu.Unlock()
 
-		if len(scrollbackMsg) > 0 {
-			wc.WriteMessage(websocket.TextMessage, scrollbackMsg)
+		// Build the replay payload. When the running program is on the
+		// alternate screen, drive the reattaching client onto the alt
+		// screen too and replay only the current frame (the bytes since
+		// the last enter-sequence). Otherwise replay the full scrollback
+		// into the normal buffer so shell history stays visible. The
+		// alt-screen toggles are stripped from the replayed bytes in both
+		// cases: in the alt-screen case we emit a single enter-sequence
+		// up front so nested toggles from earlier in-session exits/re-
+		// entries don't bounce the client back to the normal buffer
+		// mid-replay.
+		var data []byte
+		if len(scrollback) > 0 {
+			payload := scrollback
+			if onAltScreen {
+				if frame := currentAltScreenFrame(scrollback); frame != nil {
+					payload = frame
+				}
+				data = append(data, "\x1b[?1049h"...)
+			}
+			stripped := stripAlternateScreen(payload)
+			data = append(data, stripped...)
+		}
+		if len(data) > 0 {
+			msg, _ := json.Marshal(map[string]any{
+				"type": "output",
+				"data": string(data),
+			})
+			wc.WriteMessage(websocket.TextMessage, msg)
 		}
 		if syncSeq != "" {
 			msg, _ := json.Marshal(map[string]any{
