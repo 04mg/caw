@@ -77,7 +77,11 @@ const (
 var oldTimeMs = time.Now().Add(-5 * time.Minute).UnixMilli()
 
 // freshTimeMs is a creation time at "now" (after watcherStart by definition).
-var freshTimeMs = time.Now().UnixMilli()
+// Computed per call rather than at package init: tests that run long (e.g. a
+// watcher test polling on a multi-second tick) must not age a package-level
+// constant out of the fresh window, or an unrelated later test would see its
+// "fresh" session as stale and fail to claim it.
+func freshTimeMs() int64 { return time.Now().UnixMilli() }
 
 // resetClaimRegistry clears any leftover claims between tests so they don't
 // interfere with each other.
@@ -336,7 +340,7 @@ func TestFreshSessionClaimedRegardlessOfPtyState(t *testing.T) {
 		timeUpdatedMs   int64
 		parentID        string
 	}{
-		{newSession, testCwd, freshTimeMs, freshTimeMs, ""},
+		{newSession, testCwd, freshTimeMs(), freshTimeMs(), ""},
 	})
 	defer cleanup()
 
@@ -366,7 +370,7 @@ func TestAlreadyClaimedSessionSkipped(t *testing.T) {
 		parentID        string
 	}{
 		{oldSession, testCwd, oldTimeMs, time.Now().UnixMilli(), ""},
-		{newSession, testCwd, freshTimeMs, freshTimeMs, ""},
+		{newSession, testCwd, freshTimeMs(), freshTimeMs(), ""},
 	})
 	defer cleanup()
 
@@ -394,7 +398,7 @@ func TestOpenCodeSessionNotLeakedAcrossWorkspaces(t *testing.T) {
 		parentID        string
 	}{
 		// A fresh session that lives in a *different* workspace.
-		{newSession, otherCwd, freshTimeMs, freshTimeMs, ""},
+		{newSession, otherCwd, freshTimeMs(), freshTimeMs(), ""},
 	})
 	defer cleanup()
 
