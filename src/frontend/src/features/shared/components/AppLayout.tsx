@@ -49,6 +49,7 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getDefaultNewAgent } from '@/features/prefs/stores/prefsStore'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
@@ -1497,7 +1498,7 @@ export function AppLayout() {
         }
       } catch { /* fall back to raw path */ }
 
-      const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'none'
+      const defaultAgentId = getDefaultNewAgent()
       const agent = agentTypes[defaultAgentId]
       const isNone = defaultAgentId === 'none'
       const layout = isNone ? null : createLeaf(absPath, agent && agent.id !== 'terminal' ? agent.cmd : undefined, agent && agent.id !== 'terminal' ? agent.id : undefined, agent && agent.id !== 'terminal' ? agent.env : undefined)
