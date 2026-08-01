@@ -1025,6 +1025,7 @@ export function AppLayout() {
               projectPath: cwd,
               agentId,
               enableWorktrees: activeWorkspace.enableWorktrees !== false,
+              copyToWorktrees: Array.isArray(activeWorkspace.copyToWorktrees) ? activeWorkspace.copyToWorktrees : [],
             }),
           })
           if (res.ok) {
@@ -1554,6 +1555,21 @@ export function AppLayout() {
     }))
   }, [activeWorkspace, patchWorkspace])
 
+  const toggleCopyToWorktree = useCallback(
+    (path: string) => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const current = Array.isArray(ws.copyToWorktrees) ? ws.copyToWorktrees : []
+        const norm = normalizePath(path)
+        const next = current.some((p) => normalizePath(p) === norm)
+          ? current.filter((p) => normalizePath(p) !== norm)
+          : [...current, norm]
+        return { ...ws, copyToWorktrees: next }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((v) => {
       const next = !v
@@ -1795,6 +1811,8 @@ export function AppLayout() {
                 gitIgnored={gitIgnored}
                 onRefresh={fetchGitStatus}
                 onClose={() => setExplorerDrawerOpen(false)}
+                copyToWorktrees={activeWorkspace?.copyToWorktrees}
+                onToggleCopyToWorktree={toggleCopyToWorktree}
               />
             </div>
           </div>
@@ -2067,6 +2085,8 @@ export function AppLayout() {
                       gitIgnored={gitIgnored}
                       onRefresh={fetchGitStatus}
                       onClose={() => setFolderSidebarCollapsed(true)}
+                      copyToWorktrees={activeWorkspace.copyToWorktrees}
+                      onToggleCopyToWorktree={toggleCopyToWorktree}
                     />
                   ) : null}
                 </div>
