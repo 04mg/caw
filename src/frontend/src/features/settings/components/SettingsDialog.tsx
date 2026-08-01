@@ -5,7 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
-import { agentTypes, getAgentCmdOverrides, setAgentCmdOverride } from '@/features/agents/services/agentTypes'
+import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs } from '@/features/prefs/stores/prefsStore'
+import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import {
@@ -181,28 +183,19 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       const savedTerminalTheme = (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
       setTerminalTheme(savedTerminalTheme)
 
-      const savedDisabled = localStorage.getItem('caw:disabledAgents')
-      if (savedDisabled) {
-        try {
-          setDisabledAgents(JSON.parse(savedDisabled))
-        } catch {
-          setDisabledAgents([])
-        }
-      } else {
-        setDisabledAgents([])
-      }
+      loadPrefs().then((p) => {
+        setDisabledAgents(p.disabledAgents)
+        setDefaultNewAgent(p.defaultNewAgent)
+        setShellPath(p.defaultShell)
+      })
 
       const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
-
-      setShellPath(localStorage.getItem('caw:defaultShell') || '')
 
       setScrollSensitivity(parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.02'))
       setScrollFriction(parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.85'))
       setScrollVelocityThreshold(parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05'))
       setScrollGrace(parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10))
-
-      setDefaultNewAgent(localStorage.getItem('caw:defaultNewAgent') || 'none')
 
       fetch('/api/agents')
         .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
@@ -255,14 +248,21 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       } else if (!pushSupported && !pushIOSPWA) {
         setPushPermission('unsupported')
       }
-      fetch('/api/push/prefs')
-        .then((res) => res.ok ? res.json() : Promise.resolve({ data: null }))
+      // Load per-device push prefs
+      const deviceId = getDeviceId()
+      fetch('/api/push/devices')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
         .then((json) => {
-          const d = json?.data
-          if (d) {
-            setPushEnabled(d.enabled || false)
-            setPushNeedsInput(d.needsInput !== false)
-            setPushFinished(d.finished !== false)
+          const devices = json?.data || json || []
+          const myDevice = Array.isArray(devices) ? devices.find((d: any) => d.deviceId === deviceId) : null
+          if (myDevice) {
+            setPushEnabled(myDevice.enabled || false)
+            setPushNeedsInput(myDevice.needsInput !== false)
+            setPushFinished(myDevice.finished !== false)
+          } else {
+            setPushEnabled(false)
+            setPushNeedsInput(true)
+            setPushFinished(true)
           }
         })
         .catch(() => {})
@@ -428,7 +428,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       nextDisabled = [...disabledAgents, agentId]
     }
     setDisabledAgents(nextDisabled)
-    localStorage.setItem('caw:disabledAgents', JSON.stringify(nextDisabled))
+    setPrefDisabledAgents(nextDisabled)
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -703,7 +703,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       value={shellPath}
                       onChange={(e) => {
                         setShellPath(e.target.value)
-                        localStorage.setItem('caw:defaultShell', e.target.value)
+                        setPrefDefaultShell(e.target.value)
                       }}
                       placeholder="Auto (system default)"
                       className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
@@ -712,7 +712,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <button
                         onClick={() => {
                           setShellPath('')
-                          localStorage.removeItem('caw:defaultShell')
+                          setPrefDefaultShell('')
                         }}
                         className="px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
                       >
@@ -1072,7 +1072,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <button
                     onClick={() => {
                       setDefaultNewAgent('none')
-                      localStorage.setItem('caw:defaultNewAgent', 'none')
+                      setPrefDefaultNewAgent('none')
                     }}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                       defaultNewAgent === 'none'
@@ -1087,7 +1087,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <button
                     onClick={() => {
                       setDefaultNewAgent('terminal')
-                      localStorage.setItem('caw:defaultNewAgent', 'terminal')
+                      setPrefDefaultNewAgent('terminal')
                     }}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                       defaultNewAgent === 'terminal'
@@ -1100,13 +1100,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     {defaultNewAgent === 'terminal' && <Check className="h-3.5 w-3.5 text-primary" />}
                   </button>
                   {(() => {
-                    const savedDisabled = localStorage.getItem('caw:disabledAgents')
-                    let disabledList: string[] = []
-                    if (savedDisabled) {
-                      try { disabledList = JSON.parse(savedDisabled) } catch {}
-                    }
                     return availableAgents
-                      .filter((a) => !disabledList.includes(a.id))
+                      .filter((a) => !disabledAgents.includes(a.id))
                       .map((agentInfo) => {
                         const agent = agentTypes[agentInfo.id]
                         if (!agent) return null
@@ -1116,7 +1111,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             key={agentInfo.id}
                             onClick={() => {
                               setDefaultNewAgent(agentInfo.id)
-                              localStorage.setItem('caw:defaultNewAgent', agentInfo.id)
+                              setPrefDefaultNewAgent(agentInfo.id)
                             }}
                             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                               defaultNewAgent === agentInfo.id
@@ -1552,7 +1547,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                               }
                               setPushSubscribed(false)
                               setPushEnabled(false)
-                              await fetch('/api/push/prefs', {
+                              const deviceId = getDeviceId()
+                              await fetch(`/api/push/devices/${encodeURIComponent(deviceId)}`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ enabled: false }),
@@ -1563,9 +1559,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             setPushBusy(false)
                           } else {
                             // ===== ENABLE / RE-SUBSCRIBE BRANCH =====
-                            // Covers both first-time enable AND the case where
-                            // iOS evicted the local subscription on PWA reopen
-                            // (pushEnabled=true, pushSubscribed=false).
                             setPushBusy(true)
                             try {
                               if (Notification.permission === 'denied') {
@@ -1610,12 +1603,16 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                 setPushBusy(false)
                                 return
                               }
+                              const deviceId = getDeviceId()
+                              const deviceName = getDeviceName()
                               const subscribeRes = await fetch('/api/push/subscribe', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                   endpoint: subJSON.endpoint,
                                   keys: subJSON.keys,
+                                  deviceId,
+                                  deviceName,
                                 }),
                               })
                               if (!subscribeRes.ok) {
@@ -1625,7 +1622,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                               }
                               setPushSubscribed(true)
                               setPushEnabled(true)
-                              await fetch('/api/push/prefs', {
+                              await fetch(`/api/push/devices/${encodeURIComponent(deviceId)}`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ enabled: true }),
@@ -1664,7 +1661,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           onClick={() => {
                             const next = !pushNeedsInput
                             setPushNeedsInput(next)
-                            fetch('/api/push/prefs', {
+                            const deviceId = getDeviceId()
+                            fetch(`/api/push/devices/${encodeURIComponent(deviceId)}`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ needsInput: next }),
@@ -1693,7 +1691,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           onClick={() => {
                             const next = !pushFinished
                             setPushFinished(next)
-                            fetch('/api/push/prefs', {
+                            const deviceId = getDeviceId()
+                            fetch(`/api/push/devices/${encodeURIComponent(deviceId)}`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ finished: next }),

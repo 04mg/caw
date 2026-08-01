@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { RingBuffer } from './ringBuffer'
+import { getDefaultShell } from '@/features/prefs/stores/prefsStore'
 
 export interface TerminalInstance {
   leafId: string
@@ -105,7 +106,7 @@ function notify() {
 
 async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: [string, string][]): Promise<string> {
   if (!cmd || cmd.length === 0) {
-    const customShell = localStorage.getItem('caw:defaultShell')
+    const customShell = getDefaultShell()
     if (customShell) cmd = [customShell]
   }
   const body: Record<string, unknown> = { id: leafId, cwd: cwd || '', cmd }
