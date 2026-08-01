@@ -104,6 +104,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN agent_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN tab_groups_json TEXT DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN copy_to_worktrees TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE agent_sessions ADD COLUMN external_session_id TEXT NOT NULL DEFAULT ''")
 }
 
@@ -121,7 +122,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, '') FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, ''), COALESCE(copy_to_worktrees, '') FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -130,10 +131,12 @@ func (s *Store) Get() AppState {
 	for wRows.Next() {
 		var w Workspace
 		var enableWorktrees int
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON); err != nil {
+		var copyJSON string
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON, &copyJSON); err != nil {
 			continue
 		}
 		w.EnableWorktrees = enableWorktrees != 0
+		_ = json.Unmarshal([]byte(copyJSON), &w.CopyToWorktrees)
 		w.Layouts = s.loadTabLayouts(w.ID)
 		as.Workspaces = append(as.Workspaces, w)
 	}
@@ -263,9 +266,10 @@ func (s *Store) Set(as AppState) {
 		if w.EnableWorktrees {
 			enableWT = 1
 		}
+		copyJSON, _ := json.Marshal(w.CopyToWorktrees)
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON,
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json, copy_to_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON, string(copyJSON),
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(
