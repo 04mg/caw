@@ -258,7 +258,7 @@ func TestFindUnclaimedHermesSessionSkipsEnded(t *testing.T) {
 	dbPath := createHermesTestDB(t)
 	now := float64(time.Now().Unix())
 	insertHermesSession(t, dbPath, "ended", now-100, now-90, "old") // ended_at set
-	insertHermesSession(t, dbPath, "live", now-5, nil, "")         // ended_at NULL
+	insertHermesSession(t, dbPath, "live", now-5, nil, "")          // ended_at NULL
 
 	watcherStart := time.Now().Add(-10 * time.Second)
 	got := findUnclaimedHermesSession(dbPath, watcherStart, "hermes", false)
@@ -351,6 +351,43 @@ func TestHermesLastMessageTime(t *testing.T) {
 	// Unknown session returns 0.
 	if got := hermesLastMessageTime(dbPath, "nope"); got != 0 {
 		t.Fatalf("unknown session lastMessageTime = %v, want 0", got)
+	}
+}
+
+func TestHermesLatestRole(t *testing.T) {
+	dbPath := createHermesTestDB(t)
+	now := float64(time.Now().Unix())
+	insertHermesSession(t, dbPath, "r1", now, nil, "")
+	insertHermesMessage(t, dbPath, "r1", "user", "hi", "", "", now)
+	insertHermesMessage(t, dbPath, "r1", "assistant", "hey", "", "stop", now+1)
+	if got := hermesLatestRole(dbPath, "r1"); got != "assistant" {
+		t.Fatalf("latest role = %q, want assistant", got)
+	}
+	// A fresh prompt lands as the latest user message.
+	insertHermesMessage(t, dbPath, "r1", "user", "next", "", "", now+2)
+	if got := hermesLatestRole(dbPath, "r1"); got != "user" {
+		t.Fatalf("latest role after prompt = %q, want user", got)
+	}
+	// Unknown session / missing db returns "".
+	if got := hermesLatestRole(dbPath, "nope"); got != "" {
+		t.Fatalf("unknown session latest role = %q, want empty", got)
+	}
+}
+
+func TestHermesSessionTitle(t *testing.T) {
+	dbPath := createHermesTestDB(t)
+	now := float64(time.Now().Unix())
+	insertHermesSession(t, dbPath, "t1", now, nil, "")
+	insertHermesMessage(t, dbPath, "t1", "user", "list files please", "", "", now)
+	if got := hermesSessionTitle(dbPath, "t1"); got != "list files please" {
+		t.Fatalf("title fallback = %q, want first user prompt", got)
+	}
+	insertHermesSession(t, dbPath, "t2", now, nil, "Friendly Greeting")
+	if got := hermesSessionTitle(dbPath, "t2"); got != "Friendly Greeting" {
+		t.Fatalf("title = %q, want session title", got)
+	}
+	if got := hermesSessionTitle(dbPath, "nope"); got != "" {
+		t.Fatalf("unknown session title = %q, want empty", got)
 	}
 }
 

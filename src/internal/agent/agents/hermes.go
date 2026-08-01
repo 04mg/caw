@@ -69,6 +69,20 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// advanced or a sibling wrote.
 	var lastBoundMsgTime float64
 	var otherSessionActive bool
+	// PTY-interrupt detection. The Hermes TUI maps Ctrl+C during a busy turn
+	// to session.interrupt, but it does NOT reliably persist an "Operation
+	// interrupted" message row: an interrupted turn usually leaves only a
+	// finish_reason-less partial assistant row, or nothing new at all, so
+	// transcript-based detection misses most interrupts and the card would
+	// sit in "Working" until the idle-timeout reverts it to "Idle" minutes
+	// later as if it had finished. We therefore also watch for the Ctrl+C
+	// byte the user sends into the Hermes PTY and report "interrupted"
+	// immediately while the bound turn is working. interruptApplied stays
+	// sticky until the user submits a new prompt (the latest row becomes a
+	// fresh user message), because the transcript may keep showing the
+	// pre-interrupt working state for a while.
+	var lastInterruptSeen time.Time
+	var interruptApplied bool
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -129,8 +143,22 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					}
 				}
 
+				// If a PTY interrupt is pending, keep the card in
+				// "interrupted" regardless of what the transcript shows:
+				// Hermes may persist the pre-interrupt working state
+				// (e.g. a finish_reason-less partial assistant row) that
+				// would otherwise read back as "thinking"/"executing".
+				// The interrupt only clears once the user submits a new
+				// prompt, which lands as a fresh user message.
+				if interruptApplied && hermesLatestRole(dbPath, hermesSessionID) == "user" {
+					interruptApplied = false
+				}
+
 				before := lastReportedStatus
 				wrappedCallback := func(status, tool, details, title string) {
+					if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
+						status = "interrupted"
+					}
 					lastReportedStatus = status
 					callback(status, tool, details, title)
 				}
@@ -160,6 +188,22 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		case <-ticker.C:
 			heartbeat()
 			processState(dbChanged())
+
+			// PTY-interrupt detection (see the interruptApplied comment
+			// above): a fresh Ctrl+C while the bound turn is working
+			// immediately flips the card to "interrupted" instead of waiting
+			// for a transcript marker that Hermes may never write.
+			if hermesSessionID != "" {
+				last := agent.LastPtyInterrupt(sessionID)
+				if last.After(lastInterruptSeen) {
+					lastInterruptSeen = last
+					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+						interruptApplied = true
+						lastReportedStatus = "interrupted"
+						callback("interrupted", "", "", hermesSessionTitle(dbPath, hermesSessionID))
+					}
+				}
+			}
 
 			// Mid-session re-bind for /new, --continue, and --resume. Fires
 			// when the bound session has been silent long enough OR when the
@@ -213,6 +257,49 @@ func hermesLastMessageTime(dbPath, sid string) float64 {
 	var ts float64
 	_ = db.QueryRow(`SELECT timestamp FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sid).Scan(&ts)
 	return ts
+}
+
+// hermesLatestRole returns the role of the most recent message row for the
+// given session, or "" when the query fails. Used by processState to clear a
+// sticky PTY-interrupt once the user submits a new prompt (latest row = "user").
+func hermesLatestRole(dbPath, sid string) string {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var role string
+	_ = db.QueryRow(`SELECT role FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sid).Scan(&role)
+	return role
+}
+
+// hermesSessionTitle returns the display title for the given session: the
+// auto-generated sessions.title when present, otherwise the first user message
+// text via CleanPrompt.
+func hermesSessionTitle(dbPath, sid string) string {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	var sessionTitle string
+	_ = db.QueryRow(`SELECT title FROM sessions WHERE id = ?`, sid).Scan(&sessionTitle)
+	sessionTitle = CleanPrompt(sessionTitle)
+
+	// Fallback: derive the title from the first user message. Hermes injects
+	// long system-reminder blocks as user-role messages for skills like "plan";
+	// CleanPrompt strips control sequences and trims, so the result is still
+	// reasonable when the auto-title is empty.
+	if sessionTitle == "" {
+		var firstUser string
+		_ = db.QueryRow(
+			`SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1`,
+			sid,
+		).Scan(&firstUser)
+		sessionTitle = CleanPrompt(firstUser)
+	}
+	return sessionTitle
 }
 
 // findUnclaimedHermesSession enumerates candidate Hermes sessions in the
@@ -318,12 +405,12 @@ func findRebindHermesSession(dbPath, agentID, currentID string) string {
 //   - role=user           → thinking (a new prompt just arrived)
 //   - role=tool           → thinking (a tool just returned; the agent continues)
 //   - role=assistant, finish_reason=tool_calls
-//       - last tool is clarify (or any user-input tool) → waiting_input
-//       - otherwise                                   → executing
+//   - last tool is clarify (or any user-input tool) → waiting_input
+//   - otherwise                                   → executing
 //   - role=assistant, finish_reason=stop               → idle (turn complete)
 //   - role=assistant, finish_reason="" (still generating)
-//       - content starts with "Operation interrupted"  → idle (aborted)
-//       - otherwise                                    → thinking
+//   - content starts with "Operation interrupted"  → idle (aborted)
+//   - otherwise                                    → thinking
 //
 // The session title comes from sessions.title (Hermes auto-generates one),
 // falling back to the first user message text via CleanPrompt.
@@ -339,22 +426,7 @@ func (w *HermesWatcher) parseHermesDB(dbPath, sid string, callback func(status, 
 		return
 	}
 
-	var sessionTitle string
-	_ = db.QueryRow(`SELECT title FROM sessions WHERE id = ?`, sid).Scan(&sessionTitle)
-	sessionTitle = CleanPrompt(sessionTitle)
-
-	// Fallback: derive the title from the first user message. Hermes injects
-	// long system-reminder blocks as user-role messages for skills like "plan";
-	// CleanPrompt strips control sequences and trims, so the result is still
-	// reasonable when the auto-title is empty.
-	if sessionTitle == "" {
-		var firstUser string
-		_ = db.QueryRow(
-			`SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1`,
-			sid,
-		).Scan(&firstUser)
-		sessionTitle = CleanPrompt(firstUser)
-	}
+	sessionTitle := hermesSessionTitle(dbPath, sid)
 
 	var role, content, toolCallsJSON, finishReason, toolName string
 	if err := db.QueryRow(
