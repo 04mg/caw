@@ -12,10 +12,14 @@ func TestIsInterruptInput(t *testing.T) {
 	}{
 		{"", false},
 		{"hello world", false},
+		{"\x1b", true},
 		{"\x1b[24;1R", false},
+		{"\x1b[A", false},
+		{"\x1bOP", false},
 		{"\x03", true},
 		{"ls\r\n\x03", true},
 		{"abc\x03def", true},
+		{"abc\x1b", false},
 	}
 	for _, c := range cases {
 		if got := isInterruptInput(c.in); got != c.want {

@@ -187,15 +187,15 @@ func init() {
 }
 
 // handlePtyInput detects when the user sends the interrupt key sequence
-// (Ctrl+C) into a PTY and records it so watchers can detect a user-initiated
-// interrupt that the agent's transcript/DB may not surface reliably. It does
-// NOT transition status itself — that is left to each agent's watcher, which
-// polls LastPtyInterrupt and applies the "interrupted" state while the turn
-// is working.
+// (Ctrl+C or ESC) into a PTY and records it so watchers can detect a
+// user-initiated interrupt that the agent's transcript/DB may not surface
+// reliably. It does NOT transition status itself — that is left to each
+// agent's watcher, which polls LastPtyInterrupt and applies the "interrupted"
+// state while the turn is working.
 //
 // Previously this hook transitioned to "thinking" on any input; that was
 // disabled to prevent non-agent PTY inputs (e.g. plain shell commands) from
-// flipping the status. Recording only the explicit interrupt byte keeps the
+// flipping the status. Recording only the explicit interrupt keys keeps the
 // hook safe and narrow.
 func handlePtyInput(id string, data string) {
 	if isInterruptInput(data) {
@@ -206,11 +206,20 @@ func handlePtyInput(id string, data string) {
 }
 
 // isInterruptInput reports whether the given PTY input bytes contain the user
-// interrupt key sequence. The Hermes TUI (and most TUI coding agents) map
-// Ctrl+C during a busy turn to an interrupt/cancel request; the byte stream
-// delivers it as 0x03.
+// interrupt key sequence. TUI coding agents map two keys to interrupt/cancel
+// during a busy turn:
+//
+//   - Ctrl+C, delivered as the 0x03 byte, and
+//   - ESC, delivered as a standalone 0x1b byte (Claude Code's interrupt key).
+//
+// Only a standalone 0x1b counts as ESC: escape sequences (arrow keys,
+// function keys, cursor-position reports) also begin with 0x1b but carry
+// trailing bytes, and must not be treated as an interrupt.
 func isInterruptInput(data string) bool {
-	return strings.Contains(data, "\x03")
+	if strings.Contains(data, "\x03") {
+		return true
+	}
+	return data == "\x1b"
 }
 
 // handlePtyFocus records whether the given leaf/session id currently has the
