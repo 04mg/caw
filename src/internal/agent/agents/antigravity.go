@@ -438,6 +438,51 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	// a final answer and is idle. Subsequent SYSTEM_MESSAGE or GENERIC steps
 	// (e.g. session metadata, task notifications) must NOT override this idle
 	// state — only a new USER_INPUT (which starts a new turn) should.
+
+	// Detect an interrupt (user cancelled the in-flight planner turn) and a
+	// tool-call failure from the last written step. Antigravity doesn't write
+	// a dedicated interrupt step; an interrupt surfaces as a SYSTEM_MESSAGE or
+	// GENERIC step whose content references the planner being
+	// "interrupted"/"cancelled"/"canceled". A tool failure surfaces as a tool
+	// step (RUN_COMMAND, VIEW_FILE, ...) whose content begins with an error
+	// marker (e.g. "Error:", "Command failed", "ENOENT").
+	lastStepErrTool := ""
+	lastStepErrText := ""
+	interrupted := false
+	if len(lines) > 0 {
+		var lastStep antigravityStep
+		if json.Unmarshal([]byte(lines[len(lines)-1]), &lastStep) == nil {
+			lc := strings.ToLower(lastStep.Content)
+			if strings.Contains(lc, "interrupted") ||
+				((strings.Contains(lc, "cancelled") || strings.Contains(lc, "canceled")) &&
+					!taskSenderRx.MatchString(lastStep.Content)) {
+				interrupted = true
+			}
+			if toolStepTypes[lastStep.Type] {
+				if strings.Contains(lc, "error") || strings.Contains(lc, "failed") ||
+					strings.Contains(lc, "enoent") || strings.Contains(lc, "no such file") {
+					lastStepErrTool = strings.ToLower(lastStep.Type)
+					lastStepErrText = strings.TrimSpace(firstLine(lastStep.Content))
+					if lastStepErrText == "" {
+						lastStepErrText = "tool call failed"
+					}
+				}
+			}
+		}
+	}
+
+	// An interrupt takes precedence: the user cancelled, so surface it with a
+	// red dot and no push notification.
+	if interrupted {
+		callback("interrupted", "", "", sessionTitle)
+		return
+	}
+	// A tool failure surfaces with a red dot; the planner continues afterward.
+	if lastStepErrTool != "" {
+		callback("tool_failed", lastStepErrTool, lastStepErrText, sessionTitle)
+		return
+	}
+
 	seenFinalAnswer := false
 	switch lastType {
 	case "USER_INPUT":
@@ -554,5 +599,17 @@ func uriToPath(uri string) string {
 	// platforms, then convert to the OS-native separator.
 	p = strings.ReplaceAll(p, "|", ":")
 	return filepath.FromSlash(p)
+}
+
+// firstLine returns the first non-empty line of s, trimmed. Used to extract a
+// short error message from a tool step's content blob.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
