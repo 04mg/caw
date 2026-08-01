@@ -59,6 +59,6 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Hermes',
     cmd: ['hermes', '--yolo'],
     env: [['HERMES_TUI_BACKGROUND', '#000000']],
-    icon: NousResearch.Avatar,
+    icon: NousResearch,
   },
 }
