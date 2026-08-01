@@ -85,12 +85,65 @@ func (s *Service) SetupWorkspace(req SetupWorkspaceRequest) (*SetupWorkspaceResp
 		return nil, fmt.Errorf("failed to create git worktree: %v (stderr: %s)", err, stderr.String())
 	}
 
+	for _, p := range req.CopyToWorktrees {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		rel, err := filepath.Rel(req.ProjectPath, p)
+		if err != nil {
+			continue
+		}
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		src := filepath.Join(req.ProjectPath, rel)
+		dst := filepath.Join(worktreePath, rel)
+		info, err := os.Stat(src)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			_ = copyDirToWorktree(src, dst)
+		} else {
+			_ = copyFileToWorktree(src, dst)
+		}
+	}
+
 	return &SetupWorkspaceResponse{
 		IsGit:        true,
 		WorktreePath: worktreePath,
 		BranchName:   branchName,
 		BaseBranch:   baseBranch,
 	}, nil
+}
+
+func copyFileToWorktree(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
+func copyDirToWorktree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		return copyFileToWorktree(path, target)
+	})
 }
 
 func (s *Service) CheckChanges(worktreePath, branchName, baseBranch string) (*CheckChangesResponse, error) {
