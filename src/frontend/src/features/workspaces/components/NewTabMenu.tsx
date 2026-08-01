@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { Terminal, Plus, Workflow } from 'lucide-react'
-import { agentTypes, getEffectiveAgentCmd } from '@/features/agents/services/agentTypes'
+import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -63,13 +64,7 @@ export function NewTabMenu({
           <span>New Terminal</span>
         </DropdownMenuItem>
         {(() => {
-          const savedDisabled = localStorage.getItem('caw:disabledAgents')
-          let disabledList: string[] = []
-          if (savedDisabled) {
-            try {
-              disabledList = JSON.parse(savedDisabled)
-            } catch {}
-          }
+          const disabledList = getDisabledAgents()
 
           const visibleAgents = availableAgents.filter((a) => !disabledList.includes(a.id))
           if (visibleAgents.length === 0) return null

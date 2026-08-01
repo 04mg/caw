@@ -105,6 +105,11 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN base_branch TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN tab_groups_json TEXT DEFAULT ''")
 	_, _ = s.db.Exec("ALTER TABLE agent_sessions ADD COLUMN external_session_id TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN device_name TEXT NOT NULL DEFAULT ''")
+	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_enabled INTEGER NOT NULL DEFAULT 0")
+	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_needs_input INTEGER NOT NULL DEFAULT 1")
+	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_finished INTEGER NOT NULL DEFAULT 1")
 }
 
 func (s *Store) Get() AppState {
@@ -227,13 +232,11 @@ func (s *Store) Set(as AppState) {
 	tx.Exec("DELETE FROM tab_layouts")
 	tx.Exec("DELETE FROM workspaces")
 
-	// Preserve push-related settings (VAPID keys, push prefs) that must
-	// survive workspace state saves. Store.Set() does DELETE FROM settings,
-	// which would wipe them otherwise.
+	// Preserve VAPID keys that must survive workspace state saves.
+	// Store.Set() does DELETE FROM settings, which would wipe them otherwise.
 	var preservedSettings [][2]string
 	for _, key := range []string{
 		"vapid_public_key", "vapid_private_key",
-		"push_enabled", "push_needs_input", "push_finished",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {

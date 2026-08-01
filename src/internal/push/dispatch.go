@@ -50,31 +50,15 @@ func agentName(agentID string) string {
 }
 
 // Dispatch sends a push notification for the given event type to all stored
-// subscriptions, respecting the user's push preferences. It runs non-blocking
-// — each push send happens in its own goroutine.
+// subscriptions, respecting each device's push preferences. It runs
+// non-blocking — each push send happens in its own goroutine.
 func Dispatch(store *state.Store, eventType, sessionID, agentID, title, workspace string) {
 	if !HasKeys() {
 		return
 	}
 
-	prefs, err := store.GetPushPrefs()
-	if err != nil {
-		log.Printf("push: failed to read prefs: %v", err)
-		return
-	}
-	if !prefs.Enabled {
-		return
-	}
-
 	switch eventType {
-	case "needs_input":
-		if !prefs.NeedsInput {
-			return
-		}
-	case "finished":
-		if !prefs.Finished {
-			return
-		}
+	case "needs_input", "finished":
 	default:
 		return
 	}
@@ -116,6 +100,15 @@ func Dispatch(store *state.Store, eventType, sessionID, agentID, title, workspac
 	}
 
 	for _, sub := range subs {
+		if !sub.Enabled {
+			continue
+		}
+		if eventType == "needs_input" && !sub.NeedsInput {
+			continue
+		}
+		if eventType == "finished" && !sub.Finished {
+			continue
+		}
 		go sendToSubscription(store, sub, payloadBytes, urgency, ttl)
 	}
 }

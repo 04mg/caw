@@ -4,7 +4,8 @@ import { Dialog, DialogContent } from '@/components/dialog'
 import { Input } from '@/components/input'
 
 import { cn } from '@/features/shared/utils/utils'
-import { agentTypes, getEffectiveAgentCmd } from '@/features/agents/services/agentTypes'
+import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
 
 interface AgentInfo {
   id: string
@@ -68,16 +69,7 @@ export function CommandPalette({
       .then((json) => setAgents(json?.data ?? []))
       .catch(() => setAgents([]))
 
-    const savedDisabled = localStorage.getItem('caw:disabledAgents')
-    if (savedDisabled) {
-      try {
-        setDisabledAgents(JSON.parse(savedDisabled))
-      } catch {
-        setDisabledAgents([])
-      }
-    } else {
-      setDisabledAgents([])
-    }
+    setDisabledAgents(getDisabledAgents())
   }, [open])
 
   useEffect(() => {
