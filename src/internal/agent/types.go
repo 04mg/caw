@@ -8,9 +8,10 @@ type Info struct {
 }
 
 type SetupWorkspaceRequest struct {
-	ProjectPath     string `json:"projectPath"`
-	AgentID         string `json:"agentId"`
-	EnableWorktrees bool   `json:"enableWorktrees"`
+	ProjectPath     string   `json:"projectPath"`
+	AgentID         string   `json:"agentId"`
+	EnableWorktrees bool     `json:"enableWorktrees"`
+	CopyToWorktrees []string `json:"copyToWorktrees,omitempty"`
 }
 
 type SetupWorkspaceResponse struct {

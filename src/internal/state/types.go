@@ -31,6 +31,7 @@ type Workspace struct {
 	ActivePaneID    string      `json:"activePaneId"`
 	EnableWorktrees bool        `json:"enableWorktrees"`
 	TabGroupsJSON   string      `json:"tabGroupsJson,omitempty"`
+	CopyToWorktrees []string    `json:"copyToWorktrees,omitempty"`
 }
 
 type AppState struct {

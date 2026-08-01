@@ -13,6 +13,9 @@ function fixWorkspace(ws: Workspace): Workspace {
   if (ws.enableWorktrees === undefined) {
     ws.enableWorktrees = false
   }
+  if (!Array.isArray(ws.copyToWorktrees)) {
+    ws.copyToWorktrees = []
+  }
   return ws
 }
 
@@ -54,6 +57,7 @@ function remoteStatesEqual(a: BackendState, b: BackendState): boolean {
     const bw = b.workspaces[i]
     if (aw.id !== bw.id || aw.activeTabIndex !== bw.activeTabIndex ||
         aw.activePaneId !== bw.activePaneId) return false
+    if ((aw.copyToWorktrees || []).join('\u0000') !== (bw.copyToWorktrees || []).join('\u0000')) return false
     if (aw.layouts.length !== bw.layouts.length) return false
     for (let j = 0; j < aw.layouts.length; j++) {
       if (aw.layouts[j].id !== bw.layouts[j].id) return false
