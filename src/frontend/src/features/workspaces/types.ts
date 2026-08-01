@@ -27,6 +27,7 @@ export interface Workspace {
   tabGroupsJson?: string
   tabGroups?: TabGroupsNode
   activeGroupId?: string
+  copyToWorktrees?: string[]
 }
 
 export interface TabLayout {
