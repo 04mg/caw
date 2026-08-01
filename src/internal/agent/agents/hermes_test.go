@@ -1,11 +1,15 @@
 package agents
 
 import (
+	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/04mg/caw/internal/agent"
 	_ "modernc.org/sqlite"
 )
 
@@ -374,6 +378,141 @@ func TestHermesLatestRole(t *testing.T) {
 	}
 }
 
+func TestHermesLastMessageID(t *testing.T) {
+	dbPath := createHermesTestDB(t)
+	now := float64(time.Now().Unix())
+	insertHermesSession(t, dbPath, "i1", now, nil, "")
+	insertHermesMessage(t, dbPath, "i1", "user", "hi", "", "", now)
+	insertHermesMessage(t, dbPath, "i1", "assistant", "hey", "", "stop", now+1)
+	if got := hermesLastMessageID(dbPath, "i1"); got != 2 {
+		t.Fatalf("lastMessageID = %d, want 2", got)
+	}
+	insertHermesMessage(t, dbPath, "i1", "user", "next", "", "", now+2)
+	if got := hermesLastMessageID(dbPath, "i1"); got != 3 {
+		t.Fatalf("lastMessageID after prompt = %d, want 3", got)
+	}
+	if got := hermesLastMessageID(dbPath, "nope"); got != 0 {
+		t.Fatalf("unknown session lastMessageID = %d, want 0", got)
+	}
+}
+
+// TestHermesWatcherPTYInterruptStaysUntilNewPrompt reproduces the regression
+// where a Hermes card flipped back to "working" right after showing
+// "interrupted": Hermes writes no new DB row when a turn is aborted, so the
+// latest row stays the user's pre-interrupt prompt (role=user). The watcher
+// must keep the card in "interrupted" until a genuinely NEW user message
+// (higher messages.id) arrives.
+func TestHermesWatcherPTYInterruptStaysUntilNewPrompt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hermesDir := filepath.Join(home, ".hermes")
+	if err := os.MkdirAll(hermesDir, 0o755); err != nil {
+		t.Fatalf("mkdir hermes dir: %v", err)
+	}
+	dbPath := filepath.Join(hermesDir, "state.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    end_reason TEXT,
+    title TEXT,
+    cwd TEXT
+);
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT,
+    tool_calls TEXT,
+    tool_name TEXT,
+    finish_reason TEXT,
+    timestamp REAL NOT NULL
+);
+`); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	db.Close()
+
+	now := float64(time.Now().Unix())
+	insertHermesSession(t, dbPath, "s-int", now, nil, "")
+	// The pre-interrupt user prompt. On interrupt this stays the latest row.
+	insertHermesMessage(t, dbPath, "s-int", "user", "write a long poem", "", "", now)
+
+	const leafID = "hermes-int-pty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&HermesWatcher{}).Watch(ctx, leafID, "", false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
+	}
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
+	}
+
+	// Session binds and reports thinking from the user prompt row. The prompt
+	// row stays the LATEST row for the whole interrupted turn: Hermes writes
+	// no new row on abort, so the transcript keeps showing a working state.
+	waitFor("thinking", 8*time.Second)
+
+	// User presses Ctrl+C in the PTY → card flips to interrupted.
+	agent.SetPtyInterruptForTest(leafID, time.Now())
+	waitFor("interrupted", 8*time.Second)
+
+	// REGRESSION GUARD: Hermes stores all sessions in one shared state.db, so
+	// a write to ANY session — here a sibling session landing while this
+	// watcher is active — fires dbChanged and re-runs the interrupt-clear
+	// check. The buggy check ("latest role is user") sees the bound session's
+	// latest row is still the pre-interrupt user prompt, clears the sticky
+	// interrupt, re-reads the prompt as "thinking", and flips the card back
+	// to Working. The interrupt must instead survive until a NEW user
+	// message (higher messages.id) lands.
+	insertHermesSession(t, dbPath, "s-sibling", now-3600, nil, "")
+	insertHermesMessage(t, dbPath, "s-sibling", "user", "sibling write", "", "", now+0.5)
+	time.Sleep(6 * time.Second)
+	if got := lastStatus(); got != "interrupted" {
+		t.Fatalf("card flipped back to %q after interrupt; want it to stay interrupted (statuses: %v)", got, statuses)
+	}
+
+	// A NEW user prompt clears the sticky interrupt and resumes working.
+	insertHermesMessage(t, dbPath, "s-int", "user", "new prompt", "", "", now+2)
+	waitFor("thinking", 8*time.Second)
+
+	cancel()
+	<-done
+}
+
 func TestHermesSessionTitle(t *testing.T) {
 	dbPath := createHermesTestDB(t)
 	now := float64(time.Now().Unix())
@@ -399,6 +538,9 @@ func TestHermesDBMissingFile(t *testing.T) {
 	}
 	if got := hermesLastMessageTime(missing, "x"); got != 0 {
 		t.Fatalf("missing db lastMessageTime = %v, want 0", got)
+	}
+	if got := hermesLastMessageID(missing, "x"); got != 0 {
+		t.Fatalf("missing db lastMessageID = %v, want 0", got)
 	}
 	if got := findRebindHermesSession(missing, "hermes", "x"); got != "" {
 		t.Fatalf("missing db rebind = %q, want empty", got)

@@ -80,9 +80,14 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// immediately while the bound turn is working. interruptApplied stays
 	// sticky until the user submits a new prompt (the latest row becomes a
 	// fresh user message), because the transcript may keep showing the
-	// pre-interrupt working state for a while.
+	// pre-interrupt working state for a while. interruptBoundaryID records
+	// the messages.id at the moment the interrupt was applied so a sticky
+	// interrupt is only cleared by a genuinely NEW user message (a higher id)
+	// — not by the pre-interrupt user prompt row, which stays the latest row
+	// for the entire interrupted turn (Hermes writes no new row on abort).
 	var lastInterruptSeen time.Time
 	var interruptApplied bool
+	var interruptBoundaryID int64
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -148,9 +153,14 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				// Hermes may persist the pre-interrupt working state
 				// (e.g. a finish_reason-less partial assistant row) that
 				// would otherwise read back as "thinking"/"executing".
-				// The interrupt only clears once the user submits a new
-				// prompt, which lands as a fresh user message.
-				if interruptApplied && hermesLatestRole(dbPath, hermesSessionID) == "user" {
+				// The interrupt only clears once the user submits a NEW
+				// prompt, which lands as a fresh user message whose id is
+				// greater than interruptBoundaryID. Checking merely that
+				// the latest role is "user" would clear the interrupt
+				// immediately: during an interrupted turn the latest row
+				// is still the user's pre-interrupt prompt (Hermes writes
+				// no new row on abort).
+				if interruptApplied && hermesLatestRole(dbPath, hermesSessionID) == "user" && hermesLastMessageID(dbPath, hermesSessionID) > interruptBoundaryID {
 					interruptApplied = false
 				}
 
@@ -200,6 +210,7 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
 						interruptApplied = true
 						lastReportedStatus = "interrupted"
+						interruptBoundaryID = hermesLastMessageID(dbPath, hermesSessionID)
 						callback("interrupted", "", "", hermesSessionTitle(dbPath, hermesSessionID))
 					}
 				}
@@ -271,6 +282,22 @@ func hermesLatestRole(dbPath, sid string) string {
 	var role string
 	_ = db.QueryRow(`SELECT role FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sid).Scan(&role)
 	return role
+}
+
+// hermesLastMessageID returns the id of the most recent message row for the
+// given session, or 0 if the query fails. Used to tell whether a "user" role
+// row is a genuinely new prompt (id greater than interruptBoundaryID) rather
+// than the pre-interrupt prompt row that stays the latest row for the whole
+// interrupted turn.
+func hermesLastMessageID(dbPath, sid string) int64 {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var id int64
+	_ = db.QueryRow(`SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sid).Scan(&id)
+	return id
 }
 
 // hermesSessionTitle returns the display title for the given session: the
