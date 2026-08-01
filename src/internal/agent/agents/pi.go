@@ -22,6 +22,10 @@ type PiMessage struct {
 	Content      []PiBlock `json:"content"`
 	StopReason   string    `json:"stopReason,omitempty"`
 	ErrorMessage string    `json:"errorMessage,omitempty"`
+	// IsError is set on toolResult messages when the tool call failed. Pi
+	// and omp write "isError": true on the toolResult message.
+	IsError  bool   `json:"isError,omitempty"`
+	ToolName string `json:"toolName,omitempty"`
 }
 
 type PiBlock struct {
@@ -282,17 +286,17 @@ func parsePiFormatLog(filePath string, offset int64, resume bool, callback func(
 	}
 
 	// Forward pass: emit status events for the new log lines.
-	var states []struct{ status, tool string }
+	var states []struct{ status, tool, details string }
 	for _, line := range lines {
 		msg, ok := parseOnePiLogLine(line)
 		if !ok {
 			continue
 		}
-		status, tool := piStatusForMessage(msg)
+		status, tool, details := piStatusForMessage(msg)
 		if status == "" {
 			continue
 		}
-		states = append(states, struct{ status, tool string }{status, tool})
+		states = append(states, struct{ status, tool, details string }{status, tool, details})
 	}
 
 	if len(states) == 0 {
@@ -306,7 +310,7 @@ func parsePiFormatLog(filePath string, offset int64, resume bool, callback func(
 		// Resumed session: report only the final state to avoid replaying
 		// the whole prior session history as a burst of transitions.
 		last := states[len(states)-1]
-		callback(last.status, last.tool, "", sessionTitle)
+		callback(last.status, last.tool, last.details, sessionTitle)
 		return
 	}
 
@@ -321,7 +325,7 @@ func parsePiFormatLog(filePath string, offset int64, resume bool, callback func(
 			continue
 		}
 		lastState = state
-		callback(st.status, st.tool, "", sessionTitle)
+		callback(st.status, st.tool, st.details, sessionTitle)
 	}
 }
 
@@ -345,16 +349,27 @@ func parsePiFormatTitleLine(line string) (string, bool) {
 
 // piStatusForMessage derives the working/idle state represented by a single
 // pi log message. It returns an empty status string when the message does not
-// represent a meaningful state change.
-func piStatusForMessage(msg PiMessage) (status, tool string) {
+// represent a meaningful state change. The third return value is the details
+// text (used to surface a tool error message); it is "" for non-error states.
+func piStatusForMessage(msg PiMessage) (status, tool, details string) {
 	roleLower := strings.ToLower(msg.Role)
 
 	if roleLower == "user" {
-		return "thinking", ""
+		return "thinking", "", ""
 	}
 
 	if roleLower == "toolresult" || roleLower == "tool" {
-		return "thinking", ""
+		// A tool result with isError:true means the tool call failed (e.g.
+		// a Read on a missing file returns "ENOENT: ..."). Surface it as
+		// tool_failed with the tool name and error text so the UI shows a
+		// red dot. The agent keeps running, so it stays in the working
+		// column.
+		if msg.IsError {
+			toolName := msg.ToolName
+			errText := piErrorText(msg)
+			return "tool_failed", toolName, errText
+		}
+		return "thinking", "", ""
 	}
 
 	// Harness-injected context (e.g. omp plan-mode system reminders delivered
@@ -365,12 +380,14 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 	// arrives. Without this, omp's text→developer→ask sequence produces both
 	// a "finished" and a "needs_input" notification instead of just one.
 	if roleLower == "developer" {
-		return "thinking", ""
+		return "thinking", "", ""
 	}
 
 	if roleLower == "assistant" || roleLower == "agent" {
 		if strings.ToLower(msg.StopReason) == "aborted" || strings.Contains(strings.ToLower(msg.ErrorMessage), "aborted") {
-			return "idle", ""
+			// The user aborted the turn. Report "interrupted" (not idle) so
+			// the UI surfaces it with a red dot and no push notification.
+			return "interrupted", "", ""
 		}
 		var lastToolName string
 		var hasText bool
@@ -390,9 +407,9 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 			// Without this, omp's `ask` (and similar) stay in Working forever
 			// instead of moving the kanban card to Needs Input.
 			if isUserInputTool(strings.ToLower(lastToolName)) {
-				return "waiting_input", lastToolName
+				return "waiting_input", lastToolName, ""
 			}
-			return "executing", lastToolName
+			return "executing", lastToolName, ""
 		}
 		// An assistant message with a thinking (reasoning) block but no
 		// tool call or text yet means the model is still working — report
@@ -402,12 +419,28 @@ func piStatusForMessage(msg PiMessage) (status, tool string) {
 		// Only canonical user-input tools signal waiting_input; keyword
 		// scanning of assistant text was removed due to false positives.
 		if hasThinking && !hasText {
-			return "thinking", ""
+			return "thinking", "", ""
 		}
 		if hasText {
-			return "idle", ""
+			return "idle", "", ""
 		}
 	}
 
-	return "", ""
+	return "", "", ""
+}
+
+// piErrorText extracts the error text from a failed toolResult message. Pi
+// and omp write the error as a text block inside content (e.g.
+// "ENOENT: no such file or directory, access '/...'"). Falls back to the
+// ErrorMessage field if no content text is present.
+func piErrorText(msg PiMessage) string {
+	for _, b := range msg.Content {
+		if b.Type == "text" && b.Text != "" {
+			return b.Text
+		}
+	}
+	if msg.ErrorMessage != "" {
+		return msg.ErrorMessage
+	}
+	return "tool call failed"
 }

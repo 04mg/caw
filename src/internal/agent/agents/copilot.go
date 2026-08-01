@@ -38,9 +38,23 @@ type copilotToolReq struct {
 	Name       string `json:"name"`
 }
 
-// copilotToolResult is the data payload for "tool.result" events.
+// copilotToolResult is the data payload for "tool.result" events. When the
+// tool call failed, Copilot populates IsError and/or an Error object.
 type copilotToolResult struct {
 	ToolCallID string `json:"toolCallId"`
+	IsError    bool   `json:"isError,omitempty"`
+	Error      *struct {
+		Message string `json:"message,omitempty"`
+	} `json:"error,omitempty"`
+	Output string `json:"output,omitempty"`
+}
+
+// copilotSessionError is the data payload for "session.error" events: a
+// quota/transport/auth failure that ends the turn abnormally.
+type copilotSessionError struct {
+	ErrorType  string `json:"errorType"`
+	Message    string `json:"message"`
+	ErrorCode  string `json:"errorCode,omitempty"`
 }
 
 // copilotTurnEnd is the data payload for "assistant.turn_end" events.
@@ -296,7 +310,20 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 			callback("idle", "", "", sessionTitle)
 			return
 		case "abort":
-			callback("idle", "", "", sessionTitle)
+			// The user aborted the turn. Report "interrupted" (not idle) so
+			// the UI surfaces it with a red dot and no push is sent.
+			callback("interrupted", "", "", sessionTitle)
+			return
+		case "session.error":
+			// A session-level error (quota exceeded, transport failure, auth
+			// error) ended the turn abnormally. Surface it with a red dot so
+			// the user notices; no push notification is sent.
+			var se copilotSessionError
+			msg := "session error"
+			if json.Unmarshal(ev.Data, &se) == nil && se.Message != "" {
+				msg = se.Message
+			}
+			callback("tool_failed", "", msg, sessionTitle)
 			return
 		case "assistant.ask_user":
 			var ask copilotAskUser
@@ -307,6 +334,19 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 			callback("waiting_input", "ask_user", question, sessionTitle)
 			return
 		case "tool.result":
+			// A failed tool result carries is_error:true (or an error object).
+			// Surface it as tool_failed; otherwise the agent continues thinking.
+			var tr copilotToolResult
+			if json.Unmarshal(ev.Data, &tr) == nil && tr.IsError {
+				errText := "tool call failed"
+				if tr.Error != nil && tr.Error.Message != "" {
+					errText = tr.Error.Message
+				} else if tr.Output != "" {
+					errText = tr.Output
+				}
+				callback("tool_failed", "", errText, sessionTitle)
+				return
+			}
 			callback("thinking", "", "", sessionTitle)
 			return
 		case "assistant.message":

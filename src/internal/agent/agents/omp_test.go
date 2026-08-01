@@ -94,7 +94,7 @@ func TestParsePiFormatTitleLine(t *testing.T) {
 }
 
 func TestPiStatusForMessageAskIsWaitingInput(t *testing.T) {
-	status, tool := piStatusForMessage(PiMessage{
+	status, tool, _ := piStatusForMessage(PiMessage{
 		Role:       "assistant",
 		StopReason: "toolUse",
 		Content: []PiBlock{
@@ -107,7 +107,7 @@ func TestPiStatusForMessageAskIsWaitingInput(t *testing.T) {
 }
 
 func TestPiStatusForMessageReadIsExecuting(t *testing.T) {
-	status, tool := piStatusForMessage(PiMessage{
+	status, tool, _ := piStatusForMessage(PiMessage{
 		Role:       "assistant",
 		StopReason: "toolUse",
 		Content: []PiBlock{
@@ -124,7 +124,7 @@ func TestPiStatusForMessageDeveloperIsThinking(t *testing.T) {
 	// text-only assistant message (stopReason:stop) and a follow-up ask tool
 	// call. Treating developer as thinking prevents the preceding idle from
 	// firing a spurious "finished" push before the ask arrives.
-	status, tool := piStatusForMessage(PiMessage{Role: "developer"})
+	status, tool, _ := piStatusForMessage(PiMessage{Role: "developer"})
 	if status != "thinking" || tool != "" {
 		t.Fatalf("developer status = (%q, %q), want (thinking, \"\")", status, tool)
 	}
@@ -136,5 +136,51 @@ func TestIsUserInputToolIncludesAsk(t *testing.T) {
 	}
 	if isUserInputTool("bash") {
 		t.Fatal("bash should not be a user-input tool")
+	}
+}
+
+func TestPiStatusForMessageAbortedIsInterrupted(t *testing.T) {
+	// An assistant message with stopReason "aborted" means the user cancelled
+	// the turn. The watcher reports "interrupted" (not idle) for a red dot.
+	status, _, _ := piStatusForMessage(PiMessage{Role: "assistant", StopReason: "aborted"})
+	if status != "interrupted" {
+		t.Fatalf("aborted status = %q, want interrupted", status)
+	}
+	status, _, _ = piStatusForMessage(PiMessage{Role: "assistant", ErrorMessage: "turn aborted by user"})
+	if status != "interrupted" {
+		t.Fatalf("errorMessage aborted status = %q, want interrupted", status)
+	}
+}
+
+func TestPiStatusForMessageToolFailureIsToolFailed(t *testing.T) {
+	// A toolResult message with isError:true carries the tool name and an
+	// error text block. The watcher reports tool_failed with both.
+	status, tool, details := piStatusForMessage(PiMessage{
+		Role:     "toolResult",
+		IsError:  true,
+		ToolName: "read",
+		Content: []PiBlock{
+			{Type: "text", Text: "ENOENT: no such file or directory, access '/nonexistent/xyz.txt'"},
+		},
+	})
+	if status != "tool_failed" {
+		t.Fatalf("tool failure status = %q, want tool_failed", status)
+	}
+	if tool != "read" {
+		t.Fatalf("tool = %q, want read", tool)
+	}
+	if !strings.Contains(details, "ENOENT") {
+		t.Fatalf("details = %q, want ENOENT text", details)
+	}
+}
+
+func TestPiStatusForMessageToolSuccessIsThinking(t *testing.T) {
+	status, _, _ := piStatusForMessage(PiMessage{
+		Role:     "toolResult",
+		ToolName: "read",
+		Content:  []PiBlock{{Type: "text", Text: "file contents here"}},
+	})
+	if status != "thinking" {
+		t.Fatalf("tool success status = %q, want thinking", status)
 	}
 }

@@ -23,6 +23,9 @@ type openCodePart struct {
 	Tool  string `json:"tool,omitempty"`
 	State *struct {
 		Status string `json:"status"`
+		// Error holds the error message when a tool call failed
+		// (state.status == "error"), e.g. "The user dismissed this question".
+		Error string `json:"error,omitempty"`
 	} `json:"state,omitempty"`
 	Text string `json:"text,omitempty"`
 }
@@ -510,6 +513,11 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		var hasQuestion bool
 		var activeTool string
 		var lastToolName string
+		// failedTool/failedErr track the most recent tool part whose state is
+		// "error". When no tool is currently running and the assistant turn
+		// hasn't produced a follow-up, surface it as tool_failed.
+		var failedTool string
+		var failedErr string
 
 		for _, p := range parts {
 			if p.Type == "tool" {
@@ -527,6 +535,12 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 						activeTool = p.Tool
 					}
 				}
+				if toolStatus == "error" {
+					failedTool = p.Tool
+					if p.State != nil && p.State.Error != "" {
+						failedErr = p.State.Error
+					}
+				}
 			}
 		}
 
@@ -536,6 +550,16 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		}
 		if activeTool != "" {
 			callback("executing", activeTool, "", sessionTitle)
+			return
+		}
+		// No tool is actively running. If the last tool part ended in an
+		// error and the assistant hasn't emitted a follow-up tool or text
+		// yet, surface the failure with a red dot.
+		if failedTool != "" && msg.Finish == "" {
+			if failedErr == "" {
+				failedErr = "tool call failed"
+			}
+			callback("tool_failed", failedTool, failedErr, sessionTitle)
 			return
 		}
 
@@ -556,7 +580,9 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		// assistant message as "thinking" (actively working) instead.
 		if msg.Finish == "" {
 			if msg.Error != nil && msg.Error.Name == "MessageAbortedError" {
-				callback("idle", "", "", sessionTitle)
+				// The user aborted the turn. Report "interrupted" (not idle)
+				// so the UI surfaces it with a red dot and no push is sent.
+				callback("interrupted", "", "", sessionTitle)
 				return
 			}
 			if lastToolName != "" {
