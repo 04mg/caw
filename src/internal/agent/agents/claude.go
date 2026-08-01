@@ -32,6 +32,12 @@ type ClaudeBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	Name string `json:"name,omitempty"` // tool name for tool_use blocks
+	// ID is the tool_use id, used to link a tool_result back to its tool_use.
+	ID string `json:"id,omitempty"`
+	// IsError is set on tool_result blocks: Claude writes "is_error": true
+	// when a tool call failed. Used to surface tool failures with a red dot.
+	IsError   bool   `json:"is_error,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"` // links a tool_result to its tool_use
 }
 
 // parseClaudeContent decodes the Content field of a ClaudeMessage, which may
@@ -87,6 +93,22 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// with no new data. Used by ShouldRebind to detect /new and /resume.
 	var lastActivity time.Time
 	var silentTicks int
+	// lastReportedStatus tracks the status most recently sent to the UI so
+	// the PTY-interrupt pass (below) can tell whether the turn is working.
+	var lastReportedStatus string
+	// PTY-interrupt detection. Claude writes the "[request interrupted by
+	// user" transcript marker only when it gets around to it, which can be
+	// seconds (or a full turn) late, so transcript-only detection leaves the
+	// card showing the stale working state after a Ctrl+C. We therefore also
+	// watch for the 0x03 interrupt byte the user sends into the Claude PTY
+	// and report "interrupted" immediately while the turn is working.
+	// interruptApplied stays sticky until a genuinely NEW user prompt lands
+	// past interruptBoundarySize, because the transcript may keep showing the
+	// pre-interrupt working state until the marker (or the next prompt) is
+	// written.
+	var lastInterruptSeen time.Time
+	var interruptApplied bool
+	var interruptBoundarySize int64
 
 	// fsnotify-based immediate change notifier. Reacts to writes on the
 	// watched transcript file in ~tens of ms; the 2s ticker acts as a
@@ -123,10 +145,23 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		if info.Size() <= lastFileSize {
 			return false
 		}
+		// A new user prompt past the interrupt boundary clears the sticky
+		// interrupt: the user has started a new turn. The interrupt marker
+		// itself is also a user message, but it must NOT clear the sticky
+		// state (it confirms the interrupt, it isn't a fresh prompt), so the
+		// check runs before parseClaudeLog and only looks at text that is not
+		// the marker.
+		if interruptApplied && hasNewClaudeUserPrompt(watchedFilePath, interruptBoundarySize) {
+			interruptApplied = false
+		}
 		wrappedCallback := func(status, tool, details, title string) {
 			if title != "" {
 				sessionTitle = title
 			}
+			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
+				status = "interrupted"
+			}
+			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
 		}
 		w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
@@ -172,6 +207,21 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					silentTicks++
 				}
 
+				// PTY-interrupt detection (see the interruptApplied comment
+				// above): a fresh Ctrl+C while the turn is working
+				// immediately flips the card to "interrupted" instead of
+				// waiting for a transcript marker Claude may write late.
+				last := agent.LastPtyInterrupt(sessionID)
+				if last.After(lastInterruptSeen) {
+					lastInterruptSeen = last
+					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+						interruptApplied = true
+						lastReportedStatus = "interrupted"
+						interruptBoundarySize = lastFileSize
+						callback("interrupted", "", "", sessionTitle)
+					}
+				}
+
 			// Mid-session re-bind: detect /new and /resume issued inside
 			// the running agent. When the current file has been silent
 			// for a few polls and another same-cwd file has just received
@@ -211,6 +261,33 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 			}
 		}
 	}
+}
+
+// hasNewClaudeUserPrompt reports whether the unread portion of the transcript
+// (bytes after offset) contains a real new user prompt. Used to clear the
+// sticky PTY interrupt once the user starts a new turn. The interrupt marker
+// ("[request interrupted by user") and the empty placeholder user message
+// Claude writes just before it are skipped.
+func hasNewClaudeUserPrompt(filePath string, offset int64) bool {
+	lines, err := ReadNewLines(filePath, offset)
+	if err != nil {
+		return false
+	}
+	for _, line := range lines {
+		var ll ClaudeLogLine
+		if json.Unmarshal([]byte(line), &ll) != nil || ll.Message == nil || ll.Message.Role != "user" {
+			continue
+		}
+		_, text := parseClaudeContent(ll.Message.Content)
+		if text == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(text), "[request interrupted by user") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // claudeProjectDir returns the subdirectory within ~/.claude/projects/ that
@@ -269,6 +346,17 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 	var seenUser bool
 	var seenInterrupt bool
 	var turnCompleted bool
+	// failedTool tracks the most recent tool_result with is_error:true. When
+	// it is the last meaningful entry (the assistant hasn't yet produced a
+	// follow-up tool_use or text), the agent is mid-recovery from a tool
+	// failure → report "tool_failed" with the tool name and error text.
+	var failedTool string
+	var failedErrText string
+	// failedIdx/lastAssistantIdx record the line indices of the failed
+	// tool_result and the most recent assistant tool_use/text, so we can tell
+	// whether the failed result is the newest (no recovery yet).
+	var failedIdx int = -1
+	var lastAssistantIdx int = -1
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine ClaudeLogLine
@@ -300,6 +388,19 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 					// that was interrupted, so we can report it correctly.
 					continue
 				}
+				// A tool_result lives in a user message. If it carries
+				// is_error:true, it's a failed tool call. Record the newest
+				// one (the reverse pass hits the newest first).
+				if failedTool == "" {
+					for _, b := range blocks {
+						if b.Type == "tool_result" && b.IsError {
+							failedErrText = b.Text
+							failedTool = b.ToolUseID
+							failedIdx = i
+							break
+						}
+					}
+				}
 				// Skip empty-content user messages — Claude writes a
 				// placeholder user entry with empty content immediately
 				// before the interrupt message. Treating it as a real
@@ -312,22 +413,72 @@ func (w *ClaudeWatcher) parseClaudeLog(filePath string, offset int64, callback f
 				break
 			} else if msg.Role == "assistant" {
 				blocks, _ := parseClaudeContent(msg.Content)
-				for _, b := range blocks {
-					if b.Type == "tool_use" && b.Name != "" {
-						lastAssistantTool = b.Name
-					} else if b.Type == "text" && b.Text != "" {
-						lastAssistantText = b.Text
+				// Only record the most recent assistant action (the first
+				// assistant line hit in this reverse pass). Later (older)
+				// assistant lines must not overwrite it — that would hide a
+				// recovery that happened after a failed tool result.
+				if lastAssistantIdx == -1 {
+					for _, b := range blocks {
+						if b.Type == "tool_use" && b.Name != "" {
+							lastAssistantTool = b.Name
+						} else if b.Type == "text" && b.Text != "" {
+							lastAssistantText = b.Text
+						}
 					}
+					lastAssistantIdx = i
 				}
 			}
 		}
 	}
 
+	// If we recorded a failed tool_result by its tool_use_id, resolve the
+	// tool name from the matching assistant tool_use block. lastAssistantTool
+	// (from the reverse pass) is the most recent tool_use name; when the
+	// failed result is the last entry, that name is the one that failed.
+	if failedTool != "" {
+		if lastAssistantTool != "" {
+			failedTool = lastAssistantTool
+		} else {
+			// Build a tool_use id -> name map from the whole transcript and
+			// resolve the failed result's id.
+			idToName := make(map[string]string)
+			for _, line := range lines {
+				var ll ClaudeLogLine
+				if json.Unmarshal([]byte(line), &ll) != nil || ll.Message == nil || ll.Message.Role != "assistant" {
+					continue
+				}
+				bs, _ := parseClaudeContent(ll.Message.Content)
+				for _, b := range bs {
+					if b.Type == "tool_use" && b.Name != "" && b.ID != "" {
+						idToName[b.ID] = b.Name
+					}
+				}
+			}
+			if n, ok := idToName[failedTool]; ok {
+				failedTool = n
+			}
+		}
+	}
+
 	// An interruption means the agent is no longer actively working — the
-	// user cancelled the in-flight tool call. Report idle so the UI doesn't
-	// show "working" indefinitely.
+	// user cancelled the in-flight turn. Report "interrupted" (not idle) so
+	// the UI surfaces it with a red dot, and keep the interrupted tool name
+	// if one was in flight. No push notification is sent for this status.
 	if seenInterrupt {
-		callback("idle", "", "", sessionTitle)
+		callback("interrupted", lastAssistantTool, "", sessionTitle)
+		return
+	}
+
+	// A tool call failed and the assistant hasn't yet produced a follow-up
+	// tool_use or text after it (the failed result is the newest meaningful
+	// entry) → surface the failure with a red dot. The agent keeps running,
+	// so it stays in the working column.
+	if failedTool != "" && failedIdx > lastAssistantIdx {
+		details := failedErrText
+		if details == "" {
+			details = "tool call failed"
+		}
+		callback("tool_failed", failedTool, details, sessionTitle)
 		return
 	}
 
