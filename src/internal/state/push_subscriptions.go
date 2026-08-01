@@ -1,24 +1,27 @@
 package state
 
-import "database/sql"
-
 // PushSubscription represents a browser push subscription stored in the DB.
 type PushSubscription struct {
-	Endpoint  string
-	P256dh    string
-	Auth      string
-	CreatedAt string
+	Endpoint    string
+	P256dh      string
+	Auth        string
+	CreatedAt   string
+	DeviceID    string
+	DeviceName  string
+	Enabled     bool
+	NeedsInput  bool
+	Finished    bool
 }
 
 // AddPushSubscription inserts or replaces a push subscription.
-func (s *Store) AddPushSubscription(endpoint, p256dh, auth string) error {
+func (s *Store) AddPushSubscription(endpoint, p256dh, auth, deviceID, deviceName string) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	_, err := s.db.Exec(
-		`INSERT INTO push_subscriptions (endpoint, p256dh, auth)
-		 VALUES (?, ?, ?)
-		 ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`,
-		endpoint, p256dh, auth,
+		`INSERT INTO push_subscriptions (endpoint, p256dh, auth, device_id, device_name, prefs_enabled, prefs_needs_input, prefs_finished)
+		 VALUES (?, ?, ?, ?, ?, 1, 1, 1)
+		 ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device_id = excluded.device_id, device_name = excluded.device_name`,
+		endpoint, p256dh, auth, deviceID, deviceName,
 	)
 	return err
 }
@@ -31,12 +34,20 @@ func (s *Store) RemovePushSubscription(endpoint string) error {
 	return err
 }
 
+// RemovePushSubscriptionByDeviceID deletes a push subscription by device_id.
+func (s *Store) RemovePushSubscriptionByDeviceID(deviceID string) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM push_subscriptions WHERE device_id = ?", deviceID)
+	return err
+}
+
 // GetPushSubscriptions returns all stored push subscriptions.
 func (s *Store) GetPushSubscriptions() ([]PushSubscription, error) {
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT endpoint, p256dh, auth, created_at FROM push_subscriptions")
+	rows, err := s.db.Query("SELECT endpoint, p256dh, auth, created_at, COALESCE(device_id, ''), COALESCE(device_name, ''), COALESCE(prefs_enabled, 0), COALESCE(prefs_needs_input, 1), COALESCE(prefs_finished, 1) FROM push_subscriptions")
 	if err != nil {
 		return nil, err
 	}
@@ -45,57 +56,20 @@ func (s *Store) GetPushSubscriptions() ([]PushSubscription, error) {
 	var subs []PushSubscription
 	for rows.Next() {
 		var sub PushSubscription
-		if err := rows.Scan(&sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt); err != nil {
+		var enabled, needsInput, finished int
+		if err := rows.Scan(&sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt, &sub.DeviceID, &sub.DeviceName, &enabled, &needsInput, &finished); err != nil {
 			return nil, err
 		}
+		sub.Enabled = enabled != 0
+		sub.NeedsInput = needsInput != 0
+		sub.Finished = finished != 0
 		subs = append(subs, sub)
 	}
 	return subs, nil
 }
 
-// PushPrefs holds the user's push notification preferences.
-type PushPrefs struct {
-	Enabled     bool `json:"enabled"`
-	NeedsInput  bool `json:"needsInput"`
-	Finished    bool `json:"finished"`
-}
-
-// GetPushPrefs reads push preferences from the settings KV table.
-func (s *Store) GetPushPrefs() (PushPrefs, error) {
-	s.Mu.RLock()
-	defer s.Mu.RUnlock()
-
-	prefs := PushPrefs{Enabled: false, NeedsInput: true, Finished: true}
-	rows, err := s.db.Query(
-		`SELECT key, value FROM settings WHERE key IN ('push_enabled', 'push_needs_input', 'push_finished')`,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return prefs, nil
-		}
-		return prefs, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var key, val string
-		if err := rows.Scan(&key, &val); err != nil {
-			continue
-		}
-		switch key {
-		case "push_enabled":
-			prefs.Enabled = val == "1"
-		case "push_needs_input":
-			prefs.NeedsInput = val == "1"
-		case "push_finished":
-			prefs.Finished = val == "1"
-		}
-	}
-	return prefs, nil
-}
-
-// SavePushPrefs persists push preferences to the settings KV table.
-func (s *Store) SavePushPrefs(prefs PushPrefs) error {
+// UpdatePushSubscriptionPrefs updates the per-device push preferences for a subscription.
+func (s *Store) UpdatePushSubscriptionPrefs(deviceID string, enabled, needsInput, finished *bool, deviceName *string) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
@@ -105,29 +79,35 @@ func (s *Store) SavePushPrefs(prefs PushPrefs) error {
 	}
 	defer tx.Rollback()
 
-	enabled := "0"
-	if prefs.Enabled {
-		enabled = "1"
+	if deviceName != nil {
+		if _, err := tx.Exec("UPDATE push_subscriptions SET device_name = ? WHERE device_id = ?", *deviceName, deviceID); err != nil {
+			return err
+		}
 	}
-	needsInput := "0"
-	if prefs.NeedsInput {
-		needsInput = "1"
+	if enabled != nil {
+		v := 0
+		if *enabled {
+			v = 1
+		}
+		if _, err := tx.Exec("UPDATE push_subscriptions SET prefs_enabled = ? WHERE device_id = ?", v, deviceID); err != nil {
+			return err
+		}
 	}
-	finished := "0"
-	if prefs.Finished {
-		finished = "1"
+	if needsInput != nil {
+		v := 0
+		if *needsInput {
+			v = 1
+		}
+		if _, err := tx.Exec("UPDATE push_subscriptions SET prefs_needs_input = ? WHERE device_id = ?", v, deviceID); err != nil {
+			return err
+		}
 	}
-
-	for _, kv := range [][2]string{
-		{"push_enabled", enabled},
-		{"push_needs_input", needsInput},
-		{"push_finished", finished},
-	} {
-		if _, err := tx.Exec(
-			`INSERT INTO settings (key, value) VALUES (?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-			kv[0], kv[1],
-		); err != nil {
+	if finished != nil {
+		v := 0
+		if *finished {
+			v = 1
+		}
+		if _, err := tx.Exec("UPDATE push_subscriptions SET prefs_finished = ? WHERE device_id = ?", v, deviceID); err != nil {
 			return err
 		}
 	}
