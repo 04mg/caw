@@ -93,6 +93,22 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	// with no new data. Used by ShouldRebind to detect /new and /resume.
 	var lastActivity time.Time
 	var silentTicks int
+	// lastReportedStatus tracks the status most recently sent to the UI so
+	// the PTY-interrupt pass (below) can tell whether the turn is working.
+	var lastReportedStatus string
+	// PTY-interrupt detection. Claude writes the "[request interrupted by
+	// user" transcript marker only when it gets around to it, which can be
+	// seconds (or a full turn) late, so transcript-only detection leaves the
+	// card showing the stale working state after a Ctrl+C. We therefore also
+	// watch for the 0x03 interrupt byte the user sends into the Claude PTY
+	// and report "interrupted" immediately while the turn is working.
+	// interruptApplied stays sticky until a genuinely NEW user prompt lands
+	// past interruptBoundarySize, because the transcript may keep showing the
+	// pre-interrupt working state until the marker (or the next prompt) is
+	// written.
+	var lastInterruptSeen time.Time
+	var interruptApplied bool
+	var interruptBoundarySize int64
 
 	// fsnotify-based immediate change notifier. Reacts to writes on the
 	// watched transcript file in ~tens of ms; the 2s ticker acts as a
@@ -129,10 +145,23 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		if info.Size() <= lastFileSize {
 			return false
 		}
+		// A new user prompt past the interrupt boundary clears the sticky
+		// interrupt: the user has started a new turn. The interrupt marker
+		// itself is also a user message, but it must NOT clear the sticky
+		// state (it confirms the interrupt, it isn't a fresh prompt), so the
+		// check runs before parseClaudeLog and only looks at text that is not
+		// the marker.
+		if interruptApplied && hasNewClaudeUserPrompt(watchedFilePath, interruptBoundarySize) {
+			interruptApplied = false
+		}
 		wrappedCallback := func(status, tool, details, title string) {
 			if title != "" {
 				sessionTitle = title
 			}
+			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
+				status = "interrupted"
+			}
+			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
 		}
 		w.parseClaudeLog(watchedFilePath, lastFileSize, wrappedCallback)
@@ -178,6 +207,21 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					silentTicks++
 				}
 
+				// PTY-interrupt detection (see the interruptApplied comment
+				// above): a fresh Ctrl+C while the turn is working
+				// immediately flips the card to "interrupted" instead of
+				// waiting for a transcript marker Claude may write late.
+				last := agent.LastPtyInterrupt(sessionID)
+				if last.After(lastInterruptSeen) {
+					lastInterruptSeen = last
+					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+						interruptApplied = true
+						lastReportedStatus = "interrupted"
+						interruptBoundarySize = lastFileSize
+						callback("interrupted", "", "", sessionTitle)
+					}
+				}
+
 			// Mid-session re-bind: detect /new and /resume issued inside
 			// the running agent. When the current file has been silent
 			// for a few polls and another same-cwd file has just received
@@ -217,6 +261,33 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 			}
 		}
 	}
+}
+
+// hasNewClaudeUserPrompt reports whether the unread portion of the transcript
+// (bytes after offset) contains a real new user prompt. Used to clear the
+// sticky PTY interrupt once the user starts a new turn. The interrupt marker
+// ("[request interrupted by user") and the empty placeholder user message
+// Claude writes just before it are skipped.
+func hasNewClaudeUserPrompt(filePath string, offset int64) bool {
+	lines, err := ReadNewLines(filePath, offset)
+	if err != nil {
+		return false
+	}
+	for _, line := range lines {
+		var ll ClaudeLogLine
+		if json.Unmarshal([]byte(line), &ll) != nil || ll.Message == nil || ll.Message.Role != "user" {
+			continue
+		}
+		_, text := parseClaudeContent(ll.Message.Content)
+		if text == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(text), "[request interrupted by user") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // claudeProjectDir returns the subdirectory within ~/.claude/projects/ that

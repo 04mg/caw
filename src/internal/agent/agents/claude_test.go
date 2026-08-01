@@ -1,9 +1,14 @@
 package agents
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/04mg/caw/internal/agent"
 )
 
 // writeClaudeTranscript writes the given JSONL lines to a temp file and returns
@@ -89,4 +94,98 @@ func TestClaudeToolFailureThenRecoveryReportsExecuting(t *testing.T) {
 	if status != "executing" || tool != "Bash" {
 		t.Fatalf("recovered status = (%q, %q), want (executing, Bash)", status, tool)
 	}
+}
+
+// TestClaudeWatcherPTYInterruptDetectedWithoutTranscriptMarker verifies that
+// a Ctrl+C into the Claude PTY flips the card to "interrupted" immediately,
+// even though Claude writes the "[request interrupted by user" transcript
+// marker only later (sometimes a full turn late). The interrupt stays sticky
+// while the transcript still shows the pre-interrupt working state, and only
+// clears once a genuinely new user prompt is written.
+func TestClaudeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".claude", "projects", encodePathForDir(cwd))
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+
+	appendLine := func(line string) {
+		t.Helper()
+		f, err := os.OpenFile(transcript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open transcript: %v", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append transcript: %v", err)
+		}
+	}
+
+	const leafID = "claude-int-pty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&ClaudeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
+	}
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
+	}
+
+	// The transcript already exists with a prompt + an assistant tool_use, so
+	// the watcher binds and reports executing.
+	appendLine(`{"type":"user","message":{"role":"user","content":"read x"}}`)
+	appendLine(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read"}]}}`)
+	waitFor("executing", 8*time.Second)
+
+	// User presses Ctrl+C → card flips to interrupted immediately, with NO
+	// transcript marker written yet.
+	agent.SetPtyInterruptForTest(leafID, time.Now())
+	waitFor("interrupted", 8*time.Second)
+
+	// REGRESSION GUARD: more working transcript data (still no interrupt
+	// marker) must not flip the card back to Working. The sticky interrupt
+	// only clears on a genuinely new user prompt.
+	appendLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1"}]}}`)
+	appendLine(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash"}]}}`)
+	time.Sleep(6 * time.Second)
+	if got := lastStatus(); got != "interrupted" {
+		t.Fatalf("card flipped back to %q after interrupt; want it to stay interrupted (statuses: %v)", got, statuses)
+	}
+
+	// A genuinely new user prompt clears the sticky interrupt.
+	appendLine(`{"type":"user","message":{"role":"user","content":"next step"}}`)
+	waitFor("thinking", 8*time.Second)
+
+	cancel()
+	<-done
 }
