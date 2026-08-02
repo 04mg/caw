@@ -8,11 +8,14 @@ import (
 
 // PetsConfig holds the Petdex desktop-pets settings shared across all
 // devices: whether pets are enabled, the ordered roster of pet slugs used
-// for rotation, and per-agent pinned pets (agentId -> pet slug).
+// for rotation, per-agent pinned pets (agentId -> pet slug) and the
+// automatically-maintained per-agent assignments that survive a terminal
+// being closed and reopened.
 type PetsConfig struct {
-	Enabled   bool              `json:"enabled"`
-	Roster    []string          `json:"roster"`
-	AgentPins map[string]string `json:"agentPins"`
+	Enabled     bool              `json:"enabled"`
+	Roster      []string          `json:"roster"`
+	AgentPins   map[string]string `json:"agentPins"`
+	Assignments map[string]string `json:"assignments"`
 }
 
 // PrefsState holds the user's work preferences shared across all devices.
@@ -56,9 +59,10 @@ func defaultPrefs() PrefsState {
 		DefaultShell:    "",
 		Hotkeys:         defaultHotkeys(),
 		Pets: PetsConfig{
-			Enabled:   false,
-			Roster:    []string{},
-			AgentPins: map[string]string{},
+			Enabled:     false,
+			Roster:      []string{},
+			AgentPins:   map[string]string{},
+			Assignments: map[string]string{},
 		},
 	}
 }
@@ -151,6 +155,13 @@ func PrunePets(store *state.Store, keep func(slug string) bool) {
 	for agentID, slug := range p.Pets.AgentPins {
 		if !keep(slug) {
 			delete(p.Pets.AgentPins, agentID)
+			changed = true
+		}
+	}
+
+	for agentID, slug := range p.Pets.Assignments {
+		if !keep(slug) {
+			delete(p.Pets.Assignments, agentID)
 			changed = true
 		}
 	}
