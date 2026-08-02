@@ -1759,7 +1759,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex flex-col items-center gap-3">
                 <button
                   onClick={async () => {
-                    if (updateState === 'updating' || updateState === 'checking') return
+                    if (updateState === 'updating' || updateState === 'checking' || updateState === 'updated') return
                     if (updateState === 'available') {
                       setUpdateState('updating')
                       setUpdateMessage('')
@@ -1798,7 +1798,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       }
                     }
                   }}
-                  disabled={updateState === 'checking' || updateState === 'updating'}
+                  disabled={updateState === 'checking' || updateState === 'updating' || updateState === 'updated'}
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {(updateState === 'checking' || updateState === 'updating') && (
