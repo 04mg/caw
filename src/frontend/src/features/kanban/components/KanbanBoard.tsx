@@ -412,16 +412,16 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted-foreground/90">
               {agent.tool && (
                 <div className="flex items-center gap-1">
-                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Tool:</span>
-                  <span className={`bg-background/80 px-1.5 py-0.5 rounded border border-border/30 truncate ${isErrorState ? 'text-red-400 border-red-500/30' : 'text-foreground/80'}`}>
+                  <span className="shrink-0 font-sans text-[10px] uppercase tracking-wider text-primary/70">Tool:</span>
+                  <span className="bg-background/80 px-1.5 py-0.5 rounded border border-border/30 truncate text-foreground/80">
                     {agent.tool}
                   </span>
                 </div>
               )}
               {agent.details && (
                 <div className="flex items-start gap-1 mt-0.5">
-                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Info:</span>
-                  <span className={`truncate max-w-[250px] ${isErrorState ? 'text-red-400 dark:text-red-400' : 'text-foreground/70'}`} title={agent.details}>
+                  <span className="shrink-0 font-sans text-[10px] uppercase tracking-wider text-primary/70">Info:</span>
+                  <span className="truncate max-w-[250px] text-foreground/70" title={agent.details}>
                     {agent.details}
                   </span>
                 </div>
