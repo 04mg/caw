@@ -90,7 +90,7 @@ export function TabButton({
         {tab.agentStatus && (() => {
           const colors = getAgentStatusDot(tab.agentStatus)
           return (
-            <span className="group-hover:hidden">
+            <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 opacity-100 group-hover:opacity-0">
               <span className="relative flex h-2 w-2">
                 {colors.ring && (
                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${colors.ring} opacity-75`} />
@@ -103,7 +103,7 @@ export function TabButton({
         <X
           onPointerDown={(e) => { e.stopPropagation() }}
           onClick={(e) => { e.stopPropagation(); onClose(index) }}
-          className="h-3 w-3 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity"
+          className="absolute inset-0 flex items-center justify-center h-3 w-3 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity duration-150"
         />
       </span>
     </button>
