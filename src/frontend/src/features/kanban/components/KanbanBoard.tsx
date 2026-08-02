@@ -325,7 +325,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         }}
         className={`group relative overflow-hidden rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 select-none flex flex-col gap-3.5 shadow-sm ${
           isCrashed
-            ? 'cursor-default border-red-500/30 hover:shadow-[0_0_15px_rgba(239,68,68,0.12)] hover:border-red-500/40'
+            ? 'cursor-default border-red-500/30'
             : isErrorState
               ? `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 border-red-500/30 hover:border-red-500/40 ${colConf?.glowClass || ''}`
               : `cursor-pointer active:scale-[0.98] hover:shadow-md hover:bg-secondary/25 ${colConf?.glowClass || ''}`
@@ -381,7 +381,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   onClick={handleDismissClick}
                   aria-label="Dismiss crashed card"
                   title={`Crashed: ${agent.exitReason || 'unexpected exit'}`}
-                  className="relative flex items-center justify-center text-red-400 hover:text-red-300 transition-colors -m-0.5"
+                  className="relative flex items-center justify-center text-foreground hover:text-muted-foreground transition-colors -m-0.5"
                 >
                   <X className="w-3 h-3" strokeWidth={2.5} />
                 </button>
@@ -412,16 +412,16 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
             <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted-foreground/90">
               {agent.tool && (
                 <div className="flex items-center gap-1">
-                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Tool:</span>
-                  <span className={`bg-background/80 px-1.5 py-0.5 rounded border border-border/30 truncate ${isErrorState ? 'text-red-400 border-red-500/30' : 'text-foreground/80'}`}>
+                  <span className="shrink-0 font-sans text-[10px] uppercase tracking-wider text-primary/70">Tool:</span>
+                  <span className="bg-background/80 px-1.5 py-0.5 rounded border border-border/30 truncate text-foreground/80">
                     {agent.tool}
                   </span>
                 </div>
               )}
               {agent.details && (
                 <div className="flex items-start gap-1 mt-0.5">
-                  <span className={`shrink-0 font-sans text-[10px] uppercase tracking-wider ${isErrorState ? 'text-red-400' : 'text-primary/70'}`}>Info:</span>
-                  <span className={`truncate max-w-[250px] ${isErrorState ? 'text-red-400 dark:text-red-400' : 'text-foreground/70'}`} title={agent.details}>
+                  <span className="shrink-0 font-sans text-[10px] uppercase tracking-wider text-primary/70">Info:</span>
+                  <span className="truncate max-w-[250px] text-foreground/70" title={agent.details}>
                     {agent.details}
                   </span>
                 </div>
