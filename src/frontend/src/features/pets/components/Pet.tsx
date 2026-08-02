@@ -41,6 +41,8 @@ interface PetProps {
   pet: PetEntry
   leafId: string
   status: AgentStatus | undefined
+  x?: number
+  y?: number
   containerW: number
   containerH: number
   getOtherRanges: () => PetRange[]
@@ -64,20 +66,27 @@ interface PetState {
   statusTool: string
 }
 
-export function Pet({ pet, leafId, status, containerW, containerH, getOtherRanges, onPose, onClick }: PetProps) {
+export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH, getOtherRanges, onPose, onClick }: PetProps) {
   const elRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ petW: number; petH: number; rows: number } | null>(null)
   const stateRef = useRef<PetState | null>(null)
   const propsRef = useRef({ containerW, containerH })
   propsRef.current = { containerW, containerH }
+  // Pane origin is read from a ref so pane moves (splitter drags) apply to
+  // the running animation loop without restarting it.
+  const originRef = useRef({ x, y })
+  originRef.current = { x, y }
   const apiRef = useRef({ getOtherRanges, onPose })
   apiRef.current = { getOtherRanges, onPose }
 
   const jitterY = useMemo(() => -((hashString(leafId + pet.slug) % 7) + 1), [leafId, pet.slug])
 
+  // Rounded to two decimals so small pane resize deltas don't restart the
+  // preload effect (and with it the animation loop) on every drag tick.
   const scale = useMemo(() => {
     if (containerH <= 0) return MIN_SCALE
-    return Math.min(MAX_SCALE, Math.max(MIN_SCALE, containerH / 640))
+    const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, containerH / 640))
+    return Math.round(s * 100) / 100
   }, [containerH])
 
   // Preload the spritesheet so the pet appears only once it can render.
@@ -144,11 +153,11 @@ export function Pet({ pet, leafId, status, containerW, containerH, getOtherRange
         dir: 1,
         walking: false,
         decisionAt: 0,
-        lastTick: performance.now(),
+        lastTick: 0,
         flashState: null,
         flashUntil: 0,
         spriteState: 'idle',
-        spriteStarted: performance.now(),
+        spriteStarted: 0,
         status: undefined,
         statusSeq: undefined,
         statusTool: '',
@@ -158,9 +167,11 @@ export function Pet({ pet, leafId, status, containerW, containerH, getOtherRange
 
     const { containerW, containerH } = propsRef.current
     const max = Math.max(PAD, containerW - petW - PAD)
-    const x0 = PAD + (hashString(leafId + pet.slug + 'pos') % Math.max(1, Math.round(max - PAD)))
-    st.x = Math.min(max, Math.max(PAD, x0))
-    st.targetX = st.x
+    if (st.lastTick === 0) {
+      const x0 = PAD + (hashString(leafId + pet.slug + 'pos') % Math.max(1, Math.round(max - PAD)))
+      st.x = Math.min(max, Math.max(PAD, x0))
+      st.targetX = st.x
+    }
     st.lastTick = performance.now()
 
     el.style.backgroundImage = `url(${pet.spritesheetUrl})`
@@ -171,7 +182,8 @@ export function Pet({ pet, leafId, status, containerW, containerH, getOtherRange
 
     const applyPose = () => {
       const ground = containerH - petH + jitterY
-      el.style.transform = `translate3d(${st.x}px, ${ground}px, 0)`
+      const { x: ox, y: oy } = originRef.current
+      el.style.transform = `translate3d(${ox + st.x}px, ${oy + ground}px, 0)`
     }
 
     const decide = (now: number) => {

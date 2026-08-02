@@ -143,6 +143,15 @@ export function TabGroupView({
     setActiveZone(null)
   }
 
+  // Clicking a pet focuses its terminal, mirroring the Command Center's agent
+  // card navigation: activate the owning group, set the active pane, and hand
+  // keyboard focus to the xterm instance.
+  const handlePetFocus = (leafId: string) => {
+    onSetActiveGroup(group.id)
+    onFocusPane(leafId)
+    window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: leafId } }))
+  }
+
   return (
     <div
       className="flex flex-col h-full overflow-hidden bg-background"
@@ -224,7 +233,7 @@ export function TabGroupView({
           </div>
         ) : null}
 
-        {activeTab && <PetStage layout={activeTab.layout} />}
+        {activeTab && <PetStage layout={activeTab.layout} onFocusLeaf={handlePetFocus} />}
 
         {/* VS Code style drop overlay (no text, dynamic highlights) */}
         {draggedTabId && (
