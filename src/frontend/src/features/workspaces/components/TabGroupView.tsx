@@ -7,7 +7,6 @@ import { findAgentId, countLeaves, collectLeafIds, getLeaf, type LayoutNode } fr
 import { type Workspace, type TabGroupsNode } from '../types'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { type AgentStatus } from '@/features/agents/types'
-import { PetStage } from '@/features/pets/components/PetStage'
 
 interface TabGroupViewProps {
   workspace: Workspace
@@ -143,15 +142,6 @@ export function TabGroupView({
     setActiveZone(null)
   }
 
-  // Clicking a pet focuses its terminal, mirroring the Command Center's agent
-  // card navigation: activate the owning group, set the active pane, and hand
-  // keyboard focus to the xterm instance.
-  const handlePetFocus = (leafId: string) => {
-    onSetActiveGroup(group.id)
-    onFocusPane(leafId)
-    window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: leafId } }))
-  }
-
   return (
     <div
       className="flex flex-col h-full overflow-hidden bg-background"
@@ -260,10 +250,6 @@ export function TabGroupView({
             </div>
           )}
         </div>
-
-        {/* Pets float on a transparent strip over the bottom of the terminals
-            (see PetStage) so they never take layout space from the panes. */}
-        {activeTab && <PetStage layout={activeTab.layout} onFocusLeaf={handlePetFocus} />}
       </div>
     </div>
   )
