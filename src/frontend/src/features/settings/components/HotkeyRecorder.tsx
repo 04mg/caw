@@ -6,46 +6,54 @@ interface HotkeyRecorderProps {
 }
 
 export function HotkeyRecorder({ onSave, onCancel }: HotkeyRecorderProps) {
-  const [keys, setKeys] = useState<string[]>([])
+  const [combo, setCombo] = useState('')
+  const [completeCombo, setCompleteCombo] = useState('')
   const ref = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
+    document.documentElement.dataset.cawHotkeyRecording = '1'
+
     const handler = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
       if (e.key === 'Escape') {
-        setKeys([])
+        setCombo('')
+        setCompleteCombo('')
         onCancel()
         return
       }
+      const isModifierKey = e.key === 'Alt' || e.key === 'Control' || e.key === 'Meta' || e.key === 'Shift'
       const parts: string[] = []
       if (e.altKey) parts.push('Alt')
       if (e.ctrlKey) parts.push('Ctrl')
       if (e.metaKey) parts.push('Meta')
       if (e.shiftKey) parts.push('Shift')
       if (parts.length === 0) return
-      parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
-      setKeys([parts.join('+')])
+      if (!isModifierKey) parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
+      const nextCombo = parts.join('+')
+      setCombo(nextCombo)
+      setCompleteCombo(isModifierKey ? '' : nextCombo)
     }
     window.addEventListener('keydown', handler, { capture: true })
-    return () => window.removeEventListener('keydown', handler, { capture: true })
+    return () => {
+      window.removeEventListener('keydown', handler, { capture: true })
+      delete document.documentElement.dataset.cawHotkeyRecording
+    }
   }, [onCancel])
 
   return (
     <span
       ref={ref}
       onClick={() => {
-        if (keys.length > 0) {
-          onSave(keys[0])
+        if (completeCombo) {
+          onSave(completeCombo)
         }
       }}
-      className={`px-2.5 py-1 rounded-md border text-xs font-mono select-none ${
-        keys.length > 0
-          ? 'border-primary bg-accent/40 text-foreground cursor-pointer hover:bg-accent'
-          : 'border-primary bg-accent/40 text-muted-foreground animate-pulse'
+      className={`px-2.5 py-1 rounded-md border border-primary bg-accent/40 text-xs font-mono select-none animate-pulse ${
+        completeCombo ? 'text-foreground cursor-pointer hover:bg-accent' : 'text-muted-foreground'
       }`}
     >
-      {keys.length > 0 ? keys[0] : 'Press shortcut...'}
+      {combo || 'Press shortcut...'}
     </span>
   )
 }
