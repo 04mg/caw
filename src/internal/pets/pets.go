@@ -13,9 +13,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/prefs"
@@ -32,6 +36,23 @@ const (
 	atlasCols   = 8
 	atlasRowsV1 = 9
 	atlasRowsV2 = 11
+)
+
+// Petdex's API and CDN do not send CORS headers, so the browser cannot read
+// the manifest or download sprites directly. Caw proxies both through these
+// same-origin endpoints instead.
+const (
+	manifestURL     = "https://petdex.dev/api/manifest"
+	manifestMaxSize = 32 << 20
+	spriteMaxSize   = 64 << 20
+	manifestTTL     = 5 * time.Minute
+)
+
+var (
+	petdexClient = &http.Client{Timeout: 30 * time.Second}
+	manifestMu   sync.Mutex
+	manifestBody []byte
+	manifestAt   time.Time
 )
 
 // DataDir returns the directory where uploaded pet sprites are stored,
@@ -93,6 +114,10 @@ func Register(api *http.ServeMux, store *state.Store) {
 	})
 	api.HandleFunc("DELETE /pets/{id}", func(w http.ResponseWriter, r *http.Request) {
 		handleDelete(w, r, store)
+	})
+	api.HandleFunc("GET /pets/petdex-manifest", handlePetdexManifest)
+	api.HandleFunc("POST /pets/from-petdex", func(w http.ResponseWriter, r *http.Request) {
+		handlePetdexDownload(w, r, store)
 	})
 }
 
@@ -162,31 +187,127 @@ func handleUpload(w http.ResponseWriter, r *http.Request, store *state.Store) {
 		return
 	}
 
+	pet, err := saveSprite(store, data, name, source)
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	httpx.RespondJSON(w, pet)
+}
+
+// saveSprite writes a validated sprite plus its metadata as a custom pet and
+// returns the created pet record.
+func saveSprite(store *state.Store, data []byte, name, source string) (Pet, error) {
 	id := "custom:" + randomID()
 	dir := filepath.Join(DataDir(store), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		httpx.RespondInternalErr(w, err)
-		return
+		return Pet{}, err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "sprite.webp"), data, 0o644); err != nil {
-		httpx.RespondInternalErr(w, err)
-		return
+		return Pet{}, err
 	}
-
 	if name == "" {
 		name = displayName(id)
 	}
 	if err := writeMeta(dir, petMeta{Name: name, Source: source}); err != nil {
-		httpx.RespondInternalErr(w, err)
-		return
+		return Pet{}, err
 	}
-	httpx.RespondJSON(w, Pet{
+	return Pet{
 		ID:             id,
 		Name:           name,
 		Kind:           "custom",
 		Source:         source,
 		SpritesheetURL: "/api/pets/" + id + "/sprite.webp",
-	})
+	}, nil
+}
+
+// handlePetdexManifest proxies the Petdex manifest through Caw so the browser
+// never needs cross-origin access. The body is cached briefly in memory; the
+// frontend additionally caches it in localStorage for a day.
+func handlePetdexManifest(w http.ResponseWriter, r *http.Request) {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
+	if manifestBody != nil && time.Since(manifestAt) < manifestTTL {
+		httpx.RespondJSON(w, json.RawMessage(manifestBody))
+		return
+	}
+	resp, err := petdexClient.Get(manifestURL)
+	if err != nil {
+		httpx.RespondInternal(w, "petdex manifest unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		httpx.RespondInternal(w, fmt.Sprintf("petdex manifest returned %d", resp.StatusCode))
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, manifestMaxSize))
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	if !json.Valid(body) {
+		httpx.RespondInternal(w, "petdex manifest is invalid JSON")
+		return
+	}
+	manifestBody = body
+	manifestAt = time.Now()
+	httpx.RespondJSON(w, json.RawMessage(body))
+}
+
+var petdexSlugRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+// handlePetdexDownload downloads a Petdex spritesheet server-side (the CDN
+// sends no CORS headers) and stores it as a local custom pet carrying the
+// Petdex slug as its source.
+func handlePetdexDownload(w http.ResponseWriter, r *http.Request, store *state.Store) {
+	var req struct {
+		Slug           string `json:"slug" validate:"required,max=128"`
+		Name           string `json:"name"`
+		SpritesheetURL string `json:"spritesheetUrl" validate:"required,url"`
+	}
+	if !httpx.BindRequest(w, r, &req) {
+		return
+	}
+	req.Slug = strings.TrimSpace(req.Slug)
+	if !petdexSlugRe.MatchString(req.Slug) {
+		httpx.RespondBadRequest(w, "invalid petdex slug")
+		return
+	}
+	u, err := url.Parse(req.SpritesheetURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host != "assets.petdex.dev" {
+		httpx.RespondBadRequest(w, "invalid petdex sprite url")
+		return
+	}
+	resp, err := petdexClient.Get(u.String())
+	if err != nil {
+		httpx.RespondInternal(w, "petdex sprite unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		httpx.RespondBadRequest(w, fmt.Sprintf("petdex sprite returned %d", resp.StatusCode))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, spriteMaxSize))
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	if len(data) < 32 {
+		httpx.RespondBadRequest(w, "file too small to be a valid sprite")
+		return
+	}
+	if err := validateSprite(data); err != nil {
+		httpx.RespondBadRequest(w, err.Error())
+		return
+	}
+	pet, err := saveSprite(store, data, strings.TrimSpace(req.Name), req.Slug)
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	httpx.RespondJSON(w, pet)
 }
 
 func handleSprite(w http.ResponseWriter, r *http.Request, store *state.Store) {

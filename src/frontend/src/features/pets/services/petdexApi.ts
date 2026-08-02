@@ -1,6 +1,7 @@
-// Client for the Petdex pet manifest. The manifest is large (~1.4MB) and
-// served with CORS * from https://petdex.dev/api/manifest, so it is cached
-// in memory plus a best-effort localStorage cache with a 24h TTL.
+// Client for the Petdex pet manifest. Petdex sends no CORS headers, so the
+// manifest is proxied through Caw's same-origin /api/pets/petdex-manifest.
+// The manifest is large (~1.4MB), so it is cached in memory plus a
+// best-effort localStorage cache with a 24h TTL.
 
 export interface PetdexPet {
   slug: string
@@ -10,7 +11,7 @@ export interface PetdexPet {
   spritesheetUrl: string
 }
 
-const MANIFEST_URL = 'https://petdex.dev/api/manifest'
+const MANIFEST_URL = '/api/pets/petdex-manifest'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const CACHE_KEY = 'caw:petdex-manifest'
 
@@ -45,8 +46,8 @@ export async function fetchPetdexPets(): Promise<PetdexPet[]> {
   try {
     const res = await fetch(MANIFEST_URL)
     if (!res.ok) throw new Error(`manifest ${res.status}`)
-    const json = (await res.json()) as { pets?: unknown }
-    const pets = Array.isArray(json.pets) ? (json.pets as PetdexPet[]) : []
+    const json = (await res.json()) as { data?: { pets?: unknown } }
+    const pets = Array.isArray(json.data?.pets) ? (json.data.pets as PetdexPet[]) : []
     memoryCache = { fetchedAt: Date.now(), pets }
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify(memoryCache))
