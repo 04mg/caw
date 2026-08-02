@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
@@ -26,6 +26,7 @@ import {
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { PetsSettingsPanel } from './PetsSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
 
 
@@ -35,7 +36,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
@@ -489,6 +490,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
     { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
+    { id: 'pets', label: 'Pets', icon: PawPrint, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
     { id: 'agents', label: 'Agents', icon: Bot, category: 'Integrations' },
@@ -940,6 +942,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             </div>
           )}
+
+          {activeSection === 'pets' && <PetsSettingsPanel />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">

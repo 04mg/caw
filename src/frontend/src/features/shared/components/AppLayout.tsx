@@ -11,6 +11,7 @@ import {
   splitLeaf,
   removeLeaf,
   collectLeafIds,
+  collectAgentLeaves,
   countLeaves,
   setSplitSizes,
   findAgentId,
@@ -49,7 +50,10 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getDefaultNewAgent, getHotkey, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { getDefaultNewAgent, getHotkey, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { PetStage } from '@/features/pets/components/PetStage'
+import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
+import { petSlugForAgent } from '@/features/pets/petAssignment'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
@@ -434,6 +438,10 @@ export function AppLayout() {
     },
     [],
   )
+
+  // Keep pet assignments (petSlug on agent leaves) in sync with the shared
+  // pets config: after prefs load, on prefs change, and on workspace change.
+  usePetReconciliation({ workspaces, patchWorkspace })
 
   // Subscribe to file-tree events so we can close editor panes for deleted
   // files, matching VS Code behavior.
@@ -1064,10 +1072,16 @@ export function AppLayout() {
         },
       }
       patchWorkspace(activeWorkspace.id, (ws) => {
-        const layouts = [...ws.layouts, newTab]
+        // Assign a pet by rotation: the new leaf's ordinal is the count of
+        // existing agent leaves across the workspace (pins still win).
+        let ordinal = 0
+        for (const t of ws.layouts) ordinal += collectAgentLeaves(t.layout).length
+        const petSlug = agentId ? petSlugForAgent(agentId, ordinal, getPetsConfig()) : undefined
+        const tabWithPet = petSlug ? { ...newTab, layout: { ...newTab.layout, petSlug } } : newTab
+        const layouts = [...ws.layouts, tabWithPet]
         const { tree, activeGroupId } = ensureTabGroups({ ...ws, layouts })
         const targetGroupId = groupId || activeGroupId
-        const nextTree = moveTabToGroup(tree, newTab.id, targetGroupId)
+        const nextTree = moveTabToGroup(tree, tabWithPet.id, targetGroupId)
         return {
           ...ws,
           layouts,
@@ -1924,6 +1938,10 @@ export function AppLayout() {
                         Create Workspace
                       </Button>
                     </div>
+                  )}
+
+                  {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
+                    <PetStage layout={currentActiveLeaf} />
                   )}
                 </div>
 
