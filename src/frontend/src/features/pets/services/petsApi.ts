@@ -47,3 +47,25 @@ export async function deletePet(id: string): Promise<boolean> {
     return false
   }
 }
+
+// downloadPetdex fetches a Petdex spritesheet server-side (the CDN sends no
+// CORS headers, so the browser cannot fetch it) and stores it as a local
+// custom pet carrying the Petdex slug as its source.
+export async function downloadPetdex(name: string, slug: string, spritesheetUrl: string): Promise<UploadedPet> {
+  const res = await fetch('/api/pets/from-petdex', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, name, spritesheetUrl }),
+  })
+  if (!res.ok) {
+    let message = `Download failed (${res.status})`
+    try {
+      const body = (await res.json()) as { error?: { message?: string } }
+      if (body?.error?.message) message = body.error.message
+    } catch {
+      // fall through to generic message
+    }
+    throw new Error(message)
+  }
+  return (await res.json())?.data as UploadedPet
+}
