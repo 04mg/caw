@@ -2,6 +2,8 @@ import { type PointerEvent } from 'react'
 import { Terminal, X, GitBranch, FileCode } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { useFileDirty } from '@/features/editor/hooks/useFileDirty'
+import { type AgentStatus } from '@/features/agents/types'
+import { getAgentStatusDot } from '@/features/agents/utils/statusDot'
 
 export interface TabItem {
   id: string
@@ -9,6 +11,7 @@ export interface TabItem {
   agentId?: string
   filePath?: string
   isDiff?: boolean
+  agentStatus?: AgentStatus
 }
 
 function renderTabIcon(tab: TabItem) {
@@ -83,11 +86,26 @@ export function TabButton({
     >
       {renderTabIcon(tab)}
       <span className="truncate max-w-28">{displayName}</span>
-      <X
-        onPointerDown={(e) => { e.stopPropagation() }}
-        onClick={(e) => { e.stopPropagation(); onClose(index) }}
-        className="h-3 w-3 ml-1 shrink-0 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity"
-      />
+      <span className="relative ml-1 flex h-3 w-3 shrink-0 items-center justify-center">
+        {tab.agentStatus && (() => {
+          const colors = getAgentStatusDot(tab.agentStatus)
+          return (
+            <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 opacity-100 group-hover:opacity-0">
+              <span className="relative flex" style={{ height: 7, width: 7 }}>
+                {colors.ring && (
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${colors.ring} opacity-75`} />
+                )}
+                <span className={`relative inline-flex rounded-full ${colors.dot}`} style={{ height: 7, width: 7 }} />
+              </span>
+            </span>
+          )
+        })()}
+        <X
+          onPointerDown={(e) => { e.stopPropagation() }}
+          onClick={(e) => { e.stopPropagation(); onClose(index) }}
+          className="absolute inset-0 flex items-center justify-center h-3 w-3 opacity-0 group-hover:opacity-100 hover:text-red-400 active:text-red-300 transition-opacity duration-150"
+        />
+      </span>
     </button>
   )
 }
