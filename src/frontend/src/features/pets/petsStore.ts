@@ -5,6 +5,7 @@ export interface PetEntry {
   slug: string
   name: string
   kind: string
+  source?: string
   spritesheetUrl: string
 }
 
@@ -14,15 +15,20 @@ const listeners = new Set<() => void>()
 
 // loadPetLibrary fetches the combined pet library (Petdex manifest merged
 // with locally uploaded pets). Results are cached module-wide so the pet
-// stage and the settings panel share one fetch.
+// stage and the settings panel share one fetch. Petdex pets that have been
+// downloaded (a custom pet carries the petdex slug as its source) are hidden
+// in favor of their local copy so the library never shows duplicates.
 export async function loadPetLibrary(force = false): Promise<PetEntry[]> {
   if (library && !force) return library
   if (loading && !force) return loading
   loading = (async () => {
     try {
       const [petdex, uploaded] = await Promise.all([fetchPetdexPets(), fetchUploadedPets()])
+      const downloaded = new Set<string>()
+      for (const p of uploaded) if (p.source) downloaded.add(p.source)
       const map = new Map<string, PetEntry>()
       for (const p of petdex) {
+        if (downloaded.has(p.slug)) continue
         map.set(p.slug, {
           slug: p.slug,
           name: p.displayName,
@@ -35,6 +41,7 @@ export async function loadPetLibrary(force = false): Promise<PetEntry[]> {
           slug: p.id,
           name: p.name,
           kind: p.kind,
+          source: p.source,
           spritesheetUrl: p.spritesheetUrl,
         })
       }

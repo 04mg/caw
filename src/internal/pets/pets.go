@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,10 +45,38 @@ func spritePath(id string) string {
 	return filepath.Join(id, "sprite.webp")
 }
 
+// petMeta holds the user-visible metadata for a locally stored pet. It is
+// persisted next to the sprite so listPets can return the original name (and
+// the Petdex source slug for downloaded pets) instead of synthesizing one
+// from the id.
+type petMeta struct {
+	Name   string `json:"name"`
+	Source string `json:"source,omitempty"`
+}
+
+func readMeta(dir string) petMeta {
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		return petMeta{}
+	}
+	var m petMeta
+	_ = json.Unmarshal(data, &m)
+	return m
+}
+
+func writeMeta(dir string, m petMeta) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o644)
+}
+
 type Pet struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	Source         string `json:"source,omitempty"`
 	SpritesheetURL string `json:"spritesheetUrl"`
 }
 
@@ -81,10 +110,16 @@ func listPets(store *state.Store) []Pet {
 		if _, err := os.Stat(filepath.Join(dir, spritePath(e.Name()))); err != nil {
 			continue
 		}
+		meta := readMeta(filepath.Join(dir, e.Name()))
+		name := meta.Name
+		if name == "" {
+			name = displayName(e.Name())
+		}
 		pets = append(pets, Pet{
 			ID:             e.Name(),
-			Name:           displayName(e.Name()),
+			Name:           name,
 			Kind:           "custom",
+			Source:         meta.Source,
 			SpritesheetURL: "/api/pets/" + e.Name() + "/sprite.webp",
 		})
 	}
@@ -105,6 +140,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request, store *state.Store) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
+	source := strings.TrimSpace(r.FormValue("source"))
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		httpx.RespondBadRequest(w, "missing file field")
@@ -140,10 +176,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request, store *state.Store) {
 	if name == "" {
 		name = displayName(id)
 	}
+	if err := writeMeta(dir, petMeta{Name: name, Source: source}); err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
 	httpx.RespondJSON(w, Pet{
 		ID:             id,
 		Name:           name,
 		Kind:           "custom",
+		Source:         source,
 		SpritesheetURL: "/api/pets/" + id + "/sprite.webp",
 	})
 }

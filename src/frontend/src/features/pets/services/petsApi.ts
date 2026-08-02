@@ -5,6 +5,7 @@ export interface UploadedPet {
   id: string
   name: string
   kind: 'custom'
+  source?: string
   spritesheetUrl: string
 }
 
@@ -19,10 +20,11 @@ export async function fetchUploadedPets(): Promise<UploadedPet[]> {
   }
 }
 
-export async function uploadPet(name: string, file: File): Promise<UploadedPet> {
+export async function uploadPet(name: string, file: File, source?: string): Promise<UploadedPet> {
   const form = new FormData()
   form.append('name', name)
   form.append('file', file)
+  if (source) form.append('source', source)
   const res = await fetch('/api/pets', { method: 'POST', body: form })
   if (!res.ok) {
     let message = `Upload failed (${res.status})`

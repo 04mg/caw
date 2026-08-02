@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Check, ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
+import { AlertCircle, Check, Download, ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { Checkbox } from '@/components/checkbox'
 import { Input } from '@/components/input'
@@ -30,6 +30,7 @@ export function PetsSettingsPanel() {
   const [uploadError, setUploadError] = useState('')
   const [uploadBusy, setUploadBusy] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+  const [downloading, setDownloading] = useState<Set<string>>(new Set())
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const saveTimerRef = useRef<number | null>(null)
 
@@ -73,6 +74,34 @@ export function PetsSettingsPanel() {
       await setPetRoster(cfg.roster.filter((s) => s !== pet.slug))
     }
     await loadPetLibrary(true)
+  }
+
+  // Downloading a Petdex pet stores its spritesheet locally (Caw's own
+  // upload endpoint) and adds the local copy to the roster, so the pet
+  // keeps working even if Petdex is unreachable.
+  const handleDownloadPetdex = async (pet: PetEntry) => {
+    setDownloading((prev) => new Set(prev).add(pet.slug))
+    setUploadError('')
+    try {
+      const res = await fetch(pet.spritesheetUrl)
+      if (!res.ok) throw new Error(`Download failed (${res.status})`)
+      const blob = await res.blob()
+      const file = new File([blob], `${pet.name || pet.slug}.webp`, { type: 'image/webp' })
+      const uploaded = await uploadPet(pet.name, file, pet.slug)
+      const roster = cfg.roster.includes(uploaded.id) ? cfg.roster : [...cfg.roster, uploaded.id]
+      await setPetRoster(roster)
+      await loadPetLibrary(true)
+      setSaveStatus('success')
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Download failed')
+      setSaveStatus('error')
+    } finally {
+      setDownloading((prev) => {
+        const next = new Set(prev)
+        next.delete(pet.slug)
+        return next
+      })
+    }
   }
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -149,7 +178,7 @@ export function PetsSettingsPanel() {
         <div className="flex flex-col">
           <span className="text-xs font-medium">Enable pets in terminal areas</span>
           <span className="text-[10px] text-muted-foreground">
-            Assign one pet per agent pane; click a pet to make it wave or jump.
+            Assign one pet per agent pane; click a pet to focus its terminal.
           </span>
         </div>
       </label>
@@ -211,6 +240,8 @@ export function PetsSettingsPanel() {
                 filtered.map((p) => {
                   const inRoster = cfg.roster.includes(p.slug)
                   const isCustom = p.kind === 'custom'
+                  const isDownloading = downloading.has(p.slug)
+                  const origin = isCustom ? (p.source ? 'downloaded' : 'uploaded') : 'petdex'
                   return (
                     <div
                       key={p.slug}
@@ -220,7 +251,7 @@ export function PetsSettingsPanel() {
                         <span className="block truncate font-medium">{p.name}</span>
                         <span className="block truncate text-[9px] text-muted-foreground">
                           {p.slug}
-                          {isCustom ? ' · uploaded' : ''}
+                          <span className="ml-1 text-[8px] uppercase">{origin}</span>
                         </span>
                       </span>
                       {isCustom && (
@@ -241,9 +272,22 @@ export function PetsSettingsPanel() {
                           variant="ghost"
                           size="sm"
                           className="h-6 px-2 gap-1 text-[11px]"
-                          onClick={() => addToRoster(p.slug)}
+                          disabled={isDownloading}
+                          onClick={() => (isCustom ? addToRoster(p.slug) : void handleDownloadPetdex(p))}
                         >
-                          <Plus className="h-3 w-3" /> Add
+                          {isDownloading ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" /> Downloading
+                            </>
+                          ) : isCustom ? (
+                            <>
+                              <Plus className="h-3 w-3" /> Add
+                            </>
+                          ) : (
+                            <>
+                              <Download className="h-3 w-3" /> Download + Add
+                            </>
+                          )}
                         </Button>
                       )}
                     </div>
