@@ -3,8 +3,10 @@ import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { DraggableTabBar } from './DraggableTabBar'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
-import { findAgentId, countLeaves } from '@/features/shared/utils/layout'
+import { findAgentId, countLeaves, collectLeafIds, getLeaf, type LayoutNode } from '@/features/shared/utils/layout'
 import { type Workspace, type TabGroupsNode } from '../types'
+import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
+import { type AgentStatus } from '@/features/agents/types'
 
 interface TabGroupViewProps {
   workspace: Workspace
@@ -70,10 +72,29 @@ export function TabGroupView({
   onToggleFolderSidebar,
 }: TabGroupViewProps): ReactNode {
   const [activeZone, setActiveZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
+  const statuses = useAgentStatuses()
 
   const activeTabId = group.tabs[group.activeTabIndex]
   const activeTab = workspace.layouts.find((l) => l.id === activeTabId) ?? null
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
+
+  function resolveTabAgentStatus(layout: LayoutNode): AgentStatus | undefined {
+    const leafIds = collectLeafIds(layout)
+    for (const id of leafIds) {
+      const s = statuses[id]
+      if (s) return s
+    }
+    for (const id of leafIds) {
+      const leaf = getLeaf(layout, id)
+      if (!leaf || !leaf.cwd) continue
+      for (const s of Object.values(statuses)) {
+        if (s.cwd === leaf.cwd && (!leaf.agentId || s.agentId === leaf.agentId)) {
+          return s
+        }
+      }
+    }
+    return undefined
+  }
 
   const groupTabs = group.tabs.map((tabId) => {
     const tab = workspace.layouts.find((l) => l.id === tabId)
@@ -83,6 +104,7 @@ export function TabGroupView({
       agentId: tab ? findAgentId(tab.layout) : undefined,
       filePath: tab && tab.layout.type === 'leaf' ? tab.layout.filePath : undefined,
       isDiff: tab && tab.layout.type === 'leaf' ? tab.layout.isDiff : undefined,
+      agentStatus: tab ? resolveTabAgentStatus(tab.layout) : undefined,
     }
   })
 
