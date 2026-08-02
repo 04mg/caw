@@ -12,6 +12,7 @@ type PrefsState struct {
 	DisabledAgents  []string            `json:"disabledAgents"`
 	AgentCmds       map[string][]string `json:"agentCmds"`
 	DefaultShell    string              `json:"defaultShell"`
+	Hotkeys         map[string]string   `json:"hotkeys"`
 }
 
 const (
@@ -19,7 +20,22 @@ const (
 	keyDisabledAgents  = "pref_disabled_agents"
 	keyAgentCmds       = "pref_agent_cmds"
 	keyDefaultShell    = "pref_default_shell"
+	keyHotkeys         = "pref_hotkeys"
 )
+
+func defaultHotkeys() map[string]string {
+	return map[string]string{
+		"closePane":         "Alt+W",
+		"switchPaneLeft":    "Alt+ArrowLeft",
+		"switchPaneRight":   "Alt+ArrowRight",
+		"newTerminal":       "Alt+T",
+		"splitHorizontal":   "Alt+H",
+		"splitVertical":     "Alt+V",
+		"commandPalette":    "Alt+P",
+		"commandPaletteCmd": "Alt+Shift+P",
+		"toggleKanban":      "Alt+C",
+	}
+}
 
 func defaultPrefs() PrefsState {
 	return PrefsState{
@@ -27,10 +43,11 @@ func defaultPrefs() PrefsState {
 		DisabledAgents:  []string{},
 		AgentCmds:       map[string][]string{},
 		DefaultShell:    "",
+		Hotkeys:         defaultHotkeys(),
 	}
 }
 
-// GetPrefs reads all four shared preferences from the settings KV table.
+// GetPrefs reads all shared preferences from the settings KV table.
 func GetPrefs(store *state.Store) PrefsState {
 	p := defaultPrefs()
 
@@ -52,11 +69,20 @@ func GetPrefs(store *state.Store) PrefsState {
 	if v, err := store.GetSetting(keyDefaultShell); err == nil && v != "" {
 		p.DefaultShell = v
 	}
+	if v, err := store.GetSetting(keyHotkeys); err == nil && v != "" {
+		var hk map[string]string
+		if json.Unmarshal([]byte(v), &hk) == nil {
+			// Merge saved hotkeys over defaults so new actions get defaults
+			for k, val := range hk {
+				p.Hotkeys[k] = val
+			}
+		}
+	}
 
 	return p
 }
 
-// SetPrefs persists all four shared preferences to the settings KV table.
+// SetPrefs persists all shared preferences to the settings KV table.
 func SetPrefs(store *state.Store, p PrefsState) error {
 	if err := store.SetSetting(keyDefaultNewAgent, p.DefaultNewAgent); err != nil {
 		return err
@@ -70,6 +96,10 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 		return err
 	}
 	if err := store.SetSetting(keyDefaultShell, p.DefaultShell); err != nil {
+		return err
+	}
+	hotkeysJSON, _ := json.Marshal(p.Hotkeys)
+	if err := store.SetSetting(keyHotkeys, string(hotkeysJSON)); err != nil {
 		return err
 	}
 	return nil
