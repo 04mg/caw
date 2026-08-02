@@ -1,4 +1,5 @@
 import React, { useState, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 interface SmartContextMenuProps {
   x: number
@@ -42,7 +43,7 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
     setPos({ left, top })
   }, [x, y, ref, bounds?.width, bounds?.height])
 
-  return (
+  const menu = (
     <div
       ref={ref as React.Ref<HTMLDivElement>}
       className={`${position} z-[60] w-44 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu`}
@@ -52,6 +53,18 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
       {children}
     </div>
   )
+
+  // When the menu is fixed to the viewport, render it through a portal to
+  // <body>. Transformed ancestors (e.g. the mobile explorer drawer, which
+  // slides in with translate-x) turn `position: fixed` into a containing
+  // block of their own, so the menu's left/top would be interpreted in the
+  // drawer's smaller coordinate space and overflow the screen even though
+  // there is room to the left. Portaling to body keeps the menu truly fixed
+  // to the viewport, so the flip-to-left + clamp logic above stays correct.
+  if (position === 'fixed') {
+    return createPortal(menu, document.body)
+  }
+  return menu
 })
 
 SmartContextMenu.displayName = 'SmartContextMenu'
