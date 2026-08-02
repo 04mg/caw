@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { subscribePrefs, loadPrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
 import { collectAgentLeaves, type LayoutNode } from '@/features/shared/utils/layout'
@@ -7,6 +7,7 @@ import { Pet, type PetRange } from './Pet'
 
 interface PetStageProps {
   layout: LayoutNode
+  onFocusLeaf?: (leafId: string) => void
 }
 
 interface StagePet {
@@ -14,10 +15,18 @@ interface StagePet {
   pet: PetEntry
 }
 
-export function PetStage({ layout }: PetStageProps) {
+interface PaneRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export function PetStage({ layout, onFocusLeaf }: PetStageProps) {
   const [prefsVersion, setPrefsVersion] = useState(0)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const [size, setSize] = useState({ w: 0, h: 0 })
+  const [paneRects, setPaneRects] = useState<Record<string, PaneRect>>({})
   const containerRef = useRef<HTMLDivElement | null>(null)
   const occupancyRef = useRef<Record<string, PetRange>>({})
 
@@ -43,6 +52,47 @@ export function PetStage({ layout }: PetStageProps) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Measure each agent leaf's pane bounding box relative to the stage so a
+  // pet stands on top of the terminal it is assigned to, while the sprite is
+  // still drawn in the full-content-area overlay above every pane.
+  const measurePanes = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    const cRect = el.getBoundingClientRect()
+    const next: Record<string, PaneRect> = {}
+    for (const leaf of collectAgentLeaves(layout)) {
+      const pane = el.querySelector(`[data-pane-id="${leaf.id}"]`)
+      // Fall back to the full stage (e.g. the mobile view, which renders the
+      // terminal without a data-pane-id wrapper).
+      if (!pane) {
+        next[leaf.id] = { x: 0, y: 0, w: cRect.width, h: cRect.height }
+        continue
+      }
+      const r = pane.getBoundingClientRect()
+      next[leaf.id] = { x: r.left - cRect.left, y: r.top - cRect.top, w: r.width, h: r.height }
+    }
+    setPaneRects(next)
+  }, [layout])
+
+  useEffect(() => {
+    measurePanes()
+  }, [measurePanes, size])
+
+  // Re-measure when panes resize (splitter drags change pane bounds without
+  // resizing the stage itself).
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => measurePanes())
+    const ids = new Set<string>()
+    for (const leaf of collectAgentLeaves(layout)) ids.add(leaf.id)
+    for (const id of ids) {
+      const pane = el.querySelector(`[data-pane-id="${id}"]`)
+      if (pane) ro.observe(pane)
+    }
+    return () => ro.disconnect()
+  }, [layout, measurePanes, size])
 
   const pets: StagePet[] = useMemo(() => {
     const cfg = getPetsConfig()
@@ -90,19 +140,25 @@ export function PetStage({ layout }: PetStageProps) {
     <div ref={containerRef} className="pointer-events-none absolute inset-0 z-[5] overflow-hidden" aria-hidden="true">
       {size.w > 0 &&
         size.h > 0 &&
-        pets.map(({ leaf, pet }) => (
-          <Pet
-            key={leaf.id}
-            pet={pet}
-            leafId={leaf.id}
-            status={statuses[leaf.id]}
-            containerW={size.w}
-            containerH={size.h}
-            getOtherRanges={ranges.get(leaf.id) ?? (() => [])}
-            onPose={poses.get(leaf.id) ?? (() => {})}
-            onClick={() => {}}
-          />
-        ))}
+        pets.map(({ leaf, pet }) => {
+          const rect = paneRects[leaf.id]
+          if (!rect) return null
+          return (
+            <Pet
+              key={leaf.id}
+              pet={pet}
+              leafId={leaf.id}
+              status={statuses[leaf.id]}
+              x={rect.x}
+              y={rect.y}
+              containerW={rect.w}
+              containerH={rect.h}
+              getOtherRanges={ranges.get(leaf.id) ?? (() => [])}
+              onPose={poses.get(leaf.id) ?? (() => {})}
+              onClick={() => onFocusLeaf?.(leaf.id)}
+            />
+          )
+        })}
     </div>
   )
 }

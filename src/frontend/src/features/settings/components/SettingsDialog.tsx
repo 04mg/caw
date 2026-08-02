@@ -490,11 +490,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
     { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
-    { id: 'pets', label: 'Pets', icon: PawPrint, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
     { id: 'agents', label: 'Agents', icon: Bot, category: 'Integrations' },
     { id: 'limits', label: 'Limits', icon: ChartSpline, category: 'Integrations' },
+    { id: 'pets', label: 'Pets', icon: PawPrint, category: 'Integrations' },
   ]
 
   const renderSectionContent = () => (
