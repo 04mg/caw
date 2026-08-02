@@ -1,15 +1,13 @@
-import { type ReactNode, useSyncExternalStore, useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { DraggableTabBar } from './DraggableTabBar'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
-import { findAgentId, countLeaves, collectLeafIds, collectAgentLeaves, getLeaf, type LayoutNode } from '@/features/shared/utils/layout'
+import { findAgentId, countLeaves, collectLeafIds, getLeaf, type LayoutNode } from '@/features/shared/utils/layout'
 import { type Workspace, type TabGroupsNode } from '../types'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { type AgentStatus } from '@/features/agents/types'
 import { PetStage } from '@/features/pets/components/PetStage'
-import { PET_STRIP_HEIGHT } from '@/features/pets/petAssignment'
-import { getPetsConfig, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 interface TabGroupViewProps {
   workspace: Workspace
@@ -77,20 +75,9 @@ export function TabGroupView({
   const [activeZone, setActiveZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
   const statuses = useAgentStatuses()
 
-  const petsConfig = useSyncExternalStore(subscribePrefs, getPetsConfig)
-
   const activeTabId = group.tabs[group.activeTabIndex]
   const activeTab = workspace.layouts.find((l) => l.id === activeTabId) ?? null
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
-
-  // Pets walk on a reserved floor lane below the terminals so they never
-  // cover terminal content. The lane only appears when the active tab has at
-  // least one agent pane with a pet in the roster.
-  const showPetFloor =
-    petsConfig.enabled &&
-    petsConfig.roster.length > 0 &&
-    activeTab != null &&
-    collectAgentLeaves(activeTab.layout).some((l) => l.petSlug && petsConfig.roster.includes(l.petSlug))
 
   function resolveTabAgentStatus(layout: LayoutNode): AgentStatus | undefined {
     const leafIds = collectLeafIds(layout)
@@ -274,16 +261,8 @@ export function TabGroupView({
           )}
         </div>
 
-        {/* Pet floor lane: pets walk below the terminals, on top of their
-            assigned terminal's column, without ever covering its content. */}
-        {showPetFloor && (
-          <div
-            className="shrink-0 border-t border-border/50 bg-background"
-            style={{ height: PET_STRIP_HEIGHT }}
-            aria-hidden="true"
-          />
-        )}
-
+        {/* Pets float on a transparent strip over the bottom of the terminals
+            (see PetStage) so they never take layout space from the panes. */}
         {activeTab && <PetStage layout={activeTab.layout} onFocusLeaf={handlePetFocus} />}
       </div>
     </div>
