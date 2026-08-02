@@ -1,21 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { subscribePrefs, loadPrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
-import { collectAgentLeaves, type LayoutNode } from '@/features/shared/utils/layout'
+import { type LayoutNode } from '@/features/shared/utils/layout'
 import { getPetEntry, loadPetLibrary, subscribePetLibrary, type PetEntry } from '../petsStore'
 import { Pet, type PetRange } from './Pet'
 
+export type AgentLeaf = Extract<LayoutNode, { type: 'leaf' }>
+
 interface PetStageProps {
-  layout: LayoutNode
+  // Every agent leaf in the workspace (across all tabs), so a pet roams the
+  // whole stage for each agent regardless of which tab is active.
+  leaves: AgentLeaf[]
   onFocusLeaf?: (leafId: string) => void
 }
 
 interface StagePet {
-  leaf: Extract<LayoutNode, { type: 'leaf' }>
+  leaf: AgentLeaf
   pet: PetEntry
 }
 
-export function PetStage({ layout, onFocusLeaf }: PetStageProps) {
+export function PetStage({ leaves, onFocusLeaf }: PetStageProps) {
   const [prefsVersion, setPrefsVersion] = useState(0)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -49,14 +53,14 @@ export function PetStage({ layout, onFocusLeaf }: PetStageProps) {
     const cfg = getPetsConfig()
     if (!cfg.enabled || cfg.roster.length === 0) return []
     const out: StagePet[] = []
-    for (const leaf of collectAgentLeaves(layout)) {
+    for (const leaf of leaves) {
       if (!leaf.petSlug || !cfg.roster.includes(leaf.petSlug)) continue
       const pet = getPetEntry(leaf.petSlug)
       if (pet) out.push({ leaf, pet })
     }
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefsVersion, libraryVersion, layout])
+  }, [prefsVersion, libraryVersion, leaves])
 
   // Stable per-leaf callbacks so status re-renders never restart the pets'
   // animation loops (Pet writes its pose to occupancyRef every frame).

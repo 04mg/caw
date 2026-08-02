@@ -1024,6 +1024,31 @@ export function AppLayout() {
     [activeWorkspace, patchWorkspace],
   )
 
+  // Every agent leaf in the whole workspace (across all tabs and groups), so
+  // one pet roams the shared stage per agent regardless of which tab is
+  // active or how the tabs are split.
+  const allAgentLeaves = useMemo(() => {
+    if (!activeWorkspace) return []
+    const leaves: Extract<LayoutNode, { type: 'leaf' }>[] = []
+    for (const tab of activeWorkspace.layouts) {
+      for (const leaf of collectAgentLeaves(tab.layout)) leaves.push(leaf)
+    }
+    return leaves
+  }, [activeWorkspace])
+
+  // Clicking a pet jumps to its agent terminal across tabs/groups: activate
+  // the owning tab, set the active pane and hand keyboard focus to xterm.
+  const handlePetFocus = useCallback(
+    (leafId: string) => {
+      if (!activeWorkspace) return
+      const tabIndex = activeWorkspace.layouts.findIndex((t) => collectLeafIds(t.layout).includes(leafId))
+      if (tabIndex < 0) return
+      navigateToAgent(activeWorkspace.id, tabIndex, leafId)
+      window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: leafId } }))
+    },
+    [activeWorkspace, navigateToAgent],
+  )
+
   const addTab = useCallback(
     async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
       if (!activeWorkspace) return
@@ -1941,7 +1966,7 @@ export function AppLayout() {
                   )}
 
                   {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
-                    <PetStage layout={currentActiveLeaf} />
+                    <PetStage leaves={[currentActiveLeaf]} />
                   )}
                 </div>
 
@@ -2006,7 +2031,7 @@ export function AppLayout() {
                 />
 
                 {/* Main Terminals / Editors Content. */}
-                <div className="h-full w-full min-w-0 min-h-0">
+                <div className="relative h-full w-full min-w-0 min-h-0">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -2099,6 +2124,11 @@ export function AppLayout() {
                       {terminalBody}
                     </div>
                   )}
+
+                  {/* Pets roam the whole workspace stage: one pet per agent
+                      leaf across all tabs, floating over the terminals and
+                      editors below. */}
+                  <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
                 </div>
 
                 {/* Right Folder Explorer Panel — always mounted (same reason
