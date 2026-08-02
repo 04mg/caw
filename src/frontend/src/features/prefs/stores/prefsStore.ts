@@ -5,6 +5,31 @@ export interface PrefsState {
   disabledAgents: string[]
   agentCmds: Record<string, string[]>
   defaultShell: string
+  hotkeys: Record<string, string>
+}
+
+export const DEFAULT_HOTKEYS: Record<string, string> = {
+  closePane: 'Alt+W',
+  switchPaneLeft: 'Alt+ArrowLeft',
+  switchPaneRight: 'Alt+ArrowRight',
+  newTerminal: 'Alt+T',
+  splitHorizontal: 'Alt+H',
+  splitVertical: 'Alt+V',
+  commandPalette: 'Alt+P',
+  commandPaletteCmd: 'Alt+Shift+P',
+  toggleKanban: 'Alt+C',
+}
+
+export const HOTKEY_LABELS: Record<string, string> = {
+  closePane: 'Close pane',
+  switchPaneLeft: 'Switch pane left',
+  switchPaneRight: 'Switch pane right',
+  newTerminal: 'New terminal',
+  splitHorizontal: 'Horizontal split',
+  splitVertical: 'Vertical split',
+  commandPalette: 'Command palette',
+  commandPaletteCmd: 'Command palette (commands)',
+  toggleKanban: 'Toggle Command Center',
 }
 
 let cache: PrefsState = {
@@ -12,6 +37,7 @@ let cache: PrefsState = {
   disabledAgents: [],
   agentCmds: {},
   defaultShell: '',
+  hotkeys: { ...DEFAULT_HOTKEYS },
 }
 
 let loaded = false
@@ -133,4 +159,25 @@ export async function setAgentCmdOverride(agentId: string, cmd: string[] | null)
 
 export async function setDefaultShell(v: string): Promise<boolean> {
   return persistAndBroadcast({ ...cache, defaultShell: v })
+}
+
+export function getHotkey(action: string): string {
+  return cache.hotkeys[action] || DEFAULT_HOTKEYS[action] || ''
+}
+
+export async function setHotkey(action: string, combo: string): Promise<boolean> {
+  return persistAndBroadcast({
+    ...cache,
+    hotkeys: { ...cache.hotkeys, [action]: combo },
+  })
+}
+
+export async function resetHotkey(action: string): Promise<boolean> {
+  const next = { ...cache.hotkeys }
+  delete next[action]
+  return persistAndBroadcast({ ...cache, hotkeys: next })
+}
+
+export async function resetAllHotkeys(): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, hotkeys: { ...DEFAULT_HOTKEYS } })
 }
