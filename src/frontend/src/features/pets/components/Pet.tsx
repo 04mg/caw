@@ -99,7 +99,8 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       const w = img.naturalWidth || 192 * 8
       const h = img.naturalHeight || 208 * 9
       const rows = Math.round((h * 1536) / (208 * w)) || 9
-      // The pet walks on the reserved floor lane, so cap its height to fit it.
+      // The pet floats on the bottom strip over the terminals, so cap its
+      // height to keep it inside that strip.
       const petH = Math.round(Math.min(208 * scale, PET_STRIP_HEIGHT))
       const petW = Math.round((petH * 192) / 208)
       setSize({ petW, petH, rows })

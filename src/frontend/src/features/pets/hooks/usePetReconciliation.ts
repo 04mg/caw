@@ -1,10 +1,5 @@
 import { useEffect, useRef } from 'react'
-import {
-  getPetsConfig,
-  loadPrefs,
-  setAgentPetAssignments,
-  subscribePrefs,
-} from '@/features/prefs/stores/prefsStore'
+import { getPetsConfig, loadPrefs, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 import { collectAgentLeaves, setLeafPetSlug } from '@/features/shared/utils/layout'
 import { type Workspace } from '@/features/workspaces/types'
 import { petSlugForAgent } from '../petAssignment'
@@ -14,15 +9,11 @@ interface Options {
   patchWorkspace: (id: string, fn: (ws: Workspace) => Workspace) => void
 }
 
-// usePetReconciliation keeps each agent pane's persisted petSlug in sync with
+// usePetReconciliation keeps each agent pane's stored petSlug in sync with
 // the shared pets config. It runs after prefs load, on any prefs change and
 // on any workspace change; it only patches leaves whose slug differs from the
-// deterministic assignment (pins first, then persisted per-agent assignments,
-// then roster rotation by ordinal), so it converges after a single pass.
-//
-// Whenever a leaf resolves to a pet without an explicit user pin, the result
-// is persisted as that agent's assignment so closing and reopening the agent
-// terminal restores the exact same pet instead of dropping it.
+// deterministic assignment (a user pin wins, otherwise the roster rotates by
+// the pane's ordinal position), so it converges after a single pass.
 export function usePetReconciliation({ workspaces, patchWorkspace }: Options) {
   const ref = useRef({ workspaces, patchWorkspace })
   ref.current = { workspaces, patchWorkspace }
@@ -36,9 +27,6 @@ export function usePetReconciliation({ workspaces, patchWorkspace }: Options) {
       const cfg = getPetsConfig()
       reconciling = true
 
-      const assignments = { ...(cfg.assignments ?? {}) }
-      let assignmentsChanged = false
-
       for (const ws of wsList) {
         const diffs: { tabId: string; leafId: string; slug: string | undefined }[] = []
         let ordinal = 0
@@ -49,17 +37,6 @@ export function usePetReconciliation({ workspaces, patchWorkspace }: Options) {
               diffs.push({ tabId: tab.id, leafId: leaf.id, slug })
             }
             ordinal++
-            if (leaf.agentId && !cfg.agentPins[leaf.agentId]) {
-              if (slug) {
-                if (assignments[leaf.agentId] !== slug) {
-                  assignments[leaf.agentId] = slug
-                  assignmentsChanged = true
-                }
-              } else if (leaf.agentId in assignments) {
-                delete assignments[leaf.agentId]
-                assignmentsChanged = true
-              }
-            }
           }
         }
         if (diffs.length === 0) continue
@@ -77,7 +54,6 @@ export function usePetReconciliation({ workspaces, patchWorkspace }: Options) {
         })
       }
 
-      if (assignmentsChanged) void setAgentPetAssignments(assignments)
       reconciling = false
     }
 
