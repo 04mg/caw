@@ -7,6 +7,7 @@ import { findAgentId, countLeaves, collectLeafIds, getLeaf, type LayoutNode } fr
 import { type Workspace, type TabGroupsNode } from '../types'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { type AgentStatus } from '@/features/agents/types'
+import { PetStage } from '@/features/pets/components/PetStage'
 
 interface TabGroupViewProps {
   workspace: Workspace
@@ -222,6 +223,8 @@ export function TabGroupView({
             <span>No active terminal in this group</span>
           </div>
         ) : null}
+
+        {activeTab && <PetStage layout={activeTab.layout} />}
 
         {/* VS Code style drop overlay (no text, dynamic highlights) */}
         {draggedTabId && (

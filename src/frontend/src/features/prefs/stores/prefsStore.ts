@@ -1,11 +1,24 @@
 import { wsMux } from '@/features/shared/services/wsMultiplexer'
 
+export interface PetsConfig {
+  enabled: boolean
+  roster: string[]
+  agentPins: Record<string, string>
+}
+
 export interface PrefsState {
   defaultNewAgent: string
   disabledAgents: string[]
   agentCmds: Record<string, string[]>
   defaultShell: string
   hotkeys: Record<string, string>
+  pets: PetsConfig
+}
+
+export const DEFAULT_PETS: PetsConfig = {
+  enabled: false,
+  roster: [],
+  agentPins: {},
 }
 
 export const DEFAULT_HOTKEYS: Record<string, string> = {
@@ -38,6 +51,7 @@ let cache: PrefsState = {
   agentCmds: {},
   defaultShell: '',
   hotkeys: { ...DEFAULT_HOTKEYS },
+  pets: { ...DEFAULT_PETS, agentPins: {} },
 }
 
 let loaded = false
@@ -180,4 +194,35 @@ export async function resetHotkey(action: string): Promise<boolean> {
 
 export async function resetAllHotkeys(): Promise<boolean> {
   return persistAndBroadcast({ ...cache, hotkeys: { ...DEFAULT_HOTKEYS } })
+}
+
+export function getPetsConfig(): PetsConfig {
+  return cache.pets
+}
+
+export async function setPetsConfig(pets: PetsConfig): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets })
+}
+
+export async function setPetsEnabled(enabled: boolean): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, enabled } })
+}
+
+export async function setPetRoster(roster: string[]): Promise<boolean> {
+  const agentPins = { ...cache.pets.agentPins }
+  // Drop pins for slugs no longer in the roster so they fall back to rotation.
+  for (const [agentId, slug] of Object.entries(agentPins)) {
+    if (!roster.includes(slug)) delete agentPins[agentId]
+  }
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, roster, agentPins } })
+}
+
+export async function setAgentPetPin(agentId: string, slug: string | null): Promise<boolean> {
+  const agentPins = { ...cache.pets.agentPins }
+  if (slug && cache.pets.roster.includes(slug)) {
+    agentPins[agentId] = slug
+  } else {
+    delete agentPins[agentId]
+  }
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, agentPins } })
 }
