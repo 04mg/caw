@@ -32,8 +32,12 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
     if (top + rect.height > maxHeight - 4) {
       top = y - rect.height
     }
-    if (left < 4) left = 4
-    if (top < 4) top = 4
+    // Never let the menu spill past the screen edges, even when the anchor
+    // point itself sits beyond them (e.g. a row that scrolled under the
+    // right edge on mobile). Prefer opening toward the left when there's
+    // room, then clamp so the menu always stays fully visible.
+    left = Math.min(Math.max(4, left), Math.max(4, maxWidth - rect.width - 4))
+    top = Math.min(Math.max(4, top), Math.max(4, maxHeight - rect.height - 4))
 
     setPos({ left, top })
   }, [x, y, ref, bounds?.width, bounds?.height])
