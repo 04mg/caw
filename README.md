@@ -12,7 +12,7 @@
   </p>
 
   <p align="center">
-    Web terminal multiplexer for AI agents.
+    Web interface for AI agents.
   </p>
 
   <p align="center">
