@@ -1,4 +1,5 @@
 import React, { useState, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 interface SmartContextMenuProps {
   x: number
@@ -32,13 +33,17 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
     if (top + rect.height > maxHeight - 4) {
       top = y - rect.height
     }
-    if (left < 4) left = 4
-    if (top < 4) top = 4
+    // Never let the menu spill past the screen edges, even when the anchor
+    // point itself sits beyond them (e.g. a row that scrolled under the
+    // right edge on mobile). Prefer opening toward the left when there's
+    // room, then clamp so the menu always stays fully visible.
+    left = Math.min(Math.max(4, left), Math.max(4, maxWidth - rect.width - 4))
+    top = Math.min(Math.max(4, top), Math.max(4, maxHeight - rect.height - 4))
 
     setPos({ left, top })
   }, [x, y, ref, bounds?.width, bounds?.height])
 
-  return (
+  const menu = (
     <div
       ref={ref as React.Ref<HTMLDivElement>}
       className={`${position} z-[60] w-44 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu`}
@@ -48,6 +53,18 @@ export const SmartContextMenu = React.forwardRef<HTMLDivElement, SmartContextMen
       {children}
     </div>
   )
+
+  // When the menu is fixed to the viewport, render it through a portal to
+  // <body>. Transformed ancestors (e.g. the mobile explorer drawer, which
+  // slides in with translate-x) turn `position: fixed` into a containing
+  // block of their own, so the menu's left/top would be interpreted in the
+  // drawer's smaller coordinate space and overflow the screen even though
+  // there is room to the left. Portaling to body keeps the menu truly fixed
+  // to the viewport, so the flip-to-left + clamp logic above stays correct.
+  if (position === 'fixed') {
+    return createPortal(menu, document.body)
+  }
+  return menu
 })
 
 SmartContextMenu.displayName = 'SmartContextMenu'
