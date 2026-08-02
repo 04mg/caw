@@ -58,11 +58,6 @@ export function PetsSettingsPanel() {
     void save(() => setPetsEnabled(!cfg.enabled))
   }
 
-  const addToRoster = (slug: string) => {
-    if (cfg.roster.includes(slug)) return
-    void save(() => setPetRoster([...cfg.roster, slug]))
-  }
-
   const removeFromRoster = (slug: string) => {
     void save(() => setPetRoster(cfg.roster.filter((s) => s !== slug)))
   }
@@ -244,8 +239,11 @@ export function PetsSettingsPanel() {
               ) : (
                 <>
                   {visible.map((p) => {
-                  const inRoster = cfg.roster.includes(p.slug)
                   const isCustom = p.kind === 'custom'
+                  // A pet counts as "added" when it is on the roster, or when
+                  // it is already stored locally (downloaded/uploaded) — those
+                  // never need an Add button, only a way to delete the copy.
+                  const haveIt = cfg.roster.includes(p.slug) || isCustom
                   const isDownloading = downloading.has(p.slug)
                   const origin = isCustom ? (p.source ? 'downloaded' : 'uploaded') : 'petdex'
                   return (
@@ -260,26 +258,28 @@ export function PetsSettingsPanel() {
                           <span className="ml-1 text-[8px] uppercase">{origin}</span>
                         </span>
                       </span>
-                      {isCustom && (
-                        <button
-                          onClick={() => void handleDeleteUploaded(p)}
-                          className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer p-0.5"
-                          title="Delete uploaded pet"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                      {inRoster ? (
-                        <span className="text-emerald-500 flex items-center gap-0.5">
-                          <Check className="h-3 w-3" /> Added
-                        </span>
+                      {haveIt ? (
+                        <>
+                          {isCustom && (
+                            <button
+                              onClick={() => void handleDeleteUploaded(p)}
+                              className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer p-0.5"
+                              title="Delete uploaded pet"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                          <span className="text-emerald-500 flex items-center gap-0.5">
+                            <Check className="h-3 w-3" /> Added
+                          </span>
+                        </>
                       ) : (
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-6 px-2 gap-1 text-[11px]"
                           disabled={isDownloading}
-                          onClick={() => (isCustom ? addToRoster(p.slug) : void handleDownloadPetdex(p))}
+                          onClick={() => void handleDownloadPetdex(p)}
                         >
                           {isDownloading ? (
                             <>
