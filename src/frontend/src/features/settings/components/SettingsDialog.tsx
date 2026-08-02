@@ -876,7 +876,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <p className="text-xs text-muted-foreground">Customize keyboard shortcuts for common actions.</p>
               </div>
 
-              <div className="flex flex-col gap-2 mt-1">
+              <div className="flex flex-col mt-1">
                 {Object.entries(HOTKEY_LABELS).map(([action, label]) => {
                   const current = getHotkey(action)
                   const isRecording = hotkeyRecording === action
@@ -927,7 +927,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   )
                 })}
                 {hotkeyError && (
-                  <p className="text-[10px] text-destructive">{hotkeyError}</p>
+                  <p className="text-[10px] text-destructive mt-2">{hotkeyError}</p>
                 )}
                 <div className="flex justify-end mt-2">
                   <button
