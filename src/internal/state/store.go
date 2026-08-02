@@ -242,6 +242,7 @@ func (s *Store) Set(as AppState) {
 	for _, key := range []string{
 		"vapid_public_key", "vapid_private_key",
 		"pref_default_new_agent", "pref_disabled_agents", "pref_agent_cmds", "pref_default_shell", "pref_hotkeys",
+		"pref_pets",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
