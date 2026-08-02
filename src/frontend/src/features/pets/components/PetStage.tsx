@@ -23,7 +23,7 @@ export function PetStage({ leaves, onFocusLeaf }: PetStageProps) {
   const [prefsVersion, setPrefsVersion] = useState(0)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const [size, setSize] = useState({ w: 0, h: 0 })
-  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null)
   const occupancyRef = useRef<Record<string, PetRange>>({})
 
   const statuses = useAgentStatuses()
@@ -39,15 +39,14 @@ export function PetStage({ leaves, onFocusLeaf }: PetStageProps) {
   }, [])
 
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+    if (!stageEl) return
     const ro = new ResizeObserver((entries) => {
       const r = entries[0]?.contentRect
       if (r) setSize({ w: r.width, h: r.height })
     })
-    ro.observe(el)
+    ro.observe(stageEl)
     return () => ro.disconnect()
-  }, [])
+  }, [stageEl])
 
   const pets: StagePet[] = useMemo(() => {
     const cfg = getPetsConfig()
@@ -92,7 +91,7 @@ export function PetStage({ leaves, onFocusLeaf }: PetStageProps) {
   if (pets.length === 0) return null
 
   return (
-    <div ref={containerRef} className="pointer-events-none absolute inset-0 z-[5] overflow-hidden" aria-hidden="true">
+    <div ref={setStageEl} className="pointer-events-none absolute inset-0 z-[5] overflow-hidden" aria-hidden="true">
       {size.w > 0 &&
         size.h > 0 &&
         pets.map(({ leaf, pet }) => (
