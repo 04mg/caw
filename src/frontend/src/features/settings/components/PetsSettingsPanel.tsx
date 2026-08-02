@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { loadPetLibrary, subscribePetLibrary, getPetLibrary, type PetEntry } from '@/features/pets/petsStore'
-import { deletePet, uploadPet } from '@/features/pets/services/petsApi'
+import { deletePet, downloadPetdex, uploadPet } from '@/features/pets/services/petsApi'
 import {
   getPetsConfig,
   setAgentPetPin,
@@ -76,18 +76,15 @@ export function PetsSettingsPanel() {
     await loadPetLibrary(true)
   }
 
-  // Downloading a Petdex pet stores its spritesheet locally (Caw's own
-  // upload endpoint) and adds the local copy to the roster, so the pet
-  // keeps working even if Petdex is unreachable.
+  // Downloading a Petdex pet stores its spritesheet locally (fetched
+  // server-side, since the Petdex CDN sends no CORS headers) and adds the
+  // local copy to the roster, so the pet keeps working even if Petdex is
+  // unreachable.
   const handleDownloadPetdex = async (pet: PetEntry) => {
     setDownloading((prev) => new Set(prev).add(pet.slug))
     setUploadError('')
     try {
-      const res = await fetch(pet.spritesheetUrl)
-      if (!res.ok) throw new Error(`Download failed (${res.status})`)
-      const blob = await res.blob()
-      const file = new File([blob], `${pet.name || pet.slug}.webp`, { type: 'image/webp' })
-      const uploaded = await uploadPet(pet.name, file, pet.slug)
+      const uploaded = await downloadPetdex(pet.name, pet.slug, pet.spritesheetUrl)
       const roster = cfg.roster.includes(uploaded.id) ? cfg.roster : [...cfg.roster, uploaded.id]
       await setPetRoster(roster)
       await loadPetLibrary(true)
