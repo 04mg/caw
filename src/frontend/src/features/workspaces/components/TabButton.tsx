@@ -87,7 +87,7 @@ export function TabButton({
       {renderTabIcon(tab)}
       <span className="truncate max-w-28">{displayName}</span>
       <span className="relative ml-1 flex h-3 w-3 shrink-0 items-center justify-center">
-        {tab.agentStatus && (() => {
+        {tab.agentId && tab.agentStatus && (() => {
           const colors = getAgentStatusDot(tab.agentStatus)
           return (
             <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 opacity-100 group-hover:opacity-0">
