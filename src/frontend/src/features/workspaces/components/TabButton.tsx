@@ -91,11 +91,11 @@ export function TabButton({
           const colors = getAgentStatusDot(tab.agentStatus)
           return (
             <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 opacity-100 group-hover:opacity-0">
-              <span className="relative flex h-1.5 w-1.5">
+              <span className="relative flex" style={{ height: 7, width: 7 }}>
                 {colors.ring && (
                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${colors.ring} opacity-75`} />
                 )}
-                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${colors.dot}`} />
+                <span className={`relative inline-flex rounded-full ${colors.dot}`} style={{ height: 7, width: 7 }} />
               </span>
             </span>
           )
