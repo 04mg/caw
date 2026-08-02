@@ -1,13 +1,15 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useSyncExternalStore, useState } from 'react'
 import { Settings, Folder, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { DraggableTabBar } from './DraggableTabBar'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
-import { findAgentId, countLeaves, collectLeafIds, getLeaf, type LayoutNode } from '@/features/shared/utils/layout'
+import { findAgentId, countLeaves, collectLeafIds, collectAgentLeaves, getLeaf, type LayoutNode } from '@/features/shared/utils/layout'
 import { type Workspace, type TabGroupsNode } from '../types'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { type AgentStatus } from '@/features/agents/types'
 import { PetStage } from '@/features/pets/components/PetStage'
+import { PET_STRIP_HEIGHT } from '@/features/pets/petAssignment'
+import { getPetsConfig, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 interface TabGroupViewProps {
   workspace: Workspace
@@ -75,9 +77,20 @@ export function TabGroupView({
   const [activeZone, setActiveZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
   const statuses = useAgentStatuses()
 
+  const petsConfig = useSyncExternalStore(subscribePrefs, getPetsConfig)
+
   const activeTabId = group.tabs[group.activeTabIndex]
   const activeTab = workspace.layouts.find((l) => l.id === activeTabId) ?? null
   const leafCount = activeTab ? countLeaves(activeTab.layout) : 0
+
+  // Pets walk on a reserved floor lane below the terminals so they never
+  // cover terminal content. The lane only appears when the active tab has at
+  // least one agent pane with a pet in the roster.
+  const showPetFloor =
+    petsConfig.enabled &&
+    petsConfig.roster.length > 0 &&
+    activeTab != null &&
+    collectAgentLeaves(activeTab.layout).some((l) => l.petSlug && petsConfig.roster.includes(l.petSlug))
 
   function resolveTabAgentStatus(layout: LayoutNode): AgentStatus | undefined {
     const leafIds = collectLeafIds(layout)
@@ -211,55 +224,67 @@ export function TabGroupView({
       </div>
 
       {/* Group Content Area */}
-      <div className="flex-1 min-h-0 relative">
-        {activeTab && leafCount > 0 ? (
-          <TerminalGrid
-            key={activeTab.id}
-            node={activeTab.layout}
-            activePaneId={activePaneId}
-            onFocus={onFocusPane}
-            onSplitVert={onSplitVert}
-            onSplitHoriz={onSplitHoriz}
-            onClose={onClosePane}
-            cwd={workspace.path}
-            onSizesChange={onSizesChange}
-            gitStatuses={gitStatuses}
-            onOpenDiff={onOpenDiff}
-            onOpenFile={onOpenFile}
+      <div className="flex-1 min-h-0 relative flex flex-col">
+        <div className="flex-1 min-h-0 relative">
+          {activeTab && leafCount > 0 ? (
+            <TerminalGrid
+              key={activeTab.id}
+              node={activeTab.layout}
+              activePaneId={activePaneId}
+              onFocus={onFocusPane}
+              onSplitVert={onSplitVert}
+              onSplitHoriz={onSplitHoriz}
+              onClose={onClosePane}
+              cwd={workspace.path}
+              onSizesChange={onSizesChange}
+              gitStatuses={gitStatuses}
+              onOpenDiff={onOpenDiff}
+              onOpenFile={onOpenFile}
+            />
+          ) : workspace.layouts.length > 0 ? (
+            <div className="flex flex-col h-full w-full items-center justify-center text-center gap-2 select-none text-muted-foreground text-xs p-6">
+              <span>No active terminal in this group</span>
+            </div>
+          ) : null}
+
+          {/* VS Code style drop overlay (no text, dynamic highlights) */}
+          {draggedTabId && (
+            <div
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={() => setActiveZone(null)}
+              className="absolute inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-grabbing"
+            >
+              {activeZone === 'left' && (
+                <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-primary/15 border-r-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'right' && (
+                <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-primary/15 border-l-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'top' && (
+                <div className="absolute left-0 right-0 top-0 h-1/2 bg-primary/15 border-b-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'bottom' && (
+                <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-primary/15 border-t-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'center' && (
+                <div className="absolute inset-0 bg-primary/10 border-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Pet floor lane: pets walk below the terminals, on top of their
+            assigned terminal's column, without ever covering its content. */}
+        {showPetFloor && (
+          <div
+            className="shrink-0 border-t border-border/50 bg-background"
+            style={{ height: PET_STRIP_HEIGHT }}
+            aria-hidden="true"
           />
-        ) : workspace.layouts.length > 0 ? (
-          <div className="flex flex-col h-full w-full items-center justify-center text-center gap-2 select-none text-muted-foreground text-xs p-6">
-            <span>No active terminal in this group</span>
-          </div>
-        ) : null}
+        )}
 
         {activeTab && <PetStage layout={activeTab.layout} onFocusLeaf={handlePetFocus} />}
-
-        {/* VS Code style drop overlay (no text, dynamic highlights) */}
-        {draggedTabId && (
-          <div
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={() => setActiveZone(null)}
-            className="absolute inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-grabbing"
-          >
-            {activeZone === 'left' && (
-              <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-primary/15 border-r-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'right' && (
-              <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-primary/15 border-l-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'top' && (
-              <div className="absolute left-0 right-0 top-0 h-1/2 bg-primary/15 border-b-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'bottom' && (
-              <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-primary/15 border-t-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'center' && (
-              <div className="absolute inset-0 bg-primary/10 border-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-          </div>
-        )}
       </div>
     </div>
   )

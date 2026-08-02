@@ -4,6 +4,9 @@ export interface PetsConfig {
   enabled: boolean
   roster: string[]
   agentPins: Record<string, string>
+  // Persistent per-agent assignments (agentId -> pet slug), kept in sync
+  // automatically so a pet survives its terminal being closed and reopened.
+  assignments?: Record<string, string>
 }
 
 export interface PrefsState {
@@ -19,6 +22,7 @@ export const DEFAULT_PETS: PetsConfig = {
   enabled: false,
   roster: [],
   agentPins: {},
+  assignments: {},
 }
 
 export const DEFAULT_HOTKEYS: Record<string, string> = {
@@ -214,7 +218,28 @@ export async function setPetRoster(roster: string[]): Promise<boolean> {
   for (const [agentId, slug] of Object.entries(agentPins)) {
     if (!roster.includes(slug)) delete agentPins[agentId]
   }
-  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, roster, agentPins } })
+  const assignments = { ...(cache.pets.assignments ?? {}) }
+  for (const [agentId, slug] of Object.entries(assignments)) {
+    if (!roster.includes(slug)) delete assignments[agentId]
+  }
+  return persistAndBroadcast({
+    ...cache,
+    pets: { ...cache.pets, roster, agentPins, assignments },
+  })
+}
+
+export async function setAgentPetAssignment(agentId: string, slug: string | null): Promise<boolean> {
+  const assignments = { ...(cache.pets.assignments ?? {}) }
+  if (slug && cache.pets.roster.includes(slug)) {
+    assignments[agentId] = slug
+  } else {
+    delete assignments[agentId]
+  }
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, assignments } })
+}
+
+export async function setAgentPetAssignments(all: Record<string, string>): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, assignments: all } })
 }
 
 export async function setAgentPetPin(agentId: string, slug: string | null): Promise<boolean> {

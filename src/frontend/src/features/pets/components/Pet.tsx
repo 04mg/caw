@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { type AgentStatus } from '@/features/agents/types'
 import { getPetState } from '../petStates'
 import { type PetEntry } from '../petsStore'
+import { PET_STRIP_HEIGHT } from '../petAssignment'
 
 // Base sprite state driven by the agent's live status.
 const STATUS_STATE: Record<string, string> = {
@@ -98,8 +99,9 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       const w = img.naturalWidth || 192 * 8
       const h = img.naturalHeight || 208 * 9
       const rows = Math.round((h * 1536) / (208 * w)) || 9
-      const petW = Math.round(192 * scale)
-      const petH = Math.round(208 * scale)
+      // The pet walks on the reserved floor lane, so cap its height to fit it.
+      const petH = Math.round(Math.min(208 * scale, PET_STRIP_HEIGHT))
+      const petW = Math.round((petH * 192) / 208)
       setSize({ petW, petH, rows })
     }
     img.src = pet.spritesheetUrl

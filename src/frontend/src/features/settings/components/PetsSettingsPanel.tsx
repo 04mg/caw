@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Check, Download, ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
+import { AlertCircle, Check, ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { Checkbox } from '@/components/checkbox'
 import { Input } from '@/components/input'
@@ -31,6 +31,9 @@ export function PetsSettingsPanel() {
   const [uploadBusy, setUploadBusy] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [downloading, setDownloading] = useState<Set<string>>(new Set())
+  // The Petdex library has thousands of entries; render it in pages so the
+  // settings dialog stays responsive.
+  const [visibleCount, setVisibleCount] = useState(50)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const saveTimerRef = useRef<number | null>(null)
 
@@ -139,6 +142,8 @@ export function PetsSettingsPanel() {
     )
   }, [library, search])
 
+  const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount])
+
   const agentOptions = Object.values(agentTypes).filter((a) => a.id !== 'terminal')
 
   return (
@@ -219,7 +224,10 @@ export function PetsSettingsPanel() {
         <Input
           placeholder="Search pets by name or slug…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setVisibleCount(50)
+          }}
           className="h-8 text-xs"
         />
         <div className="rounded-md border border-border">
@@ -229,12 +237,13 @@ export function PetsSettingsPanel() {
                 <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading pet library…
                 </div>
-              ) : filtered.length === 0 ? (
+              ) : visible.length === 0 ? (
                 <div className="py-6 text-center text-[11px] text-muted-foreground">
                   No pets match.
                 </div>
               ) : (
-                filtered.map((p) => {
+                <>
+                  {visible.map((p) => {
                   const inRoster = cfg.roster.includes(p.slug)
                   const isCustom = p.kind === 'custom'
                   const isDownloading = downloading.has(p.slug)
@@ -274,25 +283,30 @@ export function PetsSettingsPanel() {
                         >
                           {isDownloading ? (
                             <>
-                              <Loader2 className="h-3 w-3 animate-spin" /> Downloading
-                            </>
-                          ) : isCustom ? (
-                            <>
-                              <Plus className="h-3 w-3" /> Add
+                              <Loader2 className="h-3 w-3 animate-spin" /> Adding
                             </>
                           ) : (
                             <>
-                              <Download className="h-3 w-3" /> Download + Add
+                              <Plus className="h-3 w-3" /> Add
                             </>
                           )}
                         </Button>
                       )}
                     </div>
                   )
-                })
+                  })}
+                </>
               )}
             </div>
           </ScrollArea>
+          {filtered.length > visibleCount && (
+            <button
+              onClick={() => setVisibleCount((c) => c + 100)}
+              className="w-full border-t border-border/50 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors cursor-pointer"
+            >
+              Show {Math.min(100, filtered.length - visibleCount)} more of {filtered.length}
+            </button>
+          )}
         </div>
       </div>
 

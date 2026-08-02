@@ -150,9 +150,9 @@ export function PetStage({ layout, onFocusLeaf }: PetStageProps) {
               leafId={leaf.id}
               status={statuses[leaf.id]}
               x={rect.x}
-              y={rect.y}
+              y={0}
               containerW={rect.w}
-              containerH={rect.h}
+              containerH={size.h}
               getOtherRanges={ranges.get(leaf.id) ?? (() => [])}
               onPose={poses.get(leaf.id) ?? (() => {})}
               onClick={() => onFocusLeaf?.(leaf.id)}
