@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
@@ -25,6 +25,7 @@ import {
 	type KrokoLanguage,
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
+import { HotkeyRecorder } from './HotkeyRecorder'
 import cawLogoSvg from '@/assets/app-logo.svg'
 
 
@@ -81,7 +82,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const prefSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const [hotkeyRecording, setHotkeyRecording] = useState<string | null>(null)
-  const [_hotkeyDraft, setHotkeyDraft] = useState('')
   const [hotkeyError, setHotkeyError] = useState('')
 
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -487,7 +487,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
-    { id: 'hotkeys', label: 'Hotkeys', icon: SettingsIcon, category: 'Preferences' },
+    { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
@@ -885,29 +885,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <span className="text-xs font-medium text-foreground">{label}</span>
                       <div className="flex items-center gap-1.5">
                         {isRecording ? (
-                          <span
-                            className="px-2.5 py-1 rounded-md border border-primary bg-accent/40 text-xs font-mono text-foreground animate-pulse cursor-pointer"
-                            onKeyDownCapture={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              const parts: string[] = []
-                              if (e.altKey) parts.push('Alt')
-                              if (e.ctrlKey) parts.push('Ctrl')
-                              if (e.metaKey) parts.push('Meta')
-                              if (e.shiftKey) parts.push('Shift')
-                              if (e.key === 'Escape') {
-                                setHotkeyRecording(null)
-                                setHotkeyDraft('')
-                                setHotkeyError('')
-                                return
-                              }
-                              if (parts.length === 0) {
-                                setHotkeyError('Must include a modifier (Alt, Ctrl, Meta)')
-                                return
-                              }
-                              parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
-                              const combo = parts.join('+')
-                              // Check for conflicts
+                          <HotkeyRecorder
+                            onSave={(combo) => {
                               const conflict = Object.entries(HOTKEY_LABELS).find(
                                 ([a, _]) => a !== action && getHotkey(a) === combo
                               )
@@ -915,22 +894,20 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                                 setHotkeyError(`Already used by "${HOTKEY_LABELS[conflict[0]]}"`)
                                 return
                               }
-                              setHotkeyDraft(combo)
                               setHotkeyError('')
                               void savePref(() => setPrefHotkey(action, combo))
                               setHotkeyRecording(null)
                             }}
-                            tabIndex={0}
-                            autoFocus
-                          >
-                            Press shortcut...
-                          </span>
+                            onCancel={() => {
+                              setHotkeyRecording(null)
+                              setHotkeyError('')
+                            }}
+                          />
                         ) : (
                           <span
                             className="px-2.5 py-1 rounded-md border border-border text-xs font-mono text-muted-foreground cursor-pointer hover:border-primary hover:text-foreground transition-colors"
                             onClick={() => {
                               setHotkeyRecording(action)
-                              setHotkeyDraft('')
                               setHotkeyError('')
                             }}
                           >
