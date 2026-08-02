@@ -26,8 +26,14 @@ function ensureMux() {
     cache = p
     loaded = true
     for (const l of listeners) l()
+    window.dispatchEvent(new CustomEvent('caw:settings-updated'))
   })
 }
+
+// Subscribe on module load so the prefs cache stays live across devices:
+// the backend pushes current prefs on subscribe and broadcasts any update
+// made by another device, keeping this tab's cache in sync.
+ensureMux()
 
 export function subscribePrefs(cb: () => void): () => void {
   listeners.add(cb)
@@ -78,16 +84,18 @@ export function getDefaultShell(): string {
   return cache.defaultShell
 }
 
-async function persistAndBroadcast(next: PrefsState) {
+async function persistAndBroadcast(next: PrefsState): Promise<boolean> {
   cache = next
   loaded = true
   // Persist to backend
+  let ok = false
   try {
-    await fetch('/api/prefs', {
+    const res = await fetch('/api/prefs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(next),
     })
+    ok = res.ok
   } catch {
     // ignore
   }
@@ -95,33 +103,34 @@ async function persistAndBroadcast(next: PrefsState) {
   wsMux.send('prefs', next)
   for (const l of listeners) l()
   window.dispatchEvent(new CustomEvent('caw:settings-updated'))
+  return ok
 }
 
-export async function setDefaultNewAgent(v: string) {
-  await persistAndBroadcast({ ...cache, defaultNewAgent: v })
+export async function setDefaultNewAgent(v: string): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, defaultNewAgent: v })
 }
 
-export async function setDisabledAgents(list: string[]) {
-  await persistAndBroadcast({ ...cache, disabledAgents: list })
+export async function setDisabledAgents(list: string[]): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, disabledAgents: list })
 }
 
-export async function toggleAgent(agentId: string) {
+export async function toggleAgent(agentId: string): Promise<boolean> {
   const list = cache.disabledAgents.includes(agentId)
     ? cache.disabledAgents.filter((id) => id !== agentId)
     : [...cache.disabledAgents, agentId]
-  await setDisabledAgents(list)
+  return setDisabledAgents(list)
 }
 
-export async function setAgentCmdOverride(agentId: string, cmd: string[] | null) {
+export async function setAgentCmdOverride(agentId: string, cmd: string[] | null): Promise<boolean> {
   const cmds = { ...cache.agentCmds }
   if (cmd && cmd.length > 0) {
     cmds[agentId] = cmd
   } else {
     delete cmds[agentId]
   }
-  await persistAndBroadcast({ ...cache, agentCmds: cmds })
+  return persistAndBroadcast({ ...cache, agentCmds: cmds })
 }
 
-export async function setDefaultShell(v: string) {
-  await persistAndBroadcast({ ...cache, defaultShell: v })
+export async function setDefaultShell(v: string): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, defaultShell: v })
 }

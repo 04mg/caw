@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs } from '@/features/prefs/stores/prefsStore'
@@ -77,6 +77,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
   const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
+  const [prefSaveStatus, setPrefSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const prefSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushNeedsInput, setPushNeedsInput] = useState(true)
@@ -168,6 +170,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   // Reset mobile section selection when dialog closes
   useEffect(() => {
     if (!open) setMobileSectionSelected(false)
+  }, [open])
+
+  // Clear any pending save-status auto-hide timer when the dialog closes
+  useEffect(() => {
+    if (!open && prefSaveTimerRef.current) {
+      clearTimeout(prefSaveTimerRef.current)
+      prefSaveTimerRef.current = undefined
+      setPrefSaveStatus('idle')
+    }
   }, [open])
 
   // Load settings on open
@@ -420,6 +431,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     localStorage.setItem('caw:theme', newTheme)
   }
 
+  // savePref persists a work-pref change and shows transient inline feedback
+  // ("Saved" / "Save failed") that auto-hides shortly after.
+  const savePref = async (fn: () => Promise<boolean>) => {
+    const ok = await fn()
+    setPrefSaveStatus(ok ? 'success' : 'error')
+    if (prefSaveTimerRef.current) clearTimeout(prefSaveTimerRef.current)
+    prefSaveTimerRef.current = setTimeout(() => setPrefSaveStatus('idle'), 1500)
+  }
+
   const toggleAgent = (agentId: string) => {
     let nextDisabled: string[]
     if (disabledAgents.includes(agentId)) {
@@ -428,7 +448,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       nextDisabled = [...disabledAgents, agentId]
     }
     setDisabledAgents(nextDisabled)
-    setPrefDisabledAgents(nextDisabled)
+    void savePref(() => setPrefDisabledAgents(nextDisabled))
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -472,6 +492,19 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   const renderSectionContent = () => (
     <>
+      {(prefSaveStatus === 'success' || prefSaveStatus === 'error') && (
+        <div className="flex items-center gap-1.5 text-[10px] font-medium shrink-0 pb-1 -mt-1">
+          {prefSaveStatus === 'success' ? (
+            <span className="text-emerald-500 flex items-center gap-1">
+              <Check className="h-3 w-3" /> Saved
+            </span>
+          ) : (
+            <span className="text-destructive flex items-center gap-1">
+              <AlertCircle className="h-3 w-3" /> Save failed
+            </span>
+          )}
+        </div>
+      )}
           {activeSection === 'appearance' && (
             <div className="flex flex-col gap-4">
               <div>
@@ -620,9 +653,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       onClick={() => {
                         const trimmed = agentCmdDraft.trim()
                         if (!trimmed) {
-                          setAgentCmdOverride(selectedAgentId, null)
+                          void savePref(() => setAgentCmdOverride(selectedAgentId, null))
                         } else {
-                          setAgentCmdOverride(selectedAgentId, trimmed.split(/\s+/))
+                          void savePref(() => setAgentCmdOverride(selectedAgentId, trimmed.split(/\s+/)))
                         }
                         setAgentStep(1)
                       }}
@@ -703,7 +736,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       value={shellPath}
                       onChange={(e) => {
                         setShellPath(e.target.value)
-                        setPrefDefaultShell(e.target.value)
+                        void savePref(() => setPrefDefaultShell(e.target.value))
                       }}
                       placeholder="Auto (system default)"
                       className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
@@ -712,7 +745,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <button
                         onClick={() => {
                           setShellPath('')
-                          setPrefDefaultShell('')
+                          void savePref(() => setPrefDefaultShell(''))
                         }}
                         className="px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
                       >
@@ -1072,7 +1105,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <button
                     onClick={() => {
                       setDefaultNewAgent('none')
-                      setPrefDefaultNewAgent('none')
+                      void savePref(() => setPrefDefaultNewAgent('none'))
                     }}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                       defaultNewAgent === 'none'
@@ -1087,7 +1120,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <button
                     onClick={() => {
                       setDefaultNewAgent('terminal')
-                      setPrefDefaultNewAgent('terminal')
+                      void savePref(() => setPrefDefaultNewAgent('terminal'))
                     }}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                       defaultNewAgent === 'terminal'
@@ -1111,7 +1144,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                             key={agentInfo.id}
                             onClick={() => {
                               setDefaultNewAgent(agentInfo.id)
-                              setPrefDefaultNewAgent(agentInfo.id)
+                              void savePref(() => setPrefDefaultNewAgent(agentInfo.id))
                             }}
                             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
                               defaultNewAgent === agentInfo.id
