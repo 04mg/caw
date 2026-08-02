@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -34,7 +34,7 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
@@ -79,6 +79,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
   const [prefSaveStatus, setPrefSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const prefSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const [hotkeyRecording, setHotkeyRecording] = useState<string | null>(null)
+  const [_hotkeyDraft, setHotkeyDraft] = useState('')
+  const [hotkeyError, setHotkeyError] = useState('')
 
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushNeedsInput, setPushNeedsInput] = useState(true)
@@ -483,6 +487,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
+    { id: 'hotkeys', label: 'Hotkeys', icon: SettingsIcon, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
@@ -859,6 +864,101 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       Reset to Defaults
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'hotkeys' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Hotkeys</h3>
+                <p className="text-xs text-muted-foreground">Customize keyboard shortcuts for common actions.</p>
+              </div>
+
+              <div className="flex flex-col gap-2 mt-1">
+                {Object.entries(HOTKEY_LABELS).map(([action, label]) => {
+                  const current = getHotkey(action)
+                  const isRecording = hotkeyRecording === action
+                  return (
+                    <div key={action} className="flex items-center justify-between gap-2 py-1.5 border-b border-border last:border-0">
+                      <span className="text-xs font-medium text-foreground">{label}</span>
+                      <div className="flex items-center gap-1.5">
+                        {isRecording ? (
+                          <span
+                            className="px-2.5 py-1 rounded-md border border-primary bg-accent/40 text-xs font-mono text-foreground animate-pulse cursor-pointer"
+                            onKeyDownCapture={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              const parts: string[] = []
+                              if (e.altKey) parts.push('Alt')
+                              if (e.ctrlKey) parts.push('Ctrl')
+                              if (e.metaKey) parts.push('Meta')
+                              if (e.shiftKey) parts.push('Shift')
+                              if (e.key === 'Escape') {
+                                setHotkeyRecording(null)
+                                setHotkeyDraft('')
+                                setHotkeyError('')
+                                return
+                              }
+                              if (parts.length === 0) {
+                                setHotkeyError('Must include a modifier (Alt, Ctrl, Meta)')
+                                return
+                              }
+                              parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
+                              const combo = parts.join('+')
+                              // Check for conflicts
+                              const conflict = Object.entries(HOTKEY_LABELS).find(
+                                ([a, _]) => a !== action && getHotkey(a) === combo
+                              )
+                              if (conflict) {
+                                setHotkeyError(`Already used by "${HOTKEY_LABELS[conflict[0]]}"`)
+                                return
+                              }
+                              setHotkeyDraft(combo)
+                              setHotkeyError('')
+                              void savePref(() => setPrefHotkey(action, combo))
+                              setHotkeyRecording(null)
+                            }}
+                            tabIndex={0}
+                            autoFocus
+                          >
+                            Press shortcut...
+                          </span>
+                        ) : (
+                          <span
+                            className="px-2.5 py-1 rounded-md border border-border text-xs font-mono text-muted-foreground cursor-pointer hover:border-primary hover:text-foreground transition-colors"
+                            onClick={() => {
+                              setHotkeyRecording(action)
+                              setHotkeyDraft('')
+                              setHotkeyError('')
+                            }}
+                          >
+                            {current}
+                          </span>
+                        )}
+                        {current !== DEFAULT_HOTKEYS[action] && !isRecording && (
+                          <button
+                            onClick={() => void savePref(() => resetPrefHotkey(action))}
+                            className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                {hotkeyError && (
+                  <p className="text-[10px] text-destructive">{hotkeyError}</p>
+                )}
+                <div className="flex justify-end mt-2">
+                  <button
+                    onClick={() => void savePref(() => resetAllPrefHotkeys())}
+                    className="px-2.5 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors cursor-pointer"
+                  >
+                    Reset All to Defaults
+                  </button>
                 </div>
               </div>
             </div>
