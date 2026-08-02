@@ -485,13 +485,13 @@ export function FolderSidebar({
             >
               {isCopyToWorktreePath(contextMenu.path) ? (
                 <>
-                  <CopyCheck className="h-3.5 w-3.5 text-emerald-500" />
-                  Stop copying to worktrees
+                  <CopyCheck className="h-3.5 w-3.5" />
+                  Stop copying
                 </>
               ) : (
                 <>
                   <CopyPlus className="h-3.5 w-3.5" />
-                  Always copy to worktrees
+                  Copy to worktrees
                 </>
               )}
             </button>
