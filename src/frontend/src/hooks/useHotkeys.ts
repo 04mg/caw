@@ -8,6 +8,8 @@ export function useHotkeys(map: HotkeyMap) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (document.documentElement.dataset.cawHotkeyRecording === '1') return
+
       const parts: string[] = []
       if (e.altKey) parts.push('Alt')
       if (e.ctrlKey) parts.push('Ctrl')
