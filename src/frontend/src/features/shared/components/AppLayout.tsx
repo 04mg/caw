@@ -49,7 +49,7 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getDefaultNewAgent } from '@/features/prefs/stores/prefsStore'
+import { getDefaultNewAgent, getHotkey, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
@@ -118,6 +118,7 @@ export function AppLayout() {
   const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
   const [kanbanClosing, setKanbanClosing] = useState(false)
+  const [_prefsVersion, setPrefsVersion] = useState(0)
   // Ref to the StatusBar control-center button so we can blur it when the
   // board closes (otherwise it retains focus and keyboard focus is stuck on
   // the toolbar instead of returning to the terminal the user was editing).
@@ -710,6 +711,11 @@ export function AppLayout() {
     readSoundPref()
     window.addEventListener('caw:settings-updated', readSoundPref)
     return () => window.removeEventListener('caw:settings-updated', readSoundPref)
+  }, [])
+
+  // Re-subscribe to prefs changes so hotkey bindings stay in sync
+  useEffect(() => {
+    return subscribePrefs(() => setPrefsVersion((v) => v + 1))
   }, [])
 
   // Refs for the navigate-on-click callback — avoids capturing stale closures
@@ -1590,26 +1596,30 @@ export function AppLayout() {
   }, [])
 
   useHotkeys({
-    'Alt+W': () => { if (activePaneId) handleClosePane(activePaneId) },
-    'Alt+ArrowLeft': () => {
+    [getHotkey('closePane')]: () => { if (activePaneId) handleClosePane(activePaneId) },
+    [getHotkey('switchPaneLeft')]: () => {
       if (!activeWorkspace || !activeTab || !activePaneId) return
       const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'left')
       if (!next) return
       if (next.tabId !== activeTab.id) switchTab(next.tabId)
       setActivePane(next.paneId)
     },
-    'Alt+ArrowRight': () => {
+    [getHotkey('switchPaneRight')]: () => {
       if (!activeWorkspace || !activeTab || !activePaneId) return
       const next = cyclePane(activeWorkspace.layouts, activeTab.id, activePaneId, 'right')
       if (!next) return
       if (next.tabId !== activeTab.id) switchTab(next.tabId)
       setActivePane(next.paneId)
     },
-    'Alt+T': () => addTab(),
-    'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
-    'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
-    'Alt+P': () => { setCommandPaletteInitialQuery(''); setCommandPaletteOpen(true) },
-    'Alt+Shift+P': () => { setCommandPaletteInitialQuery('>'); setCommandPaletteOpen(true) },
+    [getHotkey('newTerminal')]: () => addTab(),
+    [getHotkey('splitHorizontal')]: () => { if (activePaneId) handleSplitHoriz(activePaneId) },
+    [getHotkey('splitVertical')]: () => { if (activePaneId) handleSplitVert(activePaneId) },
+    [getHotkey('commandPalette')]: () => { setCommandPaletteInitialQuery(''); setCommandPaletteOpen(true) },
+    [getHotkey('commandPaletteCmd')]: () => { setCommandPaletteInitialQuery('>'); setCommandPaletteOpen(true) },
+    [getHotkey('toggleKanban')]: () => {
+      if (agentBoardOpen) closeAgentBoard()
+      else setAgentBoardOpen(true)
+    },
   })
 
   useEffect(() => {
