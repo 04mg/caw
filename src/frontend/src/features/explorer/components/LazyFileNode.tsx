@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronRight, FolderOpen, Folder, FileCode, Loader2, MoreVertical } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, Folder, FileCode, Loader2, MoreVertical, Copy } from 'lucide-react'
 import { type FileNode } from '../types'
+import { normalizePath } from '@/features/shared/utils/path'
 
 function getIsMobile() {
   return window.innerWidth < 768
@@ -28,6 +29,7 @@ export interface LazyFileNodeProps {
   onDragLeave: () => void
   onDropFiles: (e: React.DragEvent, targetDir: string) => void
   onHoverPath?: (path: string) => void
+  copyToWorktrees?: string[]
 }
 
 export function LazyFileNode({
@@ -52,6 +54,7 @@ export function LazyFileNode({
   onDragLeave,
   onDropFiles,
   onHoverPath,
+  copyToWorktrees,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -180,6 +183,7 @@ export function LazyFileNode({
 
   const statusXY = gitStatuses[path] || ''
   const isIgnored = !!(gitIgnored && gitIgnored[path])
+  const isCopyToWorktree = !!(copyToWorktrees && copyToWorktrees.some((p) => normalizePath(p) === normalizePath(path)))
 
   // For files, the status comes directly from gitStatuses[path].
   // For folders, derive the effective status from any descendant that has
@@ -305,6 +309,14 @@ export function LazyFileNode({
           )}
 
           {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50 shrink-0" />}
+          {isCopyToWorktree && (
+            <span
+              className="flex items-center gap-0.5 text-[9px] font-medium text-cyan-500 bg-cyan-500/10 border border-cyan-500/30 px-1 rounded shrink-0"
+              title="Copied into new worktrees"
+            >
+              <Copy className="h-2.5 w-2.5" />
+            </span>
+          )}
           {statusBadge}
 
           <button
@@ -346,6 +358,7 @@ export function LazyFileNode({
               onDragLeave={onDragLeave}
               onDropFiles={onDropFiles}
               onHoverPath={onHoverPath}
+              copyToWorktrees={copyToWorktrees}
             />
           ))}
 

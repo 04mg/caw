@@ -4,7 +4,8 @@ import { Dialog, DialogContent } from '@/components/dialog'
 import { Input } from '@/components/input'
 
 import { cn } from '@/features/shared/utils/utils'
-import { agentTypes, getEffectiveAgentCmd } from '@/features/agents/services/agentTypes'
+import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
 
 interface AgentInfo {
   id: string
@@ -37,6 +38,7 @@ interface CommandPaletteProps {
   onOpenWorkspacePicker: () => void
   enableWorktrees: boolean
   onToggleWorktrees: () => void
+  initialQuery?: string
 }
 
 export function CommandPalette({
@@ -49,6 +51,7 @@ export function CommandPalette({
   onOpenWorkspacePicker,
   enableWorktrees,
   onToggleWorktrees,
+  initialQuery = '',
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -66,16 +69,7 @@ export function CommandPalette({
       .then((json) => setAgents(json?.data ?? []))
       .catch(() => setAgents([]))
 
-    const savedDisabled = localStorage.getItem('caw:disabledAgents')
-    if (savedDisabled) {
-      try {
-        setDisabledAgents(JSON.parse(savedDisabled))
-      } catch {
-        setDisabledAgents([])
-      }
-    } else {
-      setDisabledAgents([])
-    }
+    setDisabledAgents(getDisabledAgents())
   }, [open])
 
   useEffect(() => {
@@ -86,6 +80,13 @@ export function CommandPalette({
       setSearching(false)
     }
   }, [open])
+
+  useEffect(() => {
+    if (open) {
+      setQuery(initialQuery)
+      setSelectedIndex(0)
+    }
+  }, [open, initialQuery])
 
   const commandMode = query.startsWith('>')
   const commandQuery = commandMode ? query.slice(1).trim() : query

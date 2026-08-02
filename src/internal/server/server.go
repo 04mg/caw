@@ -11,6 +11,7 @@ import (
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
 	"github.com/04mg/caw/internal/httpx"
+	"github.com/04mg/caw/internal/prefs"
 	"github.com/04mg/caw/internal/push"
 	"github.com/04mg/caw/internal/quota"
 	_ "github.com/04mg/caw/internal/quota/providers"
@@ -44,6 +45,7 @@ func New() *Server {
 		mux:        mux,
 	}
 	state.RegisterMuxChannel(mux, s.store)
+	prefs.RegisterMuxChannel(mux, s.store)
 	agent.RegisterMuxChannel(mux)
 	workspace.RegisterMuxChannel(mux)
 	gitSvc := git.NewService()
@@ -75,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	git.RegisterWithService(api, s.gitSvc)
 	quota.Register(api, s.store)
 	push.Register(api, s.store)
+	prefs.RegisterHTTP(api, s.store, s.mux)
 	state.RegisterHTTP(api, s.store, s.mux)
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
 	agent.Register(api)

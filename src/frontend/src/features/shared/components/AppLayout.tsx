@@ -49,6 +49,7 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
+import { getDefaultNewAgent } from '@/features/prefs/stores/prefsStore'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
@@ -114,6 +115,7 @@ export function AppLayout() {
   const [gitIgnored, setGitIgnored] = useState<Record<string, boolean>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
   const [agentBoardOpen, setAgentBoardOpen] = useState(false)
   const [kanbanClosing, setKanbanClosing] = useState(false)
   // Ref to the StatusBar control-center button so we can blur it when the
@@ -1024,6 +1026,7 @@ export function AppLayout() {
               projectPath: cwd,
               agentId,
               enableWorktrees: activeWorkspace.enableWorktrees !== false,
+              copyToWorktrees: Array.isArray(activeWorkspace.copyToWorktrees) ? activeWorkspace.copyToWorktrees : [],
             }),
           })
           if (res.ok) {
@@ -1495,7 +1498,7 @@ export function AppLayout() {
         }
       } catch { /* fall back to raw path */ }
 
-      const defaultAgentId = localStorage.getItem('caw:defaultNewAgent') || 'none'
+      const defaultAgentId = getDefaultNewAgent()
       const agent = agentTypes[defaultAgentId]
       const isNone = defaultAgentId === 'none'
       const layout = isNone ? null : createLeaf(absPath, agent && agent.id !== 'terminal' ? agent.cmd : undefined, agent && agent.id !== 'terminal' ? agent.id : undefined, agent && agent.id !== 'terminal' ? agent.env : undefined)
@@ -1553,6 +1556,21 @@ export function AppLayout() {
     }))
   }, [activeWorkspace, patchWorkspace])
 
+  const toggleCopyToWorktree = useCallback(
+    (path: string) => {
+      if (!activeWorkspace) return
+      patchWorkspace(activeWorkspace.id, (ws) => {
+        const current = Array.isArray(ws.copyToWorktrees) ? ws.copyToWorktrees : []
+        const norm = normalizePath(path)
+        const next = current.some((p) => normalizePath(p) === norm)
+          ? current.filter((p) => normalizePath(p) !== norm)
+          : [...current, norm]
+        return { ...ws, copyToWorktrees: next }
+      })
+    },
+    [activeWorkspace, patchWorkspace],
+  )
+
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((v) => {
       const next = !v
@@ -1590,7 +1608,8 @@ export function AppLayout() {
     'Alt+T': () => addTab(),
     'Alt+H': () => { if (activePaneId) handleSplitHoriz(activePaneId) },
     'Alt+V': () => { if (activePaneId) handleSplitVert(activePaneId) },
-    'Alt+P': () => setCommandPaletteOpen(true),
+    'Alt+P': () => { setCommandPaletteInitialQuery(''); setCommandPaletteOpen(true) },
+    'Alt+Shift+P': () => { setCommandPaletteInitialQuery('>'); setCommandPaletteOpen(true) },
   })
 
   useEffect(() => {
@@ -1793,6 +1812,8 @@ export function AppLayout() {
                 gitIgnored={gitIgnored}
                 onRefresh={fetchGitStatus}
                 onClose={() => setExplorerDrawerOpen(false)}
+                copyToWorktrees={activeWorkspace?.copyToWorktrees}
+                onToggleCopyToWorktree={toggleCopyToWorktree}
               />
             </div>
           </div>
@@ -2065,6 +2086,8 @@ export function AppLayout() {
                       gitIgnored={gitIgnored}
                       onRefresh={fetchGitStatus}
                       onClose={() => setFolderSidebarCollapsed(true)}
+                      copyToWorktrees={activeWorkspace.copyToWorktrees}
+                      onToggleCopyToWorktree={toggleCopyToWorktree}
                     />
                   ) : null}
                 </div>
@@ -2110,6 +2133,7 @@ export function AppLayout() {
       <CommandPalette
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}
+        initialQuery={commandPaletteInitialQuery}
         workspacePath={activeWorkspace?.path || ''}
         onOpenFile={openFile}
         onAddTerminal={addTab}

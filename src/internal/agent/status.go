@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/04mg/caw/internal/push"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
 	"github.com/04mg/caw/internal/ws"
+	"github.com/gorilla/websocket"
 )
 
 // AgentStatus represents the current tracked state of an agent
@@ -21,8 +21,14 @@ type AgentStatus struct {
 	AgentID   string `json:"agentId"`
 	Cwd       string `json:"cwd,omitempty"`
 	// Status is the live state: "thinking", "executing", "waiting_input",
-	// "idle". When the session has terminated and is being kept on the board
-	// as a dismissable card, Status is set to "crashed" and EndedAt/ExitCode/
+	// "idle", "interrupted", "tool_failed". "interrupted" means the user
+	// cancelled the in-flight turn (e.g. pressed ESC twice) — the agent is no
+	// longer working but the card stays where it was with a red dot and no
+	// push notification. "tool_failed" means the agent's last tool call
+	// failed — the agent keeps running, but the failure is surfaced with a
+	// red dot and the error text in Details (still in the working column).
+	// When the session has terminated and is being kept on the board as a
+	// dismissable card, Status is set to "crashed" and EndedAt/ExitCode/
 	// ExitReason are populated.
 	Status    string    `json:"status"`
 	Tool      string    `json:"tool,omitempty"`
@@ -37,9 +43,9 @@ type AgentStatus struct {
 	// Terminal-session fields. Only populated when Status == "crashed" (i.e.
 	// the agent process died unexpectedly). A clean (exit 0) or user-killed
 	// session is removed from the statuses map and never carries these.
-	EndedAt     *time.Time `json:"endedAt,omitempty"`
-	ExitCode    *int       `json:"exitCode,omitempty"`
-	ExitReason  string     `json:"exitReason,omitempty"`
+	EndedAt    *time.Time `json:"endedAt,omitempty"`
+	ExitCode   *int       `json:"exitCode,omitempty"`
+	ExitReason string     `json:"exitReason,omitempty"`
 	// LastColumn records the column the card was in just before the crash
 	// (one of "working", "needs_input", "idle") so the Kanban board can keep
 	// the crashed card in the column the user last saw it in.
@@ -48,16 +54,16 @@ type AgentStatus struct {
 
 // Event represents a WebSocket event message
 type Event struct {
-	Type      string     `json:"event"`
-	SessionID string     `json:"sessionId"`
-	AgentID   string     `json:"agentId"`
-	Cwd       string     `json:"cwd,omitempty"`
-	Status    string     `json:"status,omitempty"`
-	Tool      string     `json:"tool,omitempty"`
-	Details   string     `json:"details,omitempty"`
-	Title     string     `json:"title,omitempty"`
-	Timestamp time.Time  `json:"timestamp"`
-	Sequence  int64      `json:"sequence"`
+	Type      string    `json:"event"`
+	SessionID string    `json:"sessionId"`
+	AgentID   string    `json:"agentId"`
+	Cwd       string    `json:"cwd,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	Tool      string    `json:"tool,omitempty"`
+	Details   string    `json:"details,omitempty"`
+	Title     string    `json:"title,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Sequence  int64     `json:"sequence"`
 	// Terminal-state fields. Populated for "agent_crashed" events.
 	EndedAt    *time.Time `json:"endedAt,omitempty"`
 	ExitCode   *int       `json:"exitCode,omitempty"`
@@ -133,6 +139,14 @@ var (
 	// a sibling's session and the idle-timeout watchdog may revert it.
 	ptyFocus   = make(map[string]bool)
 	ptyFocusMu sync.RWMutex
+	// ptyInterrupt records the last time the user sent the interrupt key
+	// sequence (Ctrl+C, byte 0x03) into each leaf/session id's PTY. Populated
+	// by handlePtyInput and read by watchers via LastPtyInterrupt. Watchers
+	// use it to detect a user-initiated interrupt that the agent's own
+	// transcript/DB may not surface reliably (e.g. Hermes does not always
+	// persist an interrupted turn to state.db).
+	ptyInterrupt   = make(map[string]time.Time)
+	ptyInterruptMu sync.RWMutex
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -172,19 +186,40 @@ func init() {
 	terminal.OnPtyFocus = handlePtyFocus
 }
 
-// handlePtyInput detects when the user submits a command to a PTY.
-// If the agent is currently idle, we transition it to thinking.
+// handlePtyInput detects when the user sends the interrupt key sequence
+// (Ctrl+C or ESC) into a PTY and records it so watchers can detect a
+// user-initiated interrupt that the agent's transcript/DB may not surface
+// reliably. It does NOT transition status itself — that is left to each
+// agent's watcher, which polls LastPtyInterrupt and applies the "interrupted"
+// state while the turn is working.
 //
-// To avoid false transitions from TUI initialization sequences (resize,
-// cursor positioning, etc. that contain \r\n), we only fire if the PTY
-// has already produced output — i.e., the agent process is actually
-// running and has rendered its UI. Without this guard, opening a new
-// agent session immediately flips to "thinking" because the terminal
-// sends control sequences on connect.
+// Previously this hook transitioned to "thinking" on any input; that was
+// disabled to prevent non-agent PTY inputs (e.g. plain shell commands) from
+// flipping the status. Recording only the explicit interrupt keys keeps the
+// hook safe and narrow.
 func handlePtyInput(id string, data string) {
-	// Disabled to prevent transitioning to "thinking" on non-agent PTY inputs.
-	// (e.g. regular shell commands). The status will transition to "thinking"
-	// or "executing" via the log watcher when the agent actually starts.
+	if isInterruptInput(data) {
+		ptyInterruptMu.Lock()
+		ptyInterrupt[id] = time.Now()
+		ptyInterruptMu.Unlock()
+	}
+}
+
+// isInterruptInput reports whether the given PTY input bytes contain the user
+// interrupt key sequence. TUI coding agents map two keys to interrupt/cancel
+// during a busy turn:
+//
+//   - Ctrl+C, delivered as the 0x03 byte, and
+//   - ESC, delivered as a standalone 0x1b byte (Claude Code's interrupt key).
+//
+// Only a standalone 0x1b counts as ESC: escape sequences (arrow keys,
+// function keys, cursor-position reports) also begin with 0x1b but carry
+// trailing bytes, and must not be treated as an interrupt.
+func isInterruptInput(data string) bool {
+	if strings.Contains(data, "\x03") {
+		return true
+	}
+	return data == "\x1b"
 }
 
 // handlePtyFocus records whether the given leaf/session id currently has the
@@ -247,6 +282,17 @@ func IsPtyFocused(sessionID string) bool {
 	return ptyFocus[sessionID]
 }
 
+// LastPtyInterrupt returns the time the user most recently sent the interrupt
+// key sequence (Ctrl+C) into the given leaf/session id's PTY, or the zero time
+// if none has been recorded. Watchers poll this to detect a user-initiated
+// interrupt that the agent's transcript/DB may not surface reliably (e.g.
+// Hermes does not always persist an interrupted turn to state.db).
+func LastPtyInterrupt(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	return ptyInterrupt[sessionID]
+}
+
 // SetPtyActivityForTest records (or clears) the last-activity timestamp for a
 // leaf/session id. It is intended only for tests that need to simulate PTY
 // output without a real terminal; production code drives ptyActivity via
@@ -277,6 +323,19 @@ func SetPtyFocusForTest(sessionID string, focused bool) {
 		delete(ptyFocus, sessionID)
 	}
 	ptyFocusMu.Unlock()
+}
+
+// SetPtyInterruptForTest records (or clears) the last-interrupt timestamp for
+// a leaf/session id. It is intended only for tests; production code drives
+// ptyInterrupt via terminal.OnPtyInput (wired in init()).
+func SetPtyInterruptForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptyInterrupt, sessionID)
+	} else {
+		ptyInterrupt[sessionID] = at
+	}
+	ptyInterruptMu.Unlock()
 }
 
 // RegisterStatusWatcher allows status providers to register themselves
@@ -366,6 +425,14 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 			push.CancelFinishedDebounced(sessionID)
 			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
 		case "thinking", "executing":
+			push.CancelFinishedDebounced(sessionID)
+		case "interrupted", "tool_failed":
+			// The user interrupted the agent, or a tool call failed. Neither
+			// is something the user needs a push notification for: an
+			// interrupt is the user's own action, and a tool failure is
+			// surfaced in the UI (red dot + error text) but the agent keeps
+			// running. Cancel any pending "finished" notification so a
+			// transition into these states from working doesn't fire one.
 			push.CancelFinishedDebounced(sessionID)
 		case "idle", "stopped":
 			// Suppress the "finished" notification when the agent was running
@@ -544,18 +611,18 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	if stateStore != nil && hadStatus {
 		stateStore.SaveCrashedSession(state.CrashedSession{
 			SessionID:  cur.SessionID,
-			AgentID:   cur.AgentID,
-			Cwd:       cur.Cwd,
-			Title:     cur.Title,
-			Tool:      cur.Tool,
-			Details:   cur.Details,
-			Status:    prev.Status, // the live status it was in before the crash
+			AgentID:    cur.AgentID,
+			Cwd:        cur.Cwd,
+			Title:      cur.Title,
+			Tool:       cur.Tool,
+			Details:    cur.Details,
+			Status:     prev.Status, // the live status it was in before the crash
 			LastColumn: cur.LastColumn,
 			ExitCode:   valInt(cur.ExitCode),
 			ExitReason: cur.ExitReason,
 			StartedAt:  cur.Timestamp,
-			EndedAt:   valTime(cur.EndedAt),
-			Sequence:  cur.Sequence,
+			EndedAt:    valTime(cur.EndedAt),
+			Sequence:   cur.Sequence,
 		})
 	}
 }
@@ -565,11 +632,15 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 // it in rather than moving it on crash.
 func lastColumnForStatus(liveStatus string) string {
 	switch liveStatus {
-	case "thinking", "executing":
+	case "thinking", "executing", "tool_failed":
+		// tool_failed stays in "working": the agent is still active, the
+		// failure is just surfaced with a red dot.
 		return "working"
 	case "waiting_input":
 		return "needs_input"
 	default:
+		// "idle" and "interrupted": an interrupted turn is no longer
+		// working, so it sits in idle.
 		return "idle"
 	}
 }
@@ -774,9 +845,12 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 					statusesMu.RUnlock()
 					// Do NOT auto-revert "waiting_input": the agent is blocked
 					// waiting for the user to answer — this can take minutes.
-					// Only revert transient "working" states (thinking/executing)
+					// Do NOT auto-revert "interrupted" or "tool_failed":
+					// those are sticky UI states the user must see (red dot)
+					// and they're not transient "working" states. Only
+					// revert transient "working" states (thinking/executing)
 					// that have stalled.
-					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" {
+					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" && s.Status != "interrupted" && s.Status != "tool_failed" {
 						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
 					}
 				}

@@ -153,6 +153,30 @@ export async function getCardColumn(
   return null
 }
 
+// hasRedDot asserts that the kanban card for the given session currently shows
+// a red status dot (used for the interrupted / tool_failed error states, which
+// render `bg-red-500` on the dot). Returns true when the red dot is present.
+export async function hasRedDot(page: Page, sessionId: string): Promise<boolean> {
+  const card = page.locator(`[data-card-id="${sessionId}"]`)
+  if (!(await card.count())) return false
+  const dot = card.locator('span.relative.inline-flex.rounded-full.bg-red-500')
+  return (await dot.count()) > 0
+}
+
+// waitForRedDot polls until the card shows a red status dot or times out.
+export async function waitForRedDot(
+  page: Page,
+  sessionId: string,
+  timeout = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (await hasRedDot(page, sessionId)) return
+    await sleep(500)
+  }
+  throw new Error(`Card ${sessionId} did not show a red dot within ${timeout}ms`)
+}
+
 export async function setWorkspace(baseURL: string, workspacePath: string): Promise<void> {
   const wsId = `ws-${Date.now()}`
   const name = workspacePath.split(/[\\/]/).pop() || 'workspace'

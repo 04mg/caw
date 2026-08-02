@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
-  RefreshCw, FileCode, FolderPlus, Upload, Pencil, Copy,
+  RefreshCw, FileCode, FolderPlus, Upload, Pencil, Copy, CopyPlus, CopyCheck,
   ClipboardPaste, Download, Trash2, PanelRightClose, Loader2
 } from 'lucide-react'
 import { ScrollArea } from '@/components/scroll-area'
 import { Button } from '@/components/button'
+import { normalizePath } from '@/features/shared/utils/path'
 
 import { subscribeToFileTree, type FileTreeEvent } from '../services/fileTreeWs'
 import { SmartContextMenu } from './SmartContextMenu'
@@ -23,6 +24,8 @@ interface FolderSidebarProps {
   noHeader?: boolean
   mainWorkspacePath?: string
   onClose?: () => void
+  copyToWorktrees?: string[]
+  onToggleCopyToWorktree?: (path: string) => void
 }
 
 export function FolderSidebar({
@@ -34,6 +37,8 @@ export function FolderSidebar({
   noHeader,
   mainWorkspacePath,
   onClose,
+  copyToWorktrees,
+  onToggleCopyToWorktree,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
   const isWorktree = !!(mainWorkspacePath && workspacePath && workspacePath !== mainWorkspacePath)
@@ -298,6 +303,23 @@ export function FolderSidebar({
     setContextMenu({ x, y, path, name, isDir })
   }, [])
 
+  const isCopyToWorktreePath = useCallback(
+    (path: string) => {
+      if (!copyToWorktrees || copyToWorktrees.length === 0) return false
+      const norm = normalizePath(path)
+      return copyToWorktrees.some((p) => normalizePath(p) === norm)
+    },
+    [copyToWorktrees],
+  )
+
+  const handleToggleCopyToWorktree = useCallback(
+    (path: string) => {
+      setContextMenu(null)
+      onToggleCopyToWorktree?.(path)
+    },
+    [onToggleCopyToWorktree],
+  )
+
   // Debounce file tree re-fetch to avoid cascading refreshes
   // when many files change rapidly (e.g. SQLite writes).
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -400,6 +422,7 @@ export function FolderSidebar({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDropFiles={handleDrop}
+              copyToWorktrees={copyToWorktrees}
             />
           ) : (
             <p className="text-xs text-muted-foreground italic text-center mt-4">
@@ -454,6 +477,24 @@ export function FolderSidebar({
                 Copy
               </button>
             </>
+          )}
+          {!isWorktree && !contextMenu.isRoot && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleToggleCopyToWorktree(contextMenu.path) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              {isCopyToWorktreePath(contextMenu.path) ? (
+                <>
+                  <CopyCheck className="h-3.5 w-3.5" />
+                  Stop copying
+                </>
+              ) : (
+                <>
+                  <CopyPlus className="h-3.5 w-3.5" />
+                  Copy to worktrees
+                </>
+              )}
+            </button>
           )}
           {clipboard && contextMenu.isDir && (
             <button
