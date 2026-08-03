@@ -69,6 +69,17 @@ type connWriter struct {
 	// the full history in sendScrollback, which would duplicate the tail the
 	// client already rendered. Read under s.mu by sendScrollback.
 	noScrollback bool
+
+	// resized is true once this connection has reported a resize. The first
+	// resize from a (re)connecting viewer always re-fires SIGWINCH even when
+	// the PTY dimensions are unchanged: the viewer's xterm.js instance may
+	// have been backgrounded (GPU context evicted / DOM renderer left in a
+	// stale state) and the TUI program behind the PTY needs a nudge to
+	// redraw the current frame for the now-foreground client. Without this,
+	// returning to a backgrounded window shows a corrupted TUI frame that
+	// only clears after a manual resize. Subsequent same-size resizes stay
+	// no-ops to avoid SIGWINCH storms. Read/written under s.mu.
+	resized bool
 }
 
 func (w *connWriter) WriteMessage(msgType int, data []byte) error {
@@ -174,6 +185,16 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	source.cols = cols
 	source.rows = rows
 
+	// First resize from this connection (a freshly-(re)connected viewer):
+	// always (re)fire SIGWINCH even when the PTY dims are unchanged. A
+	// reconnecting client whose xterm.js was backgrounded may have a stale
+	// DOM render, and the TUI program needs a nudge to repaint the current
+	// frame for the now-foreground viewer. Mark the connection as having
+	// reported a size so subsequent same-size resizes stay no-ops and we
+	// don't storm SIGWINCH on every keystroke-era resize echo.
+	firstResize := !source.resized
+	source.resized = true
+
 	// Single viewer — resize the PTY directly. The frontend already fit
 	// its local xterm.js to the new dimensions and sent us the size; we
 	// only need to drive the PTY. Echoing a resize back here would be
@@ -183,7 +204,7 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	// multi-viewer path, we do NOT broadcastResize here.
 	totalViewers := len(s.conns) + s.pendingResizes
 	if totalViewers <= 1 {
-		if s.cols == cols && s.rows == rows {
+		if !firstResize && s.cols == cols && s.rows == rows {
 			return
 		}
 		s.cols = cols
@@ -208,7 +229,7 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 		// No fully-sized viewer yet; keep the PTY as-is.
 		return
 	}
-	if s.cols != minCols || s.rows != minRows {
+	if s.cols != minCols || s.rows != minRows || firstResize {
 		s.cols = minCols
 		s.rows = minRows
 		_ = s.Pty.ptmx.Resize(minCols, minRows)
