@@ -61,6 +61,14 @@ type connWriter struct {
 	// Used to compute the smallest viewer and per-viewer padding.
 	cols int
 	rows int
+
+	// noScrollback is set when the client signals (via a "no-scrollback"
+	// message) that it already holds the current scrollback — i.e. this is a
+	// WebSocket reconnect whose xterm.js instance is still populated. The
+	// backend then registers the viewer for PTY sizing but skips re-sending
+	// the full history in sendScrollback, which would duplicate the tail the
+	// client already rendered. Read under s.mu by sendScrollback.
+	noScrollback bool
 }
 
 func (w *connWriter) WriteMessage(msgType int, data []byte) error {
