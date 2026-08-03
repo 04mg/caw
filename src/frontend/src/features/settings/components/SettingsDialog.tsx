@@ -175,8 +175,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   // Desktop dialog scales with the viewport: it grows to fill the screen
   // (whichever side is the limiter), never exceeds the screen height, and
-  // stays a bit smaller than the old fixed 720x650 at its base. Height gets
-  // a flat ~100px reduction so the dialog feels shorter than full-screen.
+  // stays a bit smaller than the old fixed 720x650 at its base. Both width
+  // and height get a flat ~100px reduction so the dialog feels shorter than
+  // full-screen.
   useEffect(() => {
     if (isMobile) return
     const measure = () => {
@@ -184,7 +185,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       const baseH = 590
       const scale = Math.min((window.innerWidth - 64) / baseW, (window.innerHeight - 96) / baseH, 1.2)
       setDialogSize({
-        w: Math.round(baseW * scale),
+        w: Math.max(400, Math.round(baseW * scale) - 100),
         h: Math.max(360, Math.round(baseH * scale) - 100),
       })
     }
