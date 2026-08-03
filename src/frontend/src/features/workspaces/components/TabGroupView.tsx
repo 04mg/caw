@@ -201,53 +201,55 @@ export function TabGroupView({
       </div>
 
       {/* Group Content Area */}
-      <div className="flex-1 min-h-0 relative">
-        {activeTab && leafCount > 0 ? (
-          <TerminalGrid
-            key={activeTab.id}
-            node={activeTab.layout}
-            activePaneId={activePaneId}
-            onFocus={onFocusPane}
-            onSplitVert={onSplitVert}
-            onSplitHoriz={onSplitHoriz}
-            onClose={onClosePane}
-            cwd={workspace.path}
-            onSizesChange={onSizesChange}
-            gitStatuses={gitStatuses}
-            onOpenDiff={onOpenDiff}
-            onOpenFile={onOpenFile}
-          />
-        ) : workspace.layouts.length > 0 ? (
-          <div className="flex flex-col h-full w-full items-center justify-center text-center gap-2 select-none text-muted-foreground text-xs p-6">
-            <span>No active terminal in this group</span>
-          </div>
-        ) : null}
+      <div className="flex-1 min-h-0 relative flex flex-col">
+        <div className="flex-1 min-h-0 relative">
+          {activeTab && leafCount > 0 ? (
+            <TerminalGrid
+              key={activeTab.id}
+              node={activeTab.layout}
+              activePaneId={activePaneId}
+              onFocus={onFocusPane}
+              onSplitVert={onSplitVert}
+              onSplitHoriz={onSplitHoriz}
+              onClose={onClosePane}
+              cwd={workspace.path}
+              onSizesChange={onSizesChange}
+              gitStatuses={gitStatuses}
+              onOpenDiff={onOpenDiff}
+              onOpenFile={onOpenFile}
+            />
+          ) : workspace.layouts.length > 0 ? (
+            <div className="flex flex-col h-full w-full items-center justify-center text-center gap-2 select-none text-muted-foreground text-xs p-6">
+              <span>No active terminal in this group</span>
+            </div>
+          ) : null}
 
-        {/* VS Code style drop overlay (no text, dynamic highlights) */}
-        {draggedTabId && (
-          <div
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={() => setActiveZone(null)}
-            className="absolute inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-grabbing"
-          >
-            {activeZone === 'left' && (
-              <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-primary/15 border-r-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'right' && (
-              <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-primary/15 border-l-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'top' && (
-              <div className="absolute left-0 right-0 top-0 h-1/2 bg-primary/15 border-b-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'bottom' && (
-              <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-primary/15 border-t-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-            {activeZone === 'center' && (
-              <div className="absolute inset-0 bg-primary/10 border-2 border-primary transition-all duration-75 pointer-events-none" />
-            )}
-          </div>
-        )}
+          {/* VS Code style drop overlay (no text, dynamic highlights) */}
+          {draggedTabId && (
+            <div
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={() => setActiveZone(null)}
+              className="absolute inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-grabbing"
+            >
+              {activeZone === 'left' && (
+                <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-primary/15 border-r-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'right' && (
+                <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-primary/15 border-l-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'top' && (
+                <div className="absolute left-0 right-0 top-0 h-1/2 bg-primary/15 border-b-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'bottom' && (
+                <div className="absolute left-0 right-0 bottom-0 h-1/2 bg-primary/15 border-t-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+              {activeZone === 'center' && (
+                <div className="absolute inset-0 bg-primary/10 border-2 border-primary transition-all duration-75 pointer-events-none" />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
