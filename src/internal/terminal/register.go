@@ -148,6 +148,22 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		// mid-replay.
 		var data []byte
 		if !skipReplay {
+			// Frame the replay for the dimensions the scrollback tail was
+			// drawn at. The client gridded itself to its own panel size,
+			// which on a first page-load often differs from the PTY size
+			// (the layout is still settling). Parsing the replay at a
+			// different grid wraps/clips the TUI frame — the artifacts seen
+			// on first open that a reload clears. prevCols/prevRows are the
+			// PTY dims captured by resizePTY before this connection's first
+			// resize drove the PTY to the client's size.
+			if wc.prevCols > 0 && wc.prevRows > 0 {
+				msg, _ := json.Marshal(map[string]any{
+					"type": "replay-start",
+					"cols": wc.prevCols,
+					"rows": wc.prevRows,
+				})
+				wc.WriteMessage(websocket.TextMessage, msg)
+			}
 			scrollback := sess.scrollbackBytes()
 			if len(scrollback) > 0 {
 				payload := scrollback
@@ -175,6 +191,10 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			})
 			wc.WriteMessage(websocket.TextMessage, msg)
 		}
+		// Signal the end of the replay so the client can leave replay mode
+		// (re-enable deferred fits/resizes) once the final chunk is parsed.
+		msg, _ := json.Marshal(map[string]any{"type": "replay-end"})
+		wc.WriteMessage(websocket.TextMessage, msg)
 		sess.mu.Unlock()
 	}
 
