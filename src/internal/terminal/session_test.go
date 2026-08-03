@@ -88,6 +88,70 @@ func TestStripAlternateScreenRemovesAllToggles(t *testing.T) {
 	}
 }
 
+// TestTrimScrollbackKeepsWholeChunks verifies that trimming the scrollback
+// to maxScrollbackBytes only ever drops whole chunks, so a boundary can
+// never land inside an escape sequence (the "buffer size" artifact: a new
+// client replaying a stream that starts mid-sequence).
+func TestTrimScrollbackKeepsWholeChunks(t *testing.T) {
+	// Two chunks where the boundary between them would split a CSI sequence
+	// if trimmed by byte offset. Chunk 2 begins mid-sequence ("31m").
+	s := &Session{
+		scrollback: [][]byte{
+			[]byte("\x1b[38;5;"),
+			[]byte("31mhello"),
+		},
+	}
+	// Force the first chunk (which would split the sequence when replayed)
+	// to be dropped entirely by making it exceed the cap alone.
+	s.scrollback[0] = []byte(string(make([]byte, maxScrollbackBytes-5)) + "\x1b[38;5;")
+	s.scrollbackTotal = len(s.scrollback[0]) + len(s.scrollback[1])
+
+	s.trimScrollbackLocked()
+
+	// Only whole chunks may be removed: the partial first chunk (whose tail
+	// is an incomplete CSI) must be gone, and the intact continuation chunk
+	// must remain as a single unit.
+	if len(s.scrollback) != 1 {
+		t.Fatalf("want 1 retained chunk, got %d", len(s.scrollback))
+	}
+	if string(s.scrollback[0]) != "31mhello" {
+		t.Fatalf("retained chunk got corrupted: %q", s.scrollback[0])
+	}
+	if s.scrollbackTotal != len("31mhello") {
+		t.Fatalf("scrollbackTotal = %d, want %d", s.scrollbackTotal, len("31mhello"))
+	}
+}
+
+// TestTrimScrollbackTotalTracksBytes verifies scrollbackTotal stays accurate
+// across appends and whole-chunk drops.
+func TestTrimScrollbackTotalTracksBytes(t *testing.T) {
+	s := &Session{}
+	s.scrollback = append(s.scrollback, []byte("aaa"), []byte("bbbb"), []byte("c"))
+	s.scrollbackTotal = 8
+
+	if s.scrollbackTotal != 8 {
+		t.Fatalf("scrollbackTotal = %d, want 8", s.scrollbackTotal)
+	}
+	if got := string(s.scrollbackBytes()); got != "aaabbbbc" {
+		t.Fatalf("scrollbackBytes = %q, want %q", got, "aaabbbbc")
+	}
+
+	// Force a trim by appending a chunk that pushes the total over the cap.
+	big := []byte(string(make([]byte, maxScrollbackBytes)))
+	s.scrollback = append(s.scrollback, big)
+	s.scrollbackTotal += len(big)
+	s.trimScrollbackLocked()
+
+	// The three small chunks (8 bytes) must be dropped as whole units, so
+	// only the big chunk survives and the total matches it exactly.
+	if s.scrollbackTotal != len(big) {
+		t.Fatalf("scrollbackTotal = %d, want %d", s.scrollbackTotal, len(big))
+	}
+	if len(s.scrollback) != 1 || string(s.scrollback[0]) != string(big) {
+		t.Fatalf("retained chunks = %q, want only the big chunk", s.scrollbackBytes())
+	}
+}
+
 // TestSendScrollbackReplaysIntoAltScreen drives the (unexported) scrollback
 // replay path by constructing a Session with stored scrollback that contains a
 // TUI frame, then invoking the same logic sendScrollback uses: when
@@ -96,7 +160,7 @@ func TestStripAlternateScreenRemovesAllToggles(t *testing.T) {
 // stripped history into the normal buffer.
 func TestSendScrollbackReplaysIntoAltScreen(t *testing.T) {
 	buildReplay := func(s *Session) string {
-		scrollback := append([]byte(nil), s.scrollback...)
+		scrollback := s.scrollbackBytes()
 		onAltScreen := s.altScreen
 		var data []byte
 		if len(scrollback) > 0 {
@@ -116,7 +180,7 @@ func TestSendScrollbackReplaysIntoAltScreen(t *testing.T) {
 	t.Run("alt screen active emits enter + frame only", func(t *testing.T) {
 		s := &Session{
 			altScreen:  true,
-			scrollback: []byte("shell history before vim\x1b[?1049hsidebar|chat"),
+			scrollback: [][]byte{[]byte("shell history before vim\x1b[?1049hsidebar|chat")},
 		}
 		got := buildReplay(s)
 		want := "\x1b[?1049hsidebar|chat"
@@ -128,7 +192,7 @@ func TestSendScrollbackReplaysIntoAltScreen(t *testing.T) {
 	t.Run("alt screen inactive replays full history", func(t *testing.T) {
 		s := &Session{
 			altScreen:  false,
-			scrollback: []byte("shell history\x1b[?1049hvim frame\x1b[?1049lmore shell"),
+			scrollback: [][]byte{[]byte("shell history\x1b[?1049hvim frame\x1b[?1049lmore shell")},
 		}
 		got := buildReplay(s)
 		want := "shell historyvim framemore shell"
@@ -140,7 +204,7 @@ func TestSendScrollbackReplaysIntoAltScreen(t *testing.T) {
 	t.Run("alt screen active but enter trimmed falls back to full", func(t *testing.T) {
 		s := &Session{
 			altScreen:  true,
-			scrollback: []byte("no enter sequence left in buffer"),
+			scrollback: [][]byte{[]byte("no enter sequence left in buffer")},
 		}
 		got := buildReplay(s)
 		// Falls back to replaying the (stripped) full buffer prefixed by
