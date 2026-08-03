@@ -635,6 +635,48 @@ function connectWs(inst: TerminalInstance, backendId: string, noScrollback = fal
         // instead of writing + scrollToBottom per WS message.
         inst._pendingOutput.push(msg.data)
         scheduleFlush(inst)
+      } else if (msg.type === 'replay-start') {
+        // The backend is about to stream the scrollback replay. Enter replay
+        // mode: queue WS output so it can't interleave with the replay write,
+        // defer any resizes, and grid the terminal to the dimensions the
+        // replay was framed at — the PTY size when that content was drawn,
+        // which on a first page-load often differs from this client's own
+        // panel size (the layout is still settling). Parsing the replay at
+        // the wrong grid wraps/clips the TUI frame: the artifacts seen on
+        // first open that a reload clears (on reload the layout is settled
+        // and the grids already match). A subsequent replay-end re-fits to
+        // the panel size.
+        inst._replaying = true
+        inst._pendingQueue = []
+        const rCols = Number(msg.cols)
+        const rRows = Number(msg.rows)
+        if (!inst._detached && rCols > 0 && rRows > 0) {
+          try { inst.term.resize(rCols, rRows) } catch { /* ignore */ }
+        }
+      } else if (msg.type === 'replay-end') {
+        const hadReplay = inst._replaying
+        inst._replaying = false
+        // After the replay drains, re-fit to this client's panel size so the
+        // live TUI repaint that follows (triggered by the backend's first-
+        // resize SIGWINCH) is parsed at the client's own grid instead of the
+        // replay's framing grid. For the single-viewer case the backend does
+        // not echo a resize, so the deferred resize here is what realigns the
+        // grid; for multi-viewer, the backend's resize (deferred while busy)
+        // is already sitting in _pendingResize and takes precedence.
+        if (hadReplay && !inst._detached && !inst._pendingResize) {
+          try {
+            const dims = inst.fit.proposeDimensions()
+            if (dims && (dims.cols !== inst.term.cols || dims.rows !== inst.term.rows)) {
+              inst._pendingResize = { cols: dims.cols, rows: dims.rows }
+            }
+          } catch { /* ignore */ }
+        }
+        flushPending(inst)
+        // If nothing was queued there is no write to drain and thus no
+        // applyPendingResize; apply the re-fit immediately.
+        if (hadReplay && inst._pendingResize && inst._pendingWrites === 0) {
+          applyPendingResize(inst)
+        }
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
