@@ -11,12 +11,22 @@ var Current = "dev"
 
 func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /version", handleGetVersion)
+	mux.HandleFunc("GET /update/changelog", handleGetChangelog)
 	mux.HandleFunc("POST /update/check", handleCheckUpdate)
 	mux.HandleFunc("POST /update/apply", handleApplyUpdate)
 }
 
 func handleGetVersion(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, map[string]string{"version": Current})
+}
+
+func handleGetChangelog(w http.ResponseWriter, r *http.Request) {
+	result, err := update.GetChangelog(Current)
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	httpx.RespondJSON(w, result)
 }
 
 func handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
