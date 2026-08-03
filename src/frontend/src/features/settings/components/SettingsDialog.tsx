@@ -45,6 +45,7 @@ function parseChangelog(body: string): string[] {
     .filter((line) => {
       if (!line) return false
       if (line.startsWith('**Full Changelog**')) return false
+      if (line.startsWith('* release:')) return false
       if (line.startsWith('* ')) return true
       return false
     })
@@ -1885,7 +1886,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   {changelog && (
                     <div className="w-full max-w-md rounded-xl border border-border bg-secondary/10 p-4">
                       <h4 className="text-sm font-semibold mb-3">What's Changed</h4>
-                      <ul className="space-y-1.5">
+                      <ul className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
                         {parseChangelog(changelog.body).map((item, i) => (
                           <li key={i} className="text-xs text-muted-foreground leading-relaxed">{item}</li>
                         ))}
