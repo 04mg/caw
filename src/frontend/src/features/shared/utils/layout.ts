@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -23,6 +23,7 @@ export function normalizeLayout(node: unknown): LayoutNode {
       isDiff: typeof n.isDiff === 'boolean' ? n.isDiff : undefined,
       agentBranch: typeof n.agentBranch === 'string' ? n.agentBranch : undefined,
       baseBranch: typeof n.baseBranch === 'string' ? n.baseBranch : undefined,
+      petSlug: typeof n.petSlug === 'string' ? n.petSlug : undefined,
     }
   }
   if (n.type === 'split') {
@@ -140,6 +141,27 @@ export function collectLeafIds(root: LayoutNode): string[] {
   if (root.type === 'empty') return []
   if (root.type === 'leaf') return [root.id]
   return root.children.flatMap(collectLeafIds)
+}
+
+// collectAgentLeaves returns every leaf running an agent, in layout tree
+// order. Used to assign pets by rotation (ordinal = index in this list).
+export function collectAgentLeaves(root: LayoutNode): Extract<LayoutNode, { type: 'leaf' }>[] {
+  if (root.type === 'empty') return []
+  if (root.type === 'leaf') return root.agentId ? [root] : []
+  return root.children.flatMap(collectAgentLeaves)
+}
+
+// setLeafPetSlug returns a new tree with the petSlug of the matching leaf
+// updated immutably (or the original tree if the leaf is not found).
+export function setLeafPetSlug(root: LayoutNode, leafId: string, petSlug?: string): LayoutNode {
+  if (root.type === 'leaf') {
+    if (root.id !== leafId) return root
+    return petSlug ? { ...root, petSlug } : { ...root, petSlug: undefined }
+  }
+  if (root.type === 'split') {
+    return { ...root, children: root.children.map((c) => setLeafPetSlug(c, leafId, petSlug)) }
+  }
+  return root
 }
 
 export function setSplitSizes(

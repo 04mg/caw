@@ -13,6 +13,7 @@ type LayoutNode struct {
 	IsDiff      bool         `json:"isDiff,omitempty"`
 	AgentBranch string       `json:"agentBranch,omitempty"`
 	BaseBranch  string       `json:"baseBranch,omitempty"`
+	PetSlug     string       `json:"petSlug,omitempty"`
 }
 
 type TabLayout struct {

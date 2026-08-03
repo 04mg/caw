@@ -6,6 +6,18 @@ import (
 	"github.com/04mg/caw/internal/state"
 )
 
+// PetsConfig holds the Petdex desktop-pets settings shared across all
+// devices: whether pets are enabled, the ordered roster of pet slugs used
+// for rotation, per-agent pinned pets (agentId -> pet slug) and the
+// automatically-maintained per-agent assignments that survive a terminal
+// being closed and reopened.
+type PetsConfig struct {
+	Enabled     bool              `json:"enabled"`
+	Roster      []string          `json:"roster"`
+	AgentPins   map[string]string `json:"agentPins"`
+	Assignments map[string]string `json:"assignments"`
+}
+
 // PrefsState holds the user's work preferences shared across all devices.
 type PrefsState struct {
 	DefaultNewAgent string              `json:"defaultNewAgent"`
@@ -13,6 +25,7 @@ type PrefsState struct {
 	AgentCmds       map[string][]string `json:"agentCmds"`
 	DefaultShell    string              `json:"defaultShell"`
 	Hotkeys         map[string]string   `json:"hotkeys"`
+	Pets            PetsConfig          `json:"pets"`
 }
 
 const (
@@ -21,6 +34,7 @@ const (
 	keyAgentCmds       = "pref_agent_cmds"
 	keyDefaultShell    = "pref_default_shell"
 	keyHotkeys         = "pref_hotkeys"
+	keyPets            = "pref_pets"
 )
 
 func defaultHotkeys() map[string]string {
@@ -44,6 +58,12 @@ func defaultPrefs() PrefsState {
 		AgentCmds:       map[string][]string{},
 		DefaultShell:    "",
 		Hotkeys:         defaultHotkeys(),
+		Pets: PetsConfig{
+			Enabled:     false,
+			Roster:      []string{},
+			AgentPins:   map[string]string{},
+			Assignments: map[string]string{},
+		},
 	}
 }
 
@@ -78,6 +98,12 @@ func GetPrefs(store *state.Store) PrefsState {
 			}
 		}
 	}
+	if v, err := store.GetSetting(keyPets); err == nil && v != "" {
+		var pets PetsConfig
+		if json.Unmarshal([]byte(v), &pets) == nil {
+			p.Pets = pets
+		}
+	}
 
 	return p
 }
@@ -102,5 +128,45 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 	if err := store.SetSetting(keyHotkeys, string(hotkeysJSON)); err != nil {
 		return err
 	}
+	petsJSON, _ := json.Marshal(p.Pets)
+	if err := store.SetSetting(keyPets, string(petsJSON)); err != nil {
+		return err
+	}
 	return nil
+}
+
+// PrunePets removes every slug rejected by keep from the shared pets config
+// (roster entries and agent pins). Used when an uploaded pet is deleted so
+// stale slugs never linger in prefs.
+func PrunePets(store *state.Store, keep func(slug string) bool) {
+	p := GetPrefs(store)
+	changed := false
+
+	roster := p.Pets.Roster[:0]
+	for _, slug := range p.Pets.Roster {
+		if keep(slug) {
+			roster = append(roster, slug)
+		} else {
+			changed = true
+		}
+	}
+	p.Pets.Roster = roster
+
+	for agentID, slug := range p.Pets.AgentPins {
+		if !keep(slug) {
+			delete(p.Pets.AgentPins, agentID)
+			changed = true
+		}
+	}
+
+	for agentID, slug := range p.Pets.Assignments {
+		if !keep(slug) {
+			delete(p.Pets.Assignments, agentID)
+			changed = true
+		}
+	}
+
+	if changed {
+		_ = SetPrefs(store, p)
+	}
 }

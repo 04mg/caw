@@ -11,6 +11,7 @@ import (
 	"github.com/04mg/caw/internal/embed"
 	"github.com/04mg/caw/internal/git"
 	"github.com/04mg/caw/internal/httpx"
+	"github.com/04mg/caw/internal/pets"
 	"github.com/04mg/caw/internal/prefs"
 	"github.com/04mg/caw/internal/push"
 	"github.com/04mg/caw/internal/quota"
@@ -79,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	push.Register(api, s.store)
 	prefs.RegisterHTTP(api, s.store, s.mux)
 	state.RegisterHTTP(api, s.store, s.mux)
+	pets.Register(api, s.store)
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
 	agent.Register(api)
 	workspace.Register(api)

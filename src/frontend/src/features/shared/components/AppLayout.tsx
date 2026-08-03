@@ -11,6 +11,7 @@ import {
   splitLeaf,
   removeLeaf,
   collectLeafIds,
+  collectAgentLeaves,
   countLeaves,
   setSplitSizes,
   findAgentId,
@@ -49,7 +50,10 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getDefaultNewAgent, getHotkey, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { getDefaultNewAgent, getHotkey, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { PetStage } from '@/features/pets/components/PetStage'
+import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
+import { petSlugForAgent } from '@/features/pets/petAssignment'
 import { Shortcut } from './Shortcut'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
@@ -434,6 +438,10 @@ export function AppLayout() {
     },
     [],
   )
+
+  // Keep pet assignments (petSlug on agent leaves) in sync with the shared
+  // pets config: after prefs load, on prefs change, and on workspace change.
+  usePetReconciliation({ workspaces, patchWorkspace })
 
   // Subscribe to file-tree events so we can close editor panes for deleted
   // files, matching VS Code behavior.
@@ -1016,6 +1024,31 @@ export function AppLayout() {
     [activeWorkspace, patchWorkspace],
   )
 
+  // Every agent leaf in the whole workspace (across all tabs and groups), so
+  // one pet roams the shared stage per agent regardless of which tab is
+  // active or how the tabs are split.
+  const allAgentLeaves = useMemo(() => {
+    if (!activeWorkspace) return []
+    const leaves: Extract<LayoutNode, { type: 'leaf' }>[] = []
+    for (const tab of activeWorkspace.layouts) {
+      for (const leaf of collectAgentLeaves(tab.layout)) leaves.push(leaf)
+    }
+    return leaves
+  }, [activeWorkspace])
+
+  // Clicking a pet jumps to its agent terminal across tabs/groups: activate
+  // the owning tab, set the active pane and hand keyboard focus to xterm.
+  const handlePetFocus = useCallback(
+    (leafId: string) => {
+      if (!activeWorkspace) return
+      const tabIndex = activeWorkspace.layouts.findIndex((t) => collectLeafIds(t.layout).includes(leafId))
+      if (tabIndex < 0) return
+      navigateToAgent(activeWorkspace.id, tabIndex, leafId)
+      window.dispatchEvent(new CustomEvent('caw:focus-terminal', { detail: { paneId: leafId } }))
+    },
+    [activeWorkspace, navigateToAgent],
+  )
+
   const addTab = useCallback(
     async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
       if (!activeWorkspace) return
@@ -1064,10 +1097,16 @@ export function AppLayout() {
         },
       }
       patchWorkspace(activeWorkspace.id, (ws) => {
-        const layouts = [...ws.layouts, newTab]
+        // Assign a pet by rotation: the new leaf's ordinal is the count of
+        // existing agent leaves across the workspace (pins still win).
+        let ordinal = 0
+        for (const t of ws.layouts) ordinal += collectAgentLeaves(t.layout).length
+        const petSlug = agentId ? petSlugForAgent(agentId, ordinal, getPetsConfig()) : undefined
+        const tabWithPet = petSlug ? { ...newTab, layout: { ...newTab.layout, petSlug } } : newTab
+        const layouts = [...ws.layouts, tabWithPet]
         const { tree, activeGroupId } = ensureTabGroups({ ...ws, layouts })
         const targetGroupId = groupId || activeGroupId
-        const nextTree = moveTabToGroup(tree, newTab.id, targetGroupId)
+        const nextTree = moveTabToGroup(tree, tabWithPet.id, targetGroupId)
         return {
           ...ws,
           layouts,
@@ -1925,6 +1964,11 @@ export function AppLayout() {
                       </Button>
                     </div>
                   )}
+
+                  {/* Pets roam the stage across the whole workspace, so every
+                      agent's pet stays visible on mobile regardless of which
+                      leaf is in the active viewport. Matches the desktop stage. */}
+                  <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
                 </div>
 
                 {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
@@ -1988,7 +2032,7 @@ export function AppLayout() {
                 />
 
                 {/* Main Terminals / Editors Content. */}
-                <div className="h-full w-full min-w-0 min-h-0">
+                <div className="relative h-full w-full min-w-0 min-h-0">
                   {activeWorkspace && activeWorkspace.layouts.length > 0 ? (
                     <div className="flex-1 h-full min-h-0 relative">
                       {(() => {
@@ -2081,6 +2125,11 @@ export function AppLayout() {
                       {terminalBody}
                     </div>
                   )}
+
+                  {/* Pets roam the whole workspace stage: one pet per agent
+                      leaf across all tabs, floating over the terminals and
+                      editors below. */}
+                  <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
                 </div>
 
                 {/* Right Folder Explorer Panel — always mounted (same reason
