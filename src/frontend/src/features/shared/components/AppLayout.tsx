@@ -1966,7 +1966,7 @@ export function AppLayout() {
                   )}
 
                   {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
-                    <PetStage leaves={[currentActiveLeaf]} />
+                    <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
                   )}
                 </div>
 

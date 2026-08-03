@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type AgentStatus } from '@/features/agents/types'
 import { getPetState } from '../petStates'
 import { type PetEntry } from '../petsStore'
@@ -41,33 +41,43 @@ const MIN_SCALE = 0.42
 const MAX_SCALE = 0.8
 const FALL_SPEED = 85
 
-// The speech-bubble state ("Finished"/"Question?") is stored per agent leaf
-// so it survives workspace switches and remounts.
-const BUBBLE_STORAGE_KEY = 'caw:petBubbles'
+// The pet's speech bubble and on-stage run state are persisted per agent
+// leaf so they survive workspace switches and remounts, and the pet resumes
+// exactly where it was (same spot, still pacing) instead of resetting.
+const PET_STATE_KEY = 'caw:petStates'
 
-interface PetBubbleState {
-  text: string | null
+interface PetPersistState {
+  x: number
+  y: number
+  dir: 1 | -1
+  targetX: number
+  walking: boolean
+  decisionAt: number
+  hadStatus: boolean
+  spriteState: string
+  spriteStarted: number
+  bubble: string | null
   dismissed: boolean
   started: boolean
 }
 
-const readBubbleState = (leafId: string): PetBubbleState | null => {
+const readPetState = (leafId: string): PetPersistState | null => {
   try {
-    const raw = window.localStorage.getItem(BUBBLE_STORAGE_KEY)
+    const raw = window.localStorage.getItem(PET_STATE_KEY)
     if (!raw) return null
-    const all = JSON.parse(raw) as Record<string, PetBubbleState>
+    const all = JSON.parse(raw) as Record<string, PetPersistState>
     return all[leafId] ?? null
   } catch {
     return null
   }
 }
 
-const saveBubbleState = (leafId: string, state: PetBubbleState) => {
+const savePetState = (leafId: string, state: PetPersistState) => {
   try {
-    const raw = window.localStorage.getItem(BUBBLE_STORAGE_KEY)
-    const all: Record<string, PetBubbleState> = raw ? (JSON.parse(raw) as Record<string, PetBubbleState>) : {}
+    const raw = window.localStorage.getItem(PET_STATE_KEY)
+    const all: Record<string, PetPersistState> = raw ? (JSON.parse(raw) as Record<string, PetPersistState>) : {}
     all[leafId] = state
-    window.localStorage.setItem(BUBBLE_STORAGE_KEY, JSON.stringify(all))
+    window.localStorage.setItem(PET_STATE_KEY, JSON.stringify(all))
   } catch {
     // storage unavailable — non-fatal
   }
@@ -121,6 +131,8 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   // Speech bubble: "Finished" after a run, "Question?" while awaiting input.
   // Both are dismissed on click (which also focuses the terminal).
   const [bubbleText, setBubbleText] = useState<string | null>(null)
+  const bubbleTextRef = useRef<string | null>(bubbleText)
+  bubbleTextRef.current = bubbleText
   const bubbleDismissedRef = useRef(false)
   // Tracks whether the agent has ever left idle, so a freshly opened agent
   // (which sits idle from the start) is never greeted with "Finished".
@@ -171,10 +183,14 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
 
   // Restore the agent's last known bubble state on remount (e.g. after a
   // workspace switch) so a "Finished"/"Question?" status isn't forgotten.
+  // The saved run state (position, pacing) is stashed for the animation
+  // loop, which creates the state object on first run.
+  const savedStateRef = useRef<PetPersistState | null>(null)
   useEffect(() => {
-    const saved = readBubbleState(leafId)
+    const saved = readPetState(leafId)
     if (!saved) return
-    if (saved.text) setBubbleText(saved.text)
+    savedStateRef.current = saved
+    if (saved.bubble) setBubbleText(saved.bubble)
     bubbleDismissedRef.current = saved.dismissed
     startedWorkRef.current = saved.started
   }, [leafId])
@@ -209,13 +225,26 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [status])
 
   // Persist the current bubble state so it survives workspace switches.
-  useEffect(() => {
-    saveBubbleState(leafId, {
-      text: bubbleText,
+  const persistState = useCallback(() => {
+    const st = stateRef.current
+    savePetState(leafId, {
+      x: st?.x ?? 0,
+      y: st?.y ?? 0,
+      dir: st?.dir ?? 1,
+      targetX: st?.targetX ?? 0,
+      walking: st?.walking ?? false,
+      decisionAt: st?.decisionAt ?? 0,
+      hadStatus: st?.hadStatus ?? startedWorkRef.current,
+      spriteState: st?.spriteState ?? 'idle',
+      spriteStarted: st?.spriteStarted ?? 0,
+      bubble: bubbleTextRef.current,
       dismissed: bubbleDismissedRef.current,
       started: startedWorkRef.current,
     })
-  }, [leafId, bubbleText])
+  }, [leafId])
+  useEffect(() => {
+    persistState()
+  }, [leafId, bubbleText, persistState])
 
   // Main animation loop: movement + sprite frame stepping, driven
   // imperatively against the DOM to avoid per-frame React re-renders.
@@ -227,27 +256,28 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     let st = stateRef.current
     let created = false
     if (!st) {
+      const saved = savedStateRef.current
       st = {
-        x: PAD,
+        x: saved?.x ?? PAD,
         y: 0,
         groundY: 0,
-        targetX: PAD,
-        dir: 1,
-        walking: false,
-        decisionAt: 0,
+        targetX: saved?.targetX ?? PAD,
+        dir: saved?.dir ?? 1,
+        walking: saved?.walking ?? false,
+        decisionAt: saved?.decisionAt ?? 0,
         lastTick: 0,
         flashState: null,
         flashUntil: 0,
-        spriteState: 'idle',
-        spriteStarted: 0,
+        spriteState: saved?.spriteState ?? 'idle',
+        spriteStarted: saved?.spriteStarted ?? 0,
         status: undefined,
-        hadStatus: false,
+        hadStatus: saved?.hadStatus ?? false,
       }
       stateRef.current = st
       created = true
     }
     // The pet appears for an agent that is already running: welcome it with
-    // a wave, just like a fresh spawn.
+    // a wave, just like a fresh spawn. A restored pet skips the wave.
     if (created && !st.hadStatus && statusRef.current) {
       st.hadStatus = true
       st.flashState = 'waving'
@@ -256,13 +286,24 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
 
     const { containerW, containerH } = propsRef.current
     const max = Math.max(PAD, containerW - petW - PAD)
-    if (st.lastTick === 0) {
-      const x0 = PAD + (hashString(leafId + pet.slug + 'pos') % Math.max(1, Math.round(max - PAD)))
-      st.x = Math.min(max, Math.max(PAD, x0))
-      st.targetX = st.x
-    }
     st.groundY = containerH - petH
-    if (created) st.y = st.groundY
+    if (st.lastTick === 0) {
+      if (savedStateRef.current) {
+        // Restored pet: clamp its position to the current stage so a resized
+        // container never leaves it off-screen, and pick up where it left off.
+        const saved = savedStateRef.current
+        st.x = Math.min(max, Math.max(PAD, saved.x))
+        st.targetX = Math.min(max, Math.max(PAD, saved.targetX))
+        st.y = Math.min(st.groundY, Math.max(0, saved.y))
+        st.decisionAt = performance.now() + 200 + Math.random() * 600
+      } else {
+        const x0 = PAD + (hashString(leafId + pet.slug + 'pos') % Math.max(1, Math.round(max - PAD)))
+        st.x = Math.min(max, Math.max(PAD, x0))
+        st.targetX = st.x
+        st.y = st.groundY
+      }
+    }
+    if (created && !savedStateRef.current) st.y = st.groundY
     st.lastTick = performance.now()
 
     el.style.backgroundImage = `url(${pet.spritesheetUrl})`
@@ -375,9 +416,10 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
 
     return () => {
       cancelAnimationFrame(raf)
+      persistState()
       apiRef.current.onPose({ x: -99999, w: 0 })
     }
-  }, [size, leafId, pet.slug, pet.spritesheetUrl, onPose])
+  }, [size, leafId, pet.slug, pet.spritesheetUrl, onPose, persistState])
 
   const handleClick = () => {
     if (dragMovedRef.current) {
