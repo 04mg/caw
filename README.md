@@ -82,6 +82,30 @@ Keep an eye on your spend. Caw shows live usage limits and reset times for Claud
   <picture><source srcset="assets/feature-wall/quota-monitoring.gif" type="image/gif"><img src="assets/feature-wall/quota-monitoring.jpg" alt="Caw usage quota monitoring for multiple providers" width="100%" /></picture>
 </td>
 </tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Voice Mode
+
+Skip the keyboard. Dictate commands and messages straight to your agent with speech-to-text — using your browser's built-in engine or a private local one.
+
+</td>
+<td width="50%">
+  <picture><source srcset="assets/feature-wall/voice-mode.gif" type="image/gif"><img src="assets/feature-wall/voice-mode.jpg" alt="Caw voice mode transcribing speech into the terminal" width="100%" /></picture>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Pet Companions
+
+Petdex pets wander along the bottom of your terminal areas and react to what your agents are doing.
+
+</td>
+<td width="50%">
+  <picture><source srcset="assets/feature-wall/pets.gif" type="image/gif"><img src="assets/feature-wall/pets.jpg" alt="Caw pets roaming the terminal while agents work" width="100%" /></picture>
+</td>
+</tr>
 </table>
 
 ## Supported agents

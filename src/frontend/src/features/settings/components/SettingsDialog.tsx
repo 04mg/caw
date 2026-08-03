@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
@@ -26,6 +26,7 @@ import {
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { PetsSettingsPanel } from './PetsSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
 
 const EMOJI_MAP: Record<string, string> = {
@@ -68,11 +69,12 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [dialogSize, setDialogSize] = useState({ w: 660, h: 590 })
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
@@ -205,6 +207,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
+
+  // Desktop dialog scales with the viewport: it grows to fill the screen
+  // (whichever side is the limiter), never exceeds the screen height, and
+  // stays a bit smaller than the old fixed 720x650 at its base. Both width
+  // and height get a flat ~100px reduction so the dialog feels shorter than
+  // full-screen.
+  useEffect(() => {
+    if (isMobile) return
+    const measure = () => {
+      const baseW = 660
+      const baseH = 590
+      const scale = Math.min((window.innerWidth - 64) / baseW, (window.innerHeight - 96) / baseH, 1.2)
+      setDialogSize({
+        w: Math.max(400, Math.round(baseW * scale) - 100),
+        h: Math.max(360, Math.round(baseH * scale) - 100),
+      })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [isMobile])
 
   // Reset mobile section selection when dialog closes
   useEffect(() => {
@@ -539,6 +562,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
     { id: 'agents', label: 'Agents', icon: Bot, category: 'Integrations' },
     { id: 'limits', label: 'Limits', icon: ChartSpline, category: 'Integrations' },
+    { id: 'pets', label: 'Pets', icon: PawPrint, category: 'Integrations' },
   ]
 
   const renderSectionContent = () => (
@@ -986,6 +1010,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             </div>
           )}
+
+          {activeSection === 'pets' && <PetsSettingsPanel />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">
@@ -1973,11 +1999,20 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent hideClose={isMobile} data-testid="settings-dialog" className={`p-0 flex flex-row overflow-hidden bg-background ${
-        isMobile
-          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
-          : 'w-[600px] h-[400px] max-w-none max-h-none border border-border sm:rounded-lg'
-      }`}>
+      <DialogContent
+        hideClose={isMobile}
+        data-testid="settings-dialog"
+        style={
+          isMobile
+            ? undefined
+            : { width: dialogSize.w, height: dialogSize.h, maxWidth: 'none', maxHeight: 'none' }
+        }
+        className={`p-0 flex flex-row overflow-hidden bg-background ${
+          isMobile
+            ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
+            : 'max-w-none max-h-none border border-border sm:rounded-lg'
+        }`}
+      >
         {isMobile ? (
           <>
             {/* Mobile: two-step layout */}
