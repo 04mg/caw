@@ -116,6 +116,7 @@ func Register(api *http.ServeMux, store *state.Store) {
 		handleDelete(w, r, store)
 	})
 	api.HandleFunc("GET /pets/petdex-manifest", handlePetdexManifest)
+	api.HandleFunc("GET /pets/proxy-sprite", handlePetdexSpriteProxy)
 	api.HandleFunc("POST /pets/from-petdex", func(w http.ResponseWriter, r *http.Request) {
 		handlePetdexDownload(w, r, store)
 	})
@@ -256,6 +257,48 @@ func handlePetdexManifest(w http.ResponseWriter, r *http.Request) {
 }
 
 var petdexSlugRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+// handlePetdexSpriteProxy streams a Petdex spritesheet through Caw so the
+// browser can render library thumbnails without touching the CDN (which
+// sends no CORS headers). Only assets.petdex.dev is allowed, mirroring the
+// download endpoint's host check.
+func handlePetdexSpriteProxy(w http.ResponseWriter, r *http.Request) {
+	u, err := url.Parse(r.URL.Query().Get("url"))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host != "assets.petdex.dev" {
+		httpx.RespondBadRequest(w, "invalid petdex sprite url")
+		return
+	}
+	resp, err := petdexClient.Get(u.String())
+	if err != nil {
+		httpx.RespondInternal(w, "petdex sprite unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		httpx.RespondBadRequest(w, fmt.Sprintf("petdex sprite returned %d", resp.StatusCode))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, spriteMaxSize))
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	if len(data) < 32 {
+		httpx.RespondBadRequest(w, "file too small to be a valid sprite")
+		return
+	}
+	if err := validateSprite(data); err != nil {
+		httpx.RespondBadRequest(w, err.Error())
+		return
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "" {
+		w.Header().Set("Cache-Control", cc)
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	}
+	w.Header().Set("Content-Type", contentType(data))
+	_, _ = w.Write(data)
+}
 
 // handlePetdexDownload downloads a Petdex spritesheet server-side (the CDN
 // sends no CORS headers) and stores it as a local custom pet carrying the
