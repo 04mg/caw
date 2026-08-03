@@ -4,20 +4,27 @@ import { getPetState } from '../petStates'
 import { type PetEntry } from '../petsStore'
 import { PET_STRIP_HEIGHT } from '../petAssignment'
 
-// Base sprite state driven by the agent's live status.
+// Base sprite state driven by the agent's live status. Persisting states
+// stay active as long as the status holds: failed for any failure, jumping
+// while the agent awaits input, review while working, idle once finished.
 const STATUS_STATE: Record<string, string> = {
   thinking: 'review',
   executing: 'review',
-  waiting_input: 'waiting',
+  waiting_input: 'jumping',
   idle: 'idle',
   crashed: 'failed',
   tool_failed: 'failed',
-  interrupted: 'jumping',
+  interrupted: 'failed',
 }
 
 function baseStateFromStatus(status: AgentStatus | undefined): string {
   if (!status) return 'idle'
   return STATUS_STATE[status.status] ?? 'idle'
+}
+
+function isWorking(status: AgentStatus | undefined): boolean {
+  const s = status?.status
+  return s === 'thinking' || s === 'executing'
 }
 
 function hashString(s: string): number {
@@ -63,8 +70,7 @@ interface PetState {
   spriteState: string
   spriteStarted: number
   status: AgentStatus | undefined
-  statusSeq: number | undefined
-  statusTool: string
+  hadStatus: boolean
 }
 
 export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH, getOtherRanges, onPose, onClick }: PetProps) {
@@ -73,6 +79,13 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   const stateRef = useRef<PetState | null>(null)
   const propsRef = useRef({ containerW, containerH })
   propsRef.current = { containerW, containerH }
+  // Live status is read from a ref so the animation loop and the status
+  // effect can see the latest value without restarting the loop.
+  const statusRef = useRef<AgentStatus | undefined>(status)
+  statusRef.current = status
+  // "Finished" bubble: shown while the agent is idle, dismissed on click.
+  const [showBubble, setShowBubble] = useState(false)
+  const bubbleDismissedRef = useRef(false)
   // Pane origin is read from a ref so pane moves (splitter drags) apply to
   // the running animation loop without restarting it.
   const originRef = useRef({ x, y })
@@ -113,32 +126,26 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     }
   }, [pet.spritesheetUrl, scale])
 
-  // Handle status transitions: one-shot flashes for tool_failed / interrupted
-  // / new tool call.
+  // Handle status transitions. A freshly spawned agent waves once; the
+  // "Finished" bubble follows the idle status until the pet is clicked.
   useEffect(() => {
     const st = stateRef.current
-    if (!st) return
-    st.status = status
-    if (!status) return
-    const now = performance.now()
-    const s = status.status
-    if (s === 'tool_failed') {
-      st.flashState = 'failed'
-      st.flashUntil = now + 1220
-    } else if (s === 'interrupted') {
-      st.flashState = 'jumping'
-      st.flashUntil = now + 840
-    } else if (s === 'executing' || s === 'thinking') {
-      const newTool =
-        (typeof status.sequence === 'number' && status.sequence !== st.statusSeq) ||
-        (status.tool !== undefined && status.tool !== st.statusTool)
-      if (newTool) {
-        st.flashState = 'waving'
-        st.flashUntil = now + 700
-      }
+    if (st) st.status = status
+
+    const isIdle = status?.status === 'idle'
+    if (isIdle) {
+      if (!bubbleDismissedRef.current) setShowBubble(true)
+    } else {
+      bubbleDismissedRef.current = false
+      setShowBubble(false)
     }
-    if (typeof status.sequence === 'number') st.statusSeq = status.sequence
-    if (status.tool !== undefined) st.statusTool = status.tool
+
+    if (!st || !status) return
+    if (!st.hadStatus) {
+      st.hadStatus = true
+      st.flashState = 'waving'
+      st.flashUntil = performance.now() + 900
+    }
   }, [status])
 
   // Main animation loop: movement + sprite frame stepping, driven
@@ -149,6 +156,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     if (!el) return
     const { petW, petH, rows } = size
     let st = stateRef.current
+    let created = false
     if (!st) {
       st = {
         x: PAD,
@@ -162,10 +170,17 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
         spriteState: 'idle',
         spriteStarted: 0,
         status: undefined,
-        statusSeq: undefined,
-        statusTool: '',
+        hadStatus: false,
       }
       stateRef.current = st
+      created = true
+    }
+    // The pet appears for an agent that is already running: welcome it with
+    // a wave, just like a fresh spawn.
+    if (created && !st.hadStatus && statusRef.current) {
+      st.hadStatus = true
+      st.flashState = 'waving'
+      st.flashUntil = performance.now() + 900
     }
 
     const { containerW, containerH } = propsRef.current
@@ -189,46 +204,31 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       el.style.transform = `translate3d(${ox + st.x}px, ${oy + ground}px, 0)`
     }
 
+    // Movement decisions for a working agent: keep pacing left-to-right,
+    // pausing for a review between segments, and hop back to the left edge
+    // once it reaches the right one.
     const decide = (now: number) => {
       const { containerW } = propsRef.current
       const maxX = Math.max(PAD, containerW - petW - PAD)
-      const roll = Math.random()
-      if (roll < 0.45) {
-        st.decisionAt = now + 1500 + Math.random() * 2500
+      if (st.x >= maxX) {
+        st.x = PAD
+        st.decisionAt = now + 500
         return
       }
-      if (roll < 0.8) {
-        const others = apiRef.current.getOtherRanges()
-        let target: number | null = null
-        for (let i = 0; i < 12; i++) {
-          const t = PAD + Math.random() * Math.max(1, maxX - PAD)
-          const blocked = others.some(
-            (r) => t < r.x + r.w + WALK_GAP && t + petW + WALK_GAP > r.x,
-          )
-          if (!blocked) {
-            target = t
-            break
-          }
-        }
-        if (target !== null) {
-          st.targetX = Math.min(maxX, Math.max(PAD, target))
-          st.dir = st.targetX >= st.x ? 1 : -1
-          st.walking = true
-          st.decisionAt = now + 15000
-          return
-        }
-        st.decisionAt = now + 800 + Math.random() * 800
+      const step = Math.min(90 + Math.random() * 200, Math.max(0, maxX - st.x))
+      const others = apiRef.current.getOtherRanges()
+      const candidate = st.x + step
+      const blocked = others.some(
+        (r) => candidate < r.x + r.w + WALK_GAP && candidate + petW + WALK_GAP > r.x,
+      )
+      if (blocked) {
+        st.decisionAt = now + 1000 + Math.random() * 1000
         return
       }
-      if (roll < 0.9) {
-        st.flashState = 'waving'
-        st.flashUntil = now + 700
-        st.decisionAt = now + 800
-        return
-      }
-      st.flashState = 'jumping'
-      st.flashUntil = now + 840
-      st.decisionAt = now + 900
+      st.targetX = candidate
+      st.dir = 1
+      st.walking = true
+      st.decisionAt = now + 30000
     }
 
     let raf = 0
@@ -238,21 +238,31 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       const dt = Math.min((now - st.lastTick) / 1000, 0.1)
       st.lastTick = now
 
+      const working = isWorking(st.status)
+      // Idle / failed / awaiting-input pets stay put and spam their state.
+      if (!working) st.walking = false
+
       if (st.walking) {
         const speed = 90 * dt
         if (Math.abs(st.targetX - st.x) <= speed) {
           st.x = st.targetX
           st.walking = false
-          st.decisionAt = now + 1500 + Math.random() * 2500
+          st.decisionAt = now + 600 + Math.random() * 1400
         } else {
           st.x += st.dir * speed
-          if (st.x <= PAD || st.x >= maxX) {
-            st.x = Math.min(maxX, Math.max(PAD, st.x))
+          if (st.dir > 0 && st.x >= maxX) {
+            // Walked off the right edge: reappear from the left and keep going.
+            st.x = PAD
+            st.targetX = PAD
+            st.walking = false
+            st.decisionAt = now + 700 + Math.random() * 1200
+          } else if (st.x <= PAD) {
+            st.x = PAD
             st.walking = false
             st.decisionAt = now + 1200 + Math.random() * 1200
           }
         }
-      } else if (now >= st.decisionAt) {
+      } else if (working && now >= st.decisionAt) {
         decide(now)
       }
 
@@ -291,14 +301,15 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
 
   const handleClick = () => {
     const st = stateRef.current
+    const now = performance.now()
     if (st) {
-      const now = performance.now()
       st.walking = false
-      const flash = Math.random() < 0.5 ? 'waving' : 'jumping'
-      st.flashState = flash
-      st.flashUntil = now + (flash === 'waving' ? 700 : 840)
-      st.decisionAt = now + (flash === 'waving' ? 800 : 900)
+      st.flashState = 'waving'
+      st.flashUntil = now + 700
+      st.decisionAt = now + 800
     }
+    bubbleDismissedRef.current = true
+    setShowBubble(false)
     onClick()
   }
 
@@ -310,6 +321,15 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       className="pointer-events-auto absolute left-0 top-0 cursor-pointer select-none"
       title={pet.name}
       aria-hidden="true"
-    />
+    >
+      {showBubble && (
+        <div className="pointer-events-none absolute bottom-full left-1/2 z-10 -translate-x-1/2 pb-1.5">
+          <div className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-lg">
+            Finished
+          </div>
+          <div className="mx-auto -mt-[5px] h-2 w-2 rotate-45 border-b border-r border-border bg-popover" />
+        </div>
+      )}
+    </div>
   )
 }
