@@ -1965,9 +1965,10 @@ export function AppLayout() {
                     </div>
                   )}
 
-                  {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
-                    <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
-                  )}
+                  {/* Pets roam the stage across the whole workspace, so every
+                      agent's pet stays visible on mobile regardless of which
+                      leaf is in the active viewport. Matches the desktop stage. */}
+                  <PetStage leaves={allAgentLeaves} onFocusLeaf={handlePetFocus} />
                 </div>
 
                 {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
