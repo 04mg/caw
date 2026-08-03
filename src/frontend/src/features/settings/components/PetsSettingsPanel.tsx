@@ -305,11 +305,6 @@ export function PetsSettingsPanel() {
             })}
           </div>
         )}
-        {filtered.length > LIBRARY_LIMIT && (
-          <p className="text-center text-[10px] text-muted-foreground">
-            Showing the first {LIBRARY_LIMIT} matches — refine your search.
-          </p>
-        )}
       </div>
 
       {/* Upload */}

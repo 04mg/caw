@@ -41,6 +41,7 @@ type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [dialogSize, setDialogSize] = useState({ w: 660, h: 590 })
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
@@ -171,6 +172,22 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
+
+  // Desktop dialog scales with the viewport: it grows to fill the screen
+  // (whichever side is the limiter), never exceeds the screen height, and
+  // stays a bit smaller than the old fixed 720x650 at its base.
+  useEffect(() => {
+    if (isMobile) return
+    const measure = () => {
+      const baseW = 660
+      const baseH = 590
+      const scale = Math.min((window.innerWidth - 64) / baseW, (window.innerHeight - 96) / baseH, 1.2)
+      setDialogSize({ w: Math.round(baseW * scale), h: Math.round(baseH * scale) })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [isMobile])
 
   // Reset mobile section selection when dialog closes
   useEffect(() => {
@@ -1906,11 +1923,20 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent hideClose={isMobile} data-testid="settings-dialog" className={`p-0 flex flex-row overflow-hidden bg-background ${
-        isMobile
-          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
-          : 'w-[720px] h-[650px] max-w-none max-h-none border border-border sm:rounded-lg'
-      }`}>
+      <DialogContent
+        hideClose={isMobile}
+        data-testid="settings-dialog"
+        style={
+          isMobile
+            ? undefined
+            : { width: dialogSize.w, height: dialogSize.h, maxWidth: 'none', maxHeight: 'none' }
+        }
+        className={`p-0 flex flex-row overflow-hidden bg-background ${
+          isMobile
+            ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
+            : 'max-w-none max-h-none border border-border sm:rounded-lg'
+        }`}
+      >
         {isMobile ? (
           <>
             {/* Mobile: two-step layout */}
