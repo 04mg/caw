@@ -93,7 +93,17 @@ type Session struct {
 	pendingResizes int
 	cols           int
 	rows           int
-	scrollback     []byte
+	// scrollback holds the PTY output persisted for replay to a freshly
+	// attached client, as a list of whole read-chunks (one chunk per
+	// ReadLoop iteration). Storing whole chunks — rather than a single
+	// byte slice — guarantees that the cap (maxScrollbackBytes) trims at
+	// chunk boundaries only, so an escape sequence (CSI/OSC/UTF-8) can
+	// never be split across the retained prefix, which is what replayed
+	// garbage/artifacts into a new client's scrollback.
+	scrollback [][]byte
+	// scrollbackTotal is the running byte count of scrollback, used to
+	// trim to maxScrollbackBytes without rescanning every chunk.
+	scrollbackTotal int
 	// modes holds the last-set state of the DEC private modes listed in
 	// syncModes, tracked incrementally from the live PTY stream. It is the
 	// authoritative source used to re-sync a freshly-attached client.
@@ -329,6 +339,37 @@ func (s *Session) broadcastResize(extra *connWriter) {
 	}
 }
 
+// maxScrollbackBytes caps the per-session scrollback retained for replay to
+// a freshly attached client. Chunks are dropped as whole units, so the cap
+// can never split an escape sequence across the retained prefix.
+const maxScrollbackBytes = 256 * 1024
+
+// trimScrollbackLocked drops whole oldest chunks until the retained
+// scrollback fits within maxScrollbackBytes. Because it only ever removes
+// whole chunks, an escape sequence can never be split across the retained
+// prefix — replaying a partial sequence is what rendered garbage into a new
+// client's scrollback. Must be called with s.mu held.
+func (s *Session) trimScrollbackLocked() {
+	for s.scrollbackTotal > maxScrollbackBytes && len(s.scrollback) > 0 {
+		s.scrollbackTotal -= len(s.scrollback[0])
+		s.scrollback = s.scrollback[1:]
+	}
+}
+
+// scrollbackBytes concatenates the retained scrollback chunks into a single
+// byte slice. Must be called with s.mu held. The concatenation is bounded by
+// maxScrollbackBytes, so this is a single modest allocation.
+func (s *Session) scrollbackBytes() []byte {
+	if len(s.scrollback) == 0 {
+		return nil
+	}
+	out := make([]byte, 0, s.scrollbackTotal)
+	for _, c := range s.scrollback {
+		out = append(out, c...)
+	}
+	return out
+}
+
 // stripAlternateScreen removes the alternate screen toggle sequences
 // (\x1b[?1049h and \x1b[?1049l) from the buffer, keeping only normal
 // screen output so scrollback replay works correctly in xterm.js.
@@ -516,12 +557,14 @@ func (s *Session) ReadLoop() {
 			// Persist scrollback with sync-mode sequences stripped, so a
 			// later ring-trim split can never corrupt a multi-byte mode
 			// sequence during replay. The current mode state is re-applied
-			// separately and atomically via syncMessage on attach.
+			// separately and atomically via syncMessage on attach. The
+			// scrollback is stored as whole read-chunks and capped by
+			// dropping the oldest whole chunk, so a ring-trim boundary can
+			// never land inside an escape sequence.
 			stripped := stripSyncModes(data)
-			s.scrollback = append(s.scrollback, stripped...)
-			if len(s.scrollback) > 256*1024 {
-				s.scrollback = append([]byte(nil), s.scrollback[len(s.scrollback)-256*1024:]...)
-			}
+			s.scrollback = append(s.scrollback, stripped)
+			s.scrollbackTotal += len(stripped)
+			s.trimScrollbackLocked()
 			for c := range s.conns {
 				msg, _ := json.Marshal(map[string]any{
 					"type": "output",

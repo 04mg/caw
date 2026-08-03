@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -76,7 +76,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     const flushResize = () => {
       fitTimerRef.current = null
-      if (!inst) return
+      if (cancelled || !inst) return
+      // xterm.js resize() reflows the buffer synchronously. While the
+      // terminal is still parsing a write (scrollback replay on re-attach,
+      // or a batched output flush from a fresh connect), that reflow runs
+      // against a half-parsed buffer and corrupts the scrollback + scrollbar
+      // (the artifacts seen when returning to a terminal). Defer the fit
+      // and retry once the buffer is quiescent.
+      if (isTerminalReplaying(terminalId)) {
+        fitTimerRef.current = setTimeout(flushResize, 100)
+        return
+      }
+      // A fresh fit supersedes any resize that was deferred while the
+      // terminal was busy replaying; if the backend still wants a different
+      // grid it will echo the authoritative size via a new resize message.
+      inst._pendingResize = null
       try {
         // Wrap the reflow + renderer resize in DEC private mode 2026
         // (Synchronized Output). While enabled, the renderer buffers

@@ -116,14 +116,20 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		}
 		scrolled = true
 
+		// Build and deliver the replay while holding s.mu. ReadLoop also
+		// broadcasts live output while holding s.mu, so keeping this write
+		// under the same lock serializes the snapshot strictly before any
+		// subsequent live chunk — a freshly attached client can never
+		// receive newer output before the (older) scrollback replay, which
+		// is what caused stale bytes to be re-rendered over fresh output
+		// (visible as artifacts) when the lock was dropped between
+		// snapshotting and writing.
 		sess.mu.Lock()
-		scrollback := make([]byte, len(sess.scrollback))
-		copy(scrollback, sess.scrollback)
+		scrollback := sess.scrollbackBytes()
 		syncSeq := sess.syncMessage()
 		onAltScreen := sess.altScreen
 		sess.pendingResizes--
 		sess.conns[wc] = true
-		sess.mu.Unlock()
 
 		// Build the replay payload. When the running program is on the
 		// alternate screen, drive the reattaching client onto the alt
@@ -161,6 +167,7 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			})
 			wc.WriteMessage(websocket.TextMessage, msg)
 		}
+		sess.mu.Unlock()
 	}
 
 	go func() {
