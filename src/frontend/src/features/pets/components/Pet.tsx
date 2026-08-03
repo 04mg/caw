@@ -226,17 +226,22 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
 
   // Persist the current bubble state so it survives workspace switches.
   const persistState = useCallback(() => {
+    // Only persist once the animation loop has initialised the pose. This
+    // effect also runs on mount before the spritesheet loads, and writing
+    // default zeros there would clobber the saved position, making a
+    // reloaded pet spawn at the top of the stage and fall to the ground.
     const st = stateRef.current
+    if (!st) return
     savePetState(leafId, {
-      x: st?.x ?? 0,
-      y: st?.y ?? 0,
-      dir: st?.dir ?? 1,
-      targetX: st?.targetX ?? 0,
-      walking: st?.walking ?? false,
-      decisionAt: st?.decisionAt ?? 0,
-      hadStatus: st?.hadStatus ?? startedWorkRef.current,
-      spriteState: st?.spriteState ?? 'idle',
-      spriteStarted: st?.spriteStarted ?? 0,
+      x: st.x,
+      y: st.y,
+      dir: st.dir,
+      targetX: st.targetX,
+      walking: st.walking,
+      decisionAt: st.decisionAt,
+      hadStatus: st.hadStatus || startedWorkRef.current,
+      spriteState: st.spriteState,
+      spriteStarted: st.spriteStarted,
       bubble: bubbleTextRef.current,
       dismissed: bubbleDismissedRef.current,
       started: startedWorkRef.current,
