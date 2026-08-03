@@ -1906,8 +1906,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <>
                   <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
                   <div className="flex flex-col items-center gap-1">
-                    <h3 className="text-2xl font-semibold">Caw</h3>
-                    <p className="text-sm text-muted-foreground">{appVersion ? `v${appVersion}` : ''}</p>
+                    <h3 className="text-2xl font-semibold">{appVersion ? `Caw v${appVersion}` : 'Caw'}</h3>
                   </div>
                   {changelog && (
                     <div className="w-full max-w-md rounded-xl border border-border bg-secondary/10 p-4">
