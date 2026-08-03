@@ -125,7 +125,12 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		// (visible as artifacts) when the lock was dropped between
 		// snapshotting and writing.
 		sess.mu.Lock()
-		scrollback := sess.scrollbackBytes()
+		// A reconnecting client that already holds the current scrollback
+		// (sent "no-scrollback") skips the history replay — re-rendering the
+		// last 256KiB on top of the content it already has would duplicate
+		// the tail of its scrollback. It still registers as a viewer (so PTY
+		// sizing accounts for it) and still receives the sync-mode sequence.
+		skipReplay := wc.noScrollback
 		syncSeq := sess.syncMessage()
 		onAltScreen := sess.altScreen
 		sess.pendingResizes--
@@ -142,16 +147,19 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		// entries don't bounce the client back to the normal buffer
 		// mid-replay.
 		var data []byte
-		if len(scrollback) > 0 {
-			payload := scrollback
-			if onAltScreen {
-				if frame := currentAltScreenFrame(scrollback); frame != nil {
-					payload = frame
+		if !skipReplay {
+			scrollback := sess.scrollbackBytes()
+			if len(scrollback) > 0 {
+				payload := scrollback
+				if onAltScreen {
+					if frame := currentAltScreenFrame(scrollback); frame != nil {
+						payload = frame
+					}
+					data = append(data, "\x1b[?1049h"...)
 				}
-				data = append(data, "\x1b[?1049h"...)
+				stripped := stripAlternateScreen(payload)
+				data = append(data, stripped...)
 			}
-			stripped := stripAlternateScreen(payload)
-			data = append(data, stripped...)
 		}
 		if len(data) > 0 {
 			msg, _ := json.Marshal(map[string]any{
@@ -218,6 +226,14 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			if OnPtyFocus != nil {
 				OnPtyFocus(id, focused)
 			}
+		case "no-scrollback":
+			// The client already holds the current scrollback (it reconnected
+			// without re-creating its xterm.js instance). sendScrollback reads
+			// this flag and skips the history replay, preventing the tail of
+			// the scrollback from being duplicated on every reconnect.
+			sess.mu.Lock()
+			wc.noScrollback = true
+			sess.mu.Unlock()
 		}
 	}
 }

@@ -395,7 +395,9 @@ export function reconnectTerminalWs(leafId: string) {
   cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   inst.ws = null
-  connectWs(inst, inst.backendId)
+  // The term is still populated, so skip the backend scrollback replay —
+  // re-sending it would duplicate the tail of the scrollback.
+  connectWs(inst, inst.backendId, true)
 }
 
 export function setTerminalUserScrolling(leafId: string, scrolling: boolean) {
@@ -578,13 +580,26 @@ function flushPending(inst: TerminalInstance) {
   }
 }
 
-function connectWs(inst: TerminalInstance, backendId: string) {
+// connectWs opens a WebSocket to the backend terminal session. When
+// noScrollback is true (a reconnect of a terminal whose xterm.js instance is
+// still populated), the client tells the backend to skip the full scrollback
+// replay — replaying the last 256KiB on top of the content the client already
+// rendered would duplicate the tail of the scrollback on every reconnect.
+// Fresh attaches (empty term / cleared buffer) leave it false so the backend
+// repopulates history normally.
+function connectWs(inst: TerminalInstance, backendId: string, noScrollback = false) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${protocol}//${location.host}/ws/terminals/${backendId}`)
   inst.ws = ws
 
   ws.onopen = () => {
     inst._reconnectAttempts = 0
+    // Sent before any resize so the backend processes it first; the
+    // scrollback replay is gated on the first resize / 2s timeout, so by
+    // then this flag is already set and the history is skipped.
+    if (noScrollback) {
+      ws.send(JSON.stringify({ type: 'no-scrollback' }))
+    }
     // Only resize the backend PTY when this document is visible. When the
     // mobile OS wakes the PWA to deliver a push notification the page is
     // still backgrounded, so proposeDimensions returns stale mobile sizes.
@@ -684,7 +699,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
             } else {
               setTimeout(() => {
                 if (!inst.exited && inst.ws === null) {
-                  connectWs(inst, inst.backendId)
+                  connectWs(inst, inst.backendId, true)
                 }
               }, 1000)
             }
@@ -693,7 +708,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
             // Network/offline error, continue retrying
             setTimeout(() => {
               if (!inst.exited && inst.ws === null) {
-                connectWs(inst, inst.backendId)
+                connectWs(inst, inst.backendId, true)
               }
             }, 1000)
           })
