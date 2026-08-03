@@ -39,6 +39,7 @@ const PAD = 8
 const WALK_GAP = 6
 const MIN_SCALE = 0.42
 const MAX_SCALE = 0.8
+const FALL_SPEED = 55
 
 export interface PetRange {
   x: number
@@ -60,6 +61,8 @@ interface PetProps {
 
 interface PetState {
   x: number
+  y: number
+  groundY: number
   targetX: number
   dir: 1 | -1
   walking: boolean
@@ -83,9 +86,19 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   // effect can see the latest value without restarting the loop.
   const statusRef = useRef<AgentStatus | undefined>(status)
   statusRef.current = status
-  // "Finished" bubble: shown while the agent is idle, dismissed on click.
+  // "Finished" bubble: shown once the agent has finished its first run,
+  // dismissed on click.
   const [showBubble, setShowBubble] = useState(false)
   const bubbleDismissedRef = useRef(false)
+  // Tracks whether the agent has ever left idle, so a freshly opened agent
+  // (which sits idle from the start) is never greeted with "Finished".
+  const startedWorkRef = useRef(false)
+  // Pointer drag state: hold and move the pet anywhere (even vertically);
+  // on release it slowly falls back to its ground position.
+  const draggingRef = useRef(false)
+  const dragMovedRef = useRef(false)
+  const dragPointerIdRef = useRef<number | null>(null)
+  const dragLastRef = useRef({ x: 0, y: 0 })
   // Pane origin is read from a ref so pane moves (splitter drags) apply to
   // the running animation loop without restarting it.
   const originRef = useRef({ x, y })
@@ -127,14 +140,18 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [pet.spritesheetUrl, scale])
 
   // Handle status transitions. A freshly spawned agent waves once; the
-  // "Finished" bubble follows the idle status until the pet is clicked.
+  // "Finished" bubble follows the first completed run until the pet is
+  // clicked.
   useEffect(() => {
     const st = stateRef.current
     if (st) st.status = status
 
     const isIdle = status?.status === 'idle'
+    if (status && status.status !== 'idle') {
+      startedWorkRef.current = true
+    }
     if (isIdle) {
-      if (!bubbleDismissedRef.current) setShowBubble(true)
+      if (startedWorkRef.current && !bubbleDismissedRef.current) setShowBubble(true)
     } else {
       bubbleDismissedRef.current = false
       setShowBubble(false)
@@ -160,6 +177,8 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     if (!st) {
       st = {
         x: PAD,
+        y: 0,
+        groundY: 0,
         targetX: PAD,
         dir: 1,
         walking: false,
@@ -190,6 +209,8 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       st.x = Math.min(max, Math.max(PAD, x0))
       st.targetX = st.x
     }
+    st.groundY = containerH - petH + jitterY
+    if (created) st.y = st.groundY
     st.lastTick = performance.now()
 
     el.style.backgroundImage = `url(${pet.spritesheetUrl})`
@@ -199,9 +220,8 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     el.style.imageRendering = 'pixelated'
 
     const applyPose = () => {
-      const ground = containerH - petH + jitterY
       const { x: ox, y: oy } = originRef.current
-      el.style.transform = `translate3d(${ox + st.x}px, ${oy + ground}px, 0)`
+      el.style.transform = `translate3d(${ox + st.x}px, ${oy + st.y}px, 0)`
     }
 
     // Movement decisions for a working agent: keep pacing left-to-right,
@@ -242,6 +262,13 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       // Idle / failed / awaiting-input pets stay put and spam their state.
       if (!working) st.walking = false
 
+      // A pet dropped in mid-air slowly falls back to its ground position.
+      st.groundY = containerH - petH + jitterY
+      if (!draggingRef.current && st.y < st.groundY) {
+        st.y = Math.min(st.groundY, st.y + FALL_SPEED * dt)
+      }
+      if (draggingRef.current) st.walking = false
+
       if (st.walking) {
         const speed = 90 * dt
         if (Math.abs(st.targetX - st.x) <= speed) {
@@ -262,7 +289,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
             st.decisionAt = now + 1200 + Math.random() * 1200
           }
         }
-      } else if (working && now >= st.decisionAt) {
+      } else if (working && now >= st.decisionAt && !draggingRef.current) {
         decide(now)
       }
 
@@ -300,6 +327,10 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [size, leafId, pet.slug, pet.spritesheetUrl, jitterY, onPose])
 
   const handleClick = () => {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
     const st = stateRef.current
     const now = performance.now()
     if (st) {
@@ -313,12 +344,58 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     onClick()
   }
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = elRef.current
+    if (!el) return
+    draggingRef.current = true
+    dragMovedRef.current = false
+    dragPointerIdRef.current = e.pointerId
+    dragLastRef.current = { x: e.clientX, y: e.clientY }
+    el.setPointerCapture(e.pointerId)
+    el.style.cursor = 'grabbing'
+  }
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current || dragPointerIdRef.current !== e.pointerId) return
+    const st = stateRef.current
+    if (!st) return
+    const dx = e.clientX - dragLastRef.current.x
+    const dy = e.clientY - dragLastRef.current.y
+    dragLastRef.current = { x: e.clientX, y: e.clientY }
+    if (Math.abs(dx) + Math.abs(dy) > 3) dragMovedRef.current = true
+    const { containerW, containerH } = propsRef.current
+    const { petW, petH } = size ?? { petW: 0, petH: 0 }
+    if (petW <= 0 || petH <= 0) return
+    st.x = Math.min(Math.max(0, containerW - petW), Math.max(0, st.x + dx))
+    st.y = Math.min(Math.max(0, containerH - petH), Math.max(0, st.y + dy))
+    st.walking = false
+  }
+
+  const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragPointerIdRef.current !== e.pointerId) return
+    const el = elRef.current
+    if (el) {
+      try {
+        el.releasePointerCapture(e.pointerId)
+      } catch {
+        // already released
+      }
+      el.style.cursor = ''
+    }
+    draggingRef.current = false
+    dragPointerIdRef.current = null
+  }
+
   if (!size) return null
   return (
     <div
       ref={elRef}
       onClick={handleClick}
-      className="pointer-events-auto absolute left-0 top-0 cursor-pointer select-none"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+      className="pointer-events-auto absolute left-0 top-0 cursor-grab select-none touch-none"
       title={pet.name}
       aria-hidden="true"
     >

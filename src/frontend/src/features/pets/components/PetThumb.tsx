@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { type PetEntry } from '../petsStore'
+import { spritesheetProxyUrl } from '../services/petdexApi'
 
 const THUMB_H = 48
 const THUMB_W = Math.round((THUMB_H * 192) / 208)
@@ -9,10 +10,12 @@ const THUMB_W = Math.round((THUMB_H * 192) / 208)
 // the idle first frame is the top-left cell. Rows are derived from the
 // image's aspect ratio (PetStage does the same). The thumbnail keeps a
 // fixed-size placeholder (spinner) until the sprite is decoded so the layout
-// never shifts while images load.
+// never shifts while images load. Spritesheets are fetched through the
+// same-origin proxy so Petdex CDN images resolve in the browser.
 export function PetThumb({ entry }: { entry: PetEntry }) {
   const [rows, setRows] = useState(9)
   const [ready, setReady] = useState(false)
+  const src = spritesheetProxyUrl(entry.spritesheetUrl)
 
   useEffect(() => {
     let cancelled = false
@@ -28,14 +31,14 @@ export function PetThumb({ entry }: { entry: PetEntry }) {
     img.onerror = () => {
       if (!cancelled) setReady(true)
     }
-    img.src = entry.spritesheetUrl
+    img.src = src
     return () => {
       cancelled = true
       img.onload = null
       img.onerror = null
       img.src = ''
     }
-  }, [entry.spritesheetUrl])
+  }, [src])
 
   return (
     <div className="relative" style={{ width: THUMB_W, height: THUMB_H }}>
@@ -43,7 +46,7 @@ export function PetThumb({ entry }: { entry: PetEntry }) {
         <div
           className="h-full w-full"
           style={{
-            backgroundImage: `url(${entry.spritesheetUrl})`,
+            backgroundImage: `url(${src})`,
             backgroundSize: `${8 * THUMB_W}px ${rows * THUMB_H}px`,
             backgroundPosition: '0 0',
             imageRendering: 'pixelated',

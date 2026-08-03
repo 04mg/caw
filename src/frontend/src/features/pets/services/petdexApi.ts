@@ -15,6 +15,14 @@ const MANIFEST_URL = '/api/pets/petdex-manifest'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const CACHE_KEY = 'caw:petdex-manifest'
 
+// spritesheetProxyUrl rewrites a Petdex CDN spritesheet URL to Caw's
+// same-origin proxy. The CDN sends no CORS headers (and can be unreachable
+// from the browser), so sprites are always fetched server-side and cached.
+export function spritesheetProxyUrl(url: string): string {
+  if (url.startsWith('/')) return url
+  return `/api/pets/proxy-sprite?url=${encodeURIComponent(url)}`
+}
+
 interface ManifestCache {
   fetchedAt: number
   pets: PetdexPet[]
