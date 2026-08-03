@@ -41,6 +41,38 @@ const MIN_SCALE = 0.42
 const MAX_SCALE = 0.8
 const FALL_SPEED = 85
 
+// The speech-bubble state ("Finished"/"Question?") is stored per agent leaf
+// so it survives workspace switches and remounts.
+const BUBBLE_STORAGE_KEY = 'caw:petBubbles'
+
+interface PetBubbleState {
+  text: string | null
+  dismissed: boolean
+  started: boolean
+}
+
+const readBubbleState = (leafId: string): PetBubbleState | null => {
+  try {
+    const raw = window.localStorage.getItem(BUBBLE_STORAGE_KEY)
+    if (!raw) return null
+    const all = JSON.parse(raw) as Record<string, PetBubbleState>
+    return all[leafId] ?? null
+  } catch {
+    return null
+  }
+}
+
+const saveBubbleState = (leafId: string, state: PetBubbleState) => {
+  try {
+    const raw = window.localStorage.getItem(BUBBLE_STORAGE_KEY)
+    const all: Record<string, PetBubbleState> = raw ? (JSON.parse(raw) as Record<string, PetBubbleState>) : {}
+    all[leafId] = state
+    window.localStorage.setItem(BUBBLE_STORAGE_KEY, JSON.stringify(all))
+  } catch {
+    // storage unavailable — non-fatal
+  }
+}
+
 export interface PetRange {
   x: number
   w: number
@@ -137,6 +169,16 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     }
   }, [pet.spritesheetUrl, scale])
 
+  // Restore the agent's last known bubble state on remount (e.g. after a
+  // workspace switch) so a "Finished"/"Question?" status isn't forgotten.
+  useEffect(() => {
+    const saved = readBubbleState(leafId)
+    if (!saved) return
+    if (saved.text) setBubbleText(saved.text)
+    bubbleDismissedRef.current = saved.dismissed
+    startedWorkRef.current = saved.started
+  }, [leafId])
+
   // Handle status transitions. A freshly spawned agent waves once; the
   // "Finished" bubble follows the first completed run and the "Question?"
   // bubble appears while the agent waits for input, both until dismissed.
@@ -165,6 +207,15 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       st.flashUntil = performance.now() + 900
     }
   }, [status])
+
+  // Persist the current bubble state so it survives workspace switches.
+  useEffect(() => {
+    saveBubbleState(leafId, {
+      text: bubbleText,
+      dismissed: bubbleDismissedRef.current,
+      started: startedWorkRef.current,
+    })
+  }, [leafId, bubbleText])
 
   // Main animation loop: movement + sprite frame stepping, driven
   // imperatively against the DOM to avoid per-frame React re-renders.
