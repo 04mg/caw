@@ -39,7 +39,7 @@ const PAD = 8
 const WALK_GAP = 6
 const MIN_SCALE = 0.42
 const MAX_SCALE = 0.8
-const FALL_SPEED = 55
+const FALL_SPEED = 85
 
 export interface PetRange {
   x: number
@@ -105,8 +105,6 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   originRef.current = { x, y }
   const apiRef = useRef({ getOtherRanges, onPose })
   apiRef.current = { getOtherRanges, onPose }
-
-  const jitterY = useMemo(() => -((hashString(leafId + pet.slug) % 7) + 1), [leafId, pet.slug])
 
   // Rounded to two decimals so small pane resize deltas don't restart the
   // preload effect (and with it the animation loop) on every drag tick.
@@ -209,7 +207,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       st.x = Math.min(max, Math.max(PAD, x0))
       st.targetX = st.x
     }
-    st.groundY = containerH - petH + jitterY
+    st.groundY = containerH - petH
     if (created) st.y = st.groundY
     st.lastTick = performance.now()
 
@@ -263,7 +261,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       if (!working) st.walking = false
 
       // A pet dropped in mid-air slowly falls back to its ground position.
-      st.groundY = containerH - petH + jitterY
+      st.groundY = containerH - petH
       if (!draggingRef.current && st.y < st.groundY) {
         st.y = Math.min(st.groundY, st.y + FALL_SPEED * dt)
       }
@@ -324,7 +322,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       cancelAnimationFrame(raf)
       apiRef.current.onPose({ x: -99999, w: 0 })
     }
-  }, [size, leafId, pet.slug, pet.spritesheetUrl, jitterY, onPose])
+  }, [size, leafId, pet.slug, pet.spritesheetUrl, onPose])
 
   const handleClick = () => {
     if (dragMovedRef.current) {
