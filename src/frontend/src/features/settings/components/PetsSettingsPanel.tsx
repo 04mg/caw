@@ -267,20 +267,13 @@ export function PetsSettingsPanel() {
                   <PetThumb entry={p} />
                   <span className="w-full truncate text-center text-[11px] font-medium">{p.name}</span>
                   {haveIt ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-emerald-500 flex items-center gap-0.5">
-                        <Check className="h-3 w-3" /> Added
-                      </span>
-                      {isCustom && (
-                        <button
-                          onClick={() => void removeFromRoster(p.slug)}
-                          className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer p-0.5"
-                          title="Delete uploaded pet"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => void removeFromRoster(p.slug)}
+                      className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer p-0.5"
+                      title="Remove from roster and library"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   ) : (
                     <Button
                       variant="ghost"
