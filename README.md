@@ -99,7 +99,7 @@ Skip the keyboard. Dictate commands and messages straight to your agent with spe
 
 ### Pet Companions
 
-Pets from petdex.dev wander along the bottom of your terminal areas and react to what your agents are doing — waving when they start, showing "Finished" after a run, and asking "Question?" when they need your input.
+Petdex pets wander along the bottom of your terminal areas and react to what your agents are doing.
 
 </td>
 <td width="50%">
