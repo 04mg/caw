@@ -1909,7 +1909,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       <DialogContent hideClose={isMobile} data-testid="settings-dialog" className={`p-0 flex flex-row overflow-hidden bg-background ${
         isMobile
           ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
-          : 'w-[600px] h-[400px] max-w-none max-h-none border border-border sm:rounded-lg'
+          : 'w-[720px] h-[650px] max-w-none max-h-none border border-border sm:rounded-lg'
       }`}>
         {isMobile ? (
           <>
