@@ -28,6 +28,38 @@ import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import cawLogoSvg from '@/assets/app-logo.svg'
 
+const EMOJI_MAP: Record<string, string> = {
+  feat: '✨',
+  fix: '🐛',
+  chore: '🔧',
+  docs: '📝',
+  refactor: '♻️',
+  style: '💄',
+  release: '',
+}
+
+function parseChangelog(body: string): string[] {
+  return body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false
+      if (line.startsWith('**Full Changelog**')) return false
+      if (line.startsWith('* ')) return true
+      return false
+    })
+    .map((line) => {
+      const match = line.match(/^\*\s*(\w+):\s*(.+)/)
+      if (!match) return line.replace(/^\*\s*/, '')
+      const [, type, rest] = match
+      const emoji = EMOJI_MAP[type] || ''
+      const prefix = emoji ? `${emoji} ` : ''
+      const cleaned = rest.replace(/ by @\S+.*$/, '').trim()
+      return prefix + cleaned
+    })
+    .filter(Boolean)
+}
+
 
 interface SettingsDialogProps {
   open: boolean
@@ -122,6 +154,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'updating' | 'updated' | 'latest' | 'error'>('idle')
   const [updateLatestVersion, setUpdateLatestVersion] = useState('')
   const [updateMessage, setUpdateMessage] = useState('')
+  const [changelog, setChangelog] = useState<{ tagName: string; body: string; htmlUrl: string } | null>(null)
+  const [changelogLoading, setChangelogLoading] = useState(false)
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -308,6 +342,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           if (v) setAppVersion(v)
         })
         .catch(() => {})
+
+      setChangelogLoading(true)
+      setChangelog(null)
+      fetch('/api/update/changelog')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: null }))
+        .then((json) => {
+          const c = json?.data
+          if (c?.body) setChangelog(c)
+        })
+        .catch(() => {})
+        .finally(() => setChangelogLoading(false))
     }
   }, [open, loadQuotaSettings, loadQuotas, initialSection, pushSupported, pushIOSPWA])
 
@@ -1827,74 +1872,99 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'updates' && (
-            <div className="flex flex-col items-center justify-center gap-6 flex-1">
-              <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
-              <div className="flex flex-col items-center gap-1">
-                <h3 className="text-2xl font-semibold">Caw</h3>
-                <p className="text-sm text-muted-foreground">{appVersion ? `v${appVersion}` : ''}</p>
-              </div>
-              <div className="flex flex-col items-center gap-3">
-                <button
-                  onClick={async () => {
-                    if (updateState === 'updating' || updateState === 'checking' || updateState === 'updated') return
-                    if (updateState === 'available') {
-                      setUpdateState('updating')
-                      setUpdateMessage('')
-                      try {
-                        const res = await fetch('/api/update/apply', { method: 'POST' })
-                        const data = (await res.json())?.data
-                        if (data?.updated) {
-                          setUpdateState('updated')
-                          setUpdateLatestVersion(data.latestVersion)
-                          setUpdateMessage(data.message || 'Updated. Restart Caw to apply.')
-                        } else {
-                          setUpdateState('latest')
-                          setUpdateMessage(data?.message || "You're on the latest version.")
-                        }
-                      } catch {
-                        setUpdateState('error')
-                        setUpdateMessage('Failed to update. Try again later.')
-                      }
-                    } else {
-                      setUpdateState('checking')
-                      setUpdateMessage('')
-                      try {
-                        const res = await fetch('/api/update/check', { method: 'POST' })
-                        const data = (await res.json())?.data
-                        if (data?.updateAvailable) {
-                          setUpdateState('available')
-                          setUpdateLatestVersion(data.latestVersion)
-                          setUpdateMessage(`Update ${data.latestVersion} available`)
-                        } else {
-                          setUpdateState('latest')
-                          setUpdateMessage("You're on the latest version.")
-                        }
-                      } catch {
-                        setUpdateState('error')
-                        setUpdateMessage('Failed to check for updates. Check your internet connection.')
-                      }
-                    }
-                  }}
-                  disabled={updateState === 'checking' || updateState === 'updating' || updateState === 'updated'}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {(updateState === 'checking' || updateState === 'updating') && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+            <div className="flex flex-col items-center justify-center gap-6 flex-1 p-6">
+              {changelogLoading ? (
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              ) : (
+                <>
+                  <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
+                  <div className="flex flex-col items-center gap-1">
+                    <h3 className="text-2xl font-semibold">Caw</h3>
+                    <p className="text-sm text-muted-foreground">{appVersion ? `v${appVersion}` : ''}</p>
+                  </div>
+                  {changelog && (
+                    <div className="w-full max-w-md rounded-xl border border-border bg-secondary/10 p-4">
+                      <h4 className="text-sm font-semibold mb-3">What's Changed</h4>
+                      <ul className="space-y-1.5">
+                        {parseChangelog(changelog.body).map((item, i) => (
+                          <li key={i} className="text-xs text-muted-foreground leading-relaxed">{item}</li>
+                        ))}
+                      </ul>
+                      <a
+                        href={changelog.htmlUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-3 text-xs text-primary hover:underline"
+                      >
+                        See full changelog
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
                   )}
-                  {updateState === 'idle' && 'Check for updates'}
-                  {updateState === 'checking' && 'Checking...'}
-                  {updateState === 'available' && `Update to ${updateLatestVersion}`}
-                  {updateState === 'updating' && 'Updating...'}
-                  {updateState === 'updated' && 'Restart Caw'}
-                  {updateState === 'latest' && 'Check for updates'}
-                  {updateState === 'error' && 'Try again'}
-                </button>
-                {updateMessage && (
-                  <p className={`text-xs ${updateState === 'error' ? 'text-red-400' : updateState === 'updated' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                    {updateMessage}
-                  </p>
-                )}
-              </div>
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      onClick={async () => {
+                        if (updateState === 'updating' || updateState === 'checking' || updateState === 'updated') return
+                        if (updateState === 'available') {
+                          setUpdateState('updating')
+                          setUpdateMessage('')
+                          try {
+                            const res = await fetch('/api/update/apply', { method: 'POST' })
+                            const data = (await res.json())?.data
+                            if (data?.updated) {
+                              setUpdateState('updated')
+                              setUpdateLatestVersion(data.latestVersion)
+                              setUpdateMessage(data.message || 'Updated. Restart Caw to apply.')
+                            } else {
+                              setUpdateState('latest')
+                              setUpdateMessage(data?.message || "You're on the latest version.")
+                            }
+                          } catch {
+                            setUpdateState('error')
+                            setUpdateMessage('Failed to update. Try again later.')
+                          }
+                        } else {
+                          setUpdateState('checking')
+                          setUpdateMessage('')
+                          try {
+                            const res = await fetch('/api/update/check', { method: 'POST' })
+                            const data = (await res.json())?.data
+                            if (data?.updateAvailable) {
+                              setUpdateState('available')
+                              setUpdateLatestVersion(data.latestVersion)
+                              setUpdateMessage(`Update ${data.latestVersion} available`)
+                            } else {
+                              setUpdateState('latest')
+                              setUpdateMessage("You're on the latest version.")
+                            }
+                          } catch {
+                            setUpdateState('error')
+                            setUpdateMessage('Failed to check for updates. Check your internet connection.')
+                          }
+                        }
+                      }}
+                      disabled={updateState === 'checking' || updateState === 'updating' || updateState === 'updated'}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {(updateState === 'checking' || updateState === 'updating') && (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                      {updateState === 'idle' && 'Check for updates'}
+                      {updateState === 'checking' && 'Checking...'}
+                      {updateState === 'available' && `Update to ${updateLatestVersion}`}
+                      {updateState === 'updating' && 'Updating...'}
+                      {updateState === 'updated' && 'Restart Caw'}
+                      {updateState === 'latest' && 'Check for updates'}
+                      {updateState === 'error' && 'Try again'}
+                    </button>
+                    {updateMessage && (
+                      <p className={`text-xs ${updateState === 'error' ? 'text-red-400' : updateState === 'updated' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                        {updateMessage}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
     </>
