@@ -80,6 +80,19 @@ type connWriter struct {
 	// only clears after a manual resize. Subsequent same-size resizes stay
 	// no-ops to avoid SIGWINCH storms. Read/written under s.mu.
 	resized bool
+
+	// prevCols/prevRows capture the PTY dimensions in place before this
+	// connection's first resize drove the PTY to the new size. sendScrollback
+	// uses them to frame the replay: the scrollback tail was drawn at these
+	// dimensions, so the reattaching client is told to grid itself to them
+	// before parsing the replay. Without that, a first page-load attach
+	// parses the replay at a grid size that differs from the PTY size the
+	// content was framed at, wrapping/clipping the TUI frame — the artifacts
+	// seen on first open that a reload clears (the layout is already settled
+	// and the grid matches). 0 means the PTY had no size yet; the client then
+	// parses at its own grid. Read under s.mu by sendScrollback.
+	prevCols int
+	prevRows int
 }
 
 func (w *connWriter) WriteMessage(msgType int, data []byte) error {
@@ -193,6 +206,12 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	// reported a size so subsequent same-size resizes stay no-ops and we
 	// don't storm SIGWINCH on every keystroke-era resize echo.
 	firstResize := !source.resized
+	if firstResize && s.cols > 0 && s.rows > 0 {
+		// Remember the PTY dims the scrollback tail was drawn at so
+		// sendScrollback can frame the replay for them (see prevCols).
+		source.prevCols = s.cols
+		source.prevRows = s.rows
+	}
 	source.resized = true
 
 	// Single viewer — resize the PTY directly. The frontend already fit
