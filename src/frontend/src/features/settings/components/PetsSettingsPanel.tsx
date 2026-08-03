@@ -144,7 +144,7 @@ export function PetsSettingsPanel() {
   const visible = useMemo(() => filtered.slice(0, LIBRARY_LIMIT), [filtered])
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="@container flex flex-col gap-5">
       <div>
         <h3 className="text-sm font-medium mb-1 flex items-center gap-1.5">
           <PawPrint className="h-3.5 w-3.5" /> Pets
@@ -193,7 +193,7 @@ export function PetsSettingsPanel() {
             No pets on the roster yet. Search the library below and add a few.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 @sm:grid-cols-2">
             {rosterEntries.map((entry, i) => (
               <div
                 key={entry.slug}
@@ -251,7 +251,7 @@ export function PetsSettingsPanel() {
         ) : visible.length === 0 ? (
           <div className="py-6 text-center text-[11px] text-muted-foreground">No pets match.</div>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 @sm:grid-cols-2">
             {visible.map((p) => {
               const isCustom = p.kind === 'custom'
               // A pet counts as "added" when it is on the roster, or when
@@ -303,7 +303,7 @@ export function PetsSettingsPanel() {
       {/* Upload */}
       <form onSubmit={(e) => void handleUpload(e)} className="flex flex-col gap-2">
         <h4 className="text-xs font-medium">Upload your own</h4>
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-1 gap-2 @sm:grid-cols-[160px_1fr_auto]">
           <Input
             placeholder="Pet name (optional)"
             value={uploadName}
