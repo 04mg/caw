@@ -135,6 +135,19 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         flushResize()
         const t = getTerminal(terminalId)
         if (t) {
+          // Returning to a backgrounded window/tab can leave the xterm.js
+          // DOM renderer's viewport in a stale state (the browser throttles
+          // / skips paints for hidden documents, and the canvas-backed
+          // renderers can lose their GPU context). The terminal buffer is
+          // intact, so a full viewport refresh re-renders the current frame
+          // from the buffer and clears the garbled frame without needing a
+          // manual resize. The backend's first-resize SIGWINCH (fired by
+          // the reconnect below or by flushResize) makes the TUI program
+          // redraw too, but this xterm refresh covers the case where the
+          // PTY dims are unchanged and no SIGWINCH would otherwise fire.
+          try {
+            t.term.refresh(0, t.term.rows - 1)
+          } catch { /* ignore */ }
           if (t.ws === null && !t.exited) {
             reconnectTerminalWs(terminalId)
           }
