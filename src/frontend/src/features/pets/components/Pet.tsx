@@ -86,9 +86,9 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   // effect can see the latest value without restarting the loop.
   const statusRef = useRef<AgentStatus | undefined>(status)
   statusRef.current = status
-  // "Finished" bubble: shown once the agent has finished its first run,
-  // dismissed on click.
-  const [showBubble, setShowBubble] = useState(false)
+  // Speech bubble: "Finished" after a run, "Question?" while awaiting input.
+  // Both are dismissed on click (which also focuses the terminal).
+  const [bubbleText, setBubbleText] = useState<string | null>(null)
   const bubbleDismissedRef = useRef(false)
   // Tracks whether the agent has ever left idle, so a freshly opened agent
   // (which sits idle from the start) is never greeted with "Finished".
@@ -138,21 +138,24 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [pet.spritesheetUrl, scale])
 
   // Handle status transitions. A freshly spawned agent waves once; the
-  // "Finished" bubble follows the first completed run until the pet is
-  // clicked.
+  // "Finished" bubble follows the first completed run and the "Question?"
+  // bubble appears while the agent waits for input, both until dismissed.
   useEffect(() => {
     const st = stateRef.current
     if (st) st.status = status
 
     const isIdle = status?.status === 'idle'
+    const needsInput = status?.status === 'waiting_input'
     if (status && status.status !== 'idle') {
       startedWorkRef.current = true
     }
-    if (isIdle) {
-      if (startedWorkRef.current && !bubbleDismissedRef.current) setShowBubble(true)
+    if (needsInput) {
+      if (!bubbleDismissedRef.current) setBubbleText('Question?')
+    } else if (isIdle) {
+      if (startedWorkRef.current && !bubbleDismissedRef.current) setBubbleText('Finished')
     } else {
       bubbleDismissedRef.current = false
-      setShowBubble(false)
+      setBubbleText(null)
     }
 
     if (!st || !status) return
@@ -222,20 +225,22 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       el.style.transform = `translate3d(${ox + st.x}px, ${oy + st.y}px, 0)`
     }
 
-    // Movement decisions for a working agent: keep pacing left-to-right,
-    // pausing for a review between segments, and hop back to the left edge
-    // once it reaches the right one.
+    // Movement decisions for a working agent: keep pacing, pausing for a
+    // review between segments. The pet runs in its current direction and
+    // turns around at the edges instead of wrapping across the stage.
     const decide = (now: number) => {
       const { containerW } = propsRef.current
       const maxX = Math.max(PAD, containerW - petW - PAD)
-      if (st.x >= maxX) {
-        st.x = PAD
-        st.decisionAt = now + 500
-        return
+      // Head back toward the middle when hugging an edge.
+      if (st.x >= maxX - 1) {
+        st.dir = -1
+      } else if (st.x <= PAD + 1) {
+        st.dir = 1
       }
-      const step = Math.min(90 + Math.random() * 200, Math.max(0, maxX - st.x))
+      const bound = st.dir > 0 ? maxX : PAD
+      const step = Math.min(90 + Math.random() * 200, Math.max(20, Math.abs(bound - st.x)))
       const others = apiRef.current.getOtherRanges()
-      const candidate = st.x + step
+      const candidate = st.x + st.dir * step
       const blocked = others.some(
         (r) => candidate < r.x + r.w + WALK_GAP && candidate + petW + WALK_GAP > r.x,
       )
@@ -244,7 +249,6 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
         return
       }
       st.targetX = candidate
-      st.dir = 1
       st.walking = true
       st.decisionAt = now + 30000
     }
@@ -276,15 +280,15 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
         } else {
           st.x += st.dir * speed
           if (st.dir > 0 && st.x >= maxX) {
-            // Walked off the right edge: reappear from the left and keep going.
-            st.x = PAD
+            // Reached the right edge: run back toward the left.
+            st.x = maxX
+            st.dir = -1
             st.targetX = PAD
-            st.walking = false
-            st.decisionAt = now + 700 + Math.random() * 1200
-          } else if (st.x <= PAD) {
+          } else if (st.dir < 0 && st.x <= PAD) {
+            // Reached the left edge: run back toward the right.
             st.x = PAD
-            st.walking = false
-            st.decisionAt = now + 1200 + Math.random() * 1200
+            st.dir = 1
+            st.targetX = maxX
           }
         }
       } else if (working && now >= st.decisionAt && !draggingRef.current) {
@@ -338,7 +342,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       st.decisionAt = now + 800
     }
     bubbleDismissedRef.current = true
-    setShowBubble(false)
+    setBubbleText(null)
     onClick()
   }
 
@@ -397,10 +401,10 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       title={pet.name}
       aria-hidden="true"
     >
-      {showBubble && (
+      {bubbleText && (
         <div className="pointer-events-none absolute bottom-full left-1/2 z-10 -translate-x-1/2 pb-1.5">
           <div className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-lg">
-            Finished
+            {bubbleText}
           </div>
           <div className="mx-auto -mt-[5px] h-2 w-2 rotate-45 border-b border-r border-border bg-popover" />
         </div>
