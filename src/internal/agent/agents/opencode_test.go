@@ -2,6 +2,7 @@ package agents
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,6 +274,261 @@ func TestParseOpenCodeDBInterruptedReportsInterrupted(t *testing.T) {
 	})
 	if status != "interrupted" {
 		t.Fatalf("status = %q, want interrupted", status)
+	}
+}
+
+// TestParseOpenCodeDBFinishedShellCommandReportsIdle covers a "!" shell
+// command (e.g. "!git status"): OpenCode runs it directly in the PTY and
+// writes an assistant message holding only a bash tool part. The part
+// transitions to "completed" and the message is finalized (time.completed
+// set) but never receives a finish reason. The watcher must report "idle",
+// not "executing bash", so the card doesn't stay stuck in Working forever.
+func TestParseOpenCodeDBFinishedShellCommandReportsIdle(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","time":{"created":` + fmt.Sprint(now) + `,"completed":` + fmt.Sprint(now) + `}}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"git status"}}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "idle" {
+		t.Fatalf("status = %q, want idle", status)
+	}
+}
+
+// TestParseOpenCodeDBRunningShellCommandReportsExecuting ensures a "!" shell
+// command that is still running (bash tool part in state "running", message
+// not yet finalized) still reports "executing bash".
+func TestParseOpenCodeDBRunningShellCommandReportsExecuting(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","time":{"created":` + fmt.Sprint(now) + `}}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"running"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing", status)
+	}
+}
+
+// TestParseOpenCodeDBMidTurnCompletedToolNotIdle guards the comment in the
+// watcher about not reporting "idle" for a message row that is still being
+// written: an LLM turn where a tool just completed but the message has not
+// been finalized (no time.completed) must NOT report idle, otherwise the
+// status would flash idle→executing. It should report "executing".
+func TestParseOpenCodeDBMidTurnCompletedToolNotIdle(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"step-start"}`},
+			{"p2", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"completed"}}`},
+			{"p3", "msg", "ses", now, `{"type":"step-finish"}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing", status)
+	}
+}
+
+func TestParseOpenCodeDBDismissedQuestionReportsInterrupted(t *testing.T) {
+	// When the user dismisses an open "question" prompt (ESC), OpenCode marks
+	// the question part as error ("The user dismissed this question") but
+	// keeps the message finish at "tool-calls" and stops the turn — no new
+	// rows are written until the user prompts again. The watcher must report
+	// "interrupted" (not "executing", which would strand the card in Working).
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":"tool-calls"}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The user dismissed this question"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status, tool, details string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status, tool, details = s, tl, d
+	})
+	if status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", status)
+	}
+	if tool != "question" {
+		t.Fatalf("tool = %q, want question", tool)
+	}
+	if !strings.Contains(details, "dismissed") {
+		t.Fatalf("details = %q, want dismissed text", details)
+	}
+}
+
+func TestParseOpenCodeDBDismissedQuestionNotToolFailed(t *testing.T) {
+	// A dismissed question with finish="" must not fall into the tool_failed
+	// branch (which also renders as Working); it is an interrupt, so the card
+	// must leave Working just like the finish="tool-calls" variant.
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The user dismissed this question"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", status)
+	}
+}
+
+func TestParseOpenCodeDBInvalidQuestionArgsNotInterrupted(t *testing.T) {
+	// A question tool error caused by invalid arguments (schema mismatch) is
+	// NOT a dismissal: the model receives the error and continues working.
+	// The watcher must keep reporting tool_failed, not interrupted.
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The question tool was called with invalid arguments"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "tool_failed" {
+		t.Fatalf("status = %q, want tool_failed", status)
 	}
 }
 

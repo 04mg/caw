@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
@@ -34,6 +35,12 @@ type openCodePart struct {
 type openCodeMessage struct {
 	Role   string `json:"role"`
 	Finish string `json:"finish,omitempty"`
+	Time   struct {
+		// Completed is set (nonzero) once the message row is fully written.
+		// A "!" shell command message is finalized without a finish reason,
+		// so it can be told apart from a mid-flight LLM turn by this field.
+		Completed int64 `json:"completed,omitempty"`
+	} `json:"time,omitempty"`
 	Parts  []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -552,6 +559,21 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 			callback("executing", activeTool, "", sessionTitle)
 			return
 		}
+		// The user dismissed or aborted an open "question" prompt (e.g. ESC
+		// on the question dialog). OpenCode marks the question part as error
+		// ("The user dismissed this question") and stops the turn — no new
+		// rows are written until the user prompts again. The message finish
+		// stays "tool-calls" (or "") so the generic branches below would
+		// report "executing"/"tool_failed" and leave the card stuck in
+		// Working forever. Surface it as "interrupted" instead so the card
+		// leaves Working and shows a red dot until the user resumes.
+		if failedTool == "question" && isDismissedQuestionError(failedErr) {
+			if failedErr == "" {
+				failedErr = "question dismissed"
+			}
+			callback("interrupted", "question", failedErr, sessionTitle)
+			return
+		}
 		// No tool is actively running. If the last tool part ended in an
 		// error and the assistant hasn't emitted a follow-up tool or text
 		// yet, surface the failure with a red dot.
@@ -585,6 +607,18 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 				callback("interrupted", "", "", sessionTitle)
 				return
 			}
+			// A shell command executed with "!" (e.g. "!git status") is
+			// written by OpenCode as an assistant message with a single
+			// bash tool part and no finish reason: the command runs directly
+			// in the PTY, not through the model, so the message is finalized
+			// (time.completed set) without finish. A mid-flight LLM turn
+			// never has time.completed set, so this only matches finished
+			// shell commands. Without this, the branch below would report
+			// "executing bash" forever and leave the card stuck in Working.
+			if msg.Time.Completed != 0 && lastToolName != "" {
+				callback("idle", "", "", sessionTitle)
+				return
+			}
 			if lastToolName != "" {
 				callback("executing", lastToolName, "", sessionTitle)
 			} else {
@@ -609,4 +643,15 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	default:
 		callback("idle", "", "", sessionTitle)
 	}
+}
+
+// isDismissedQuestionError reports whether the error on a "question" tool
+// part means the user cancelled the question rather than answered it.
+// OpenCode writes "The user dismissed this question" when the user escapes
+// the prompt; "aborted" covers the equivalent user-initiated cancellation
+// wording on other agents. Deliberately narrow: an invalid-arguments schema
+// error keeps the model working, so it must not be treated as a dismissal.
+func isDismissedQuestionError(err string) bool {
+	lower := strings.ToLower(err)
+	return strings.Contains(lower, "dismissed") || strings.Contains(lower, "aborted")
 }
