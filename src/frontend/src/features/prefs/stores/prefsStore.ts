@@ -14,9 +14,12 @@ export interface PrefsState {
   disabledAgents: string[]
   agentCmds: Record<string, string[]>
   defaultShell: string
+  parkedTerminals: number
   hotkeys: Record<string, string>
   pets: PetsConfig
 }
+
+export const DEFAULT_PARKED_TERMINALS = 6
 
 export const DEFAULT_PETS: PetsConfig = {
   enabled: false,
@@ -54,6 +57,7 @@ let cache: PrefsState = {
   disabledAgents: [],
   agentCmds: {},
   defaultShell: '',
+  parkedTerminals: DEFAULT_PARKED_TERMINALS,
   hotkeys: { ...DEFAULT_HOTKEYS },
   pets: { ...DEFAULT_PETS, agentPins: {} },
 }
@@ -128,6 +132,15 @@ export function getDefaultShell(): string {
   return cache.defaultShell
 }
 
+export function getParkedTerminalLimit(): number {
+  const v = cache.parkedTerminals
+  return Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS
+}
+
+export async function setParkedTerminals(v: number): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, parkedTerminals: v })
+}
+
 async function persistAndBroadcast(next: PrefsState): Promise<boolean> {
   cache = next
   loaded = true
@@ -177,9 +190,7 @@ export async function setAgentCmdOverride(agentId: string, cmd: string[] | null)
 
 export async function setDefaultShell(v: string): Promise<boolean> {
   return persistAndBroadcast({ ...cache, defaultShell: v })
-}
-
-export function getHotkey(action: string): string {
+}export function getHotkey(action: string): string {
   return cache.hotkeys[action] || DEFAULT_HOTKEYS[action] || ''
 }
 
