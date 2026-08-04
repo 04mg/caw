@@ -206,11 +206,23 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	// reported a size so subsequent same-size resizes stay no-ops and we
 	// don't storm SIGWINCH on every keystroke-era resize echo.
 	firstResize := !source.resized
-	if firstResize && s.cols > 0 && s.rows > 0 {
-		// Remember the PTY dims the scrollback tail was drawn at so
-		// sendScrollback can frame the replay for them (see prevCols).
-		source.prevCols = s.cols
-		source.prevRows = s.rows
+	if firstResize {
+		if s.cols > 0 && s.rows > 0 {
+			// Remember the PTY dims the scrollback tail was drawn at so
+			// sendScrollback can frame the replay for them (see prevCols).
+			source.prevCols = s.cols
+			source.prevRows = s.rows
+		} else if cols > 0 && rows > 0 {
+			// First ever viewer on a freshly-created PTY: the PTY has no
+			// size yet, but this client is about to drive it to cols/rows.
+			// Frame the replay at those dims so the client parses the
+			// scrollback tail (drawn at the very first size) on a matching
+			// grid, rather than its own intermediate panel size — otherwise
+			// the TUI's first frame renders black/partial until a manual
+			// resize. See sendScrollback's fallback in register.go.
+			source.prevCols = cols
+			source.prevRows = rows
+		}
 	}
 	source.resized = true
 
