@@ -275,7 +275,15 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
         flashUntil: 0,
         spriteState: saved?.spriteState ?? 'idle',
         spriteStarted: saved?.spriteStarted ?? 0,
-        status: undefined,
+        // Seed from the live status prop (via statusRef) rather than leaving
+        // it undefined. The status effect runs on mount before the animation
+        // loop has created this state object, so it can't set st.status; if
+        // the status then doesn't change (e.g. a pet remounted after a
+        // workspace switch for an agent still in the interrupted/failed
+        // state), st.status would stay undefined and the pet would show its
+        // idle sprite instead of the failed one. Seeding here makes the first
+        // frame reflect the real status immediately.
+        status: statusRef.current,
         hadStatus: saved?.hadStatus ?? false,
       }
       stateRef.current = st
@@ -452,7 +460,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
     dragPointerIdRef.current = e.pointerId
     dragLastRef.current = { x: e.clientX, y: e.clientY }
     el.setPointerCapture(e.pointerId)
-    el.style.cursor = 'grabbing'
+    el.style.cursor = 'pointer'
   }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -495,8 +503,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
-      className="pointer-events-auto absolute left-0 top-0 cursor-grab select-none touch-none"
-      title={pet.name}
+      className="pointer-events-auto absolute left-0 top-0 cursor-pointer select-none touch-none"
       aria-hidden="true"
     >
       {bubbleText && (
