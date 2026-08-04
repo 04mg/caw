@@ -195,6 +195,17 @@ html, body, #root {
   display: none !important;
 }
 
+/* Hide the native up/down spinners on number inputs (e.g. the Background
+   Terminals setting) so the field renders as a clean text box. */
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spinner {
+  -moz-appearance: textfield;
+}
+
 *::-webkit-scrollbar {
   width: 6px;
 }

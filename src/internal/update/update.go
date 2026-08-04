@@ -16,6 +16,8 @@ import (
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
 	Assets  []struct {
 		Name        string `json:"name"`
 		DownloadURL string `json:"browser_download_url"`
@@ -23,12 +25,19 @@ type githubRelease struct {
 }
 
 var apiURL = "https://api.github.com/repos/04mg/caw/releases/latest"
+var apiReleasesURL = "https://api.github.com/repos/04mg/caw/releases"
 var testExePath string
 
 type CheckResult struct {
 	LatestVersion  string `json:"latestVersion"`
 	CurrentVersion string `json:"currentVersion"`
 	UpdateAvailable bool `json:"updateAvailable"`
+}
+
+type ChangelogResult struct {
+	TagName     string `json:"tagName"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"htmlUrl"`
 }
 
 func fetchLatestRelease() (*githubRelease, error) {
@@ -63,6 +72,65 @@ func fetchLatestRelease() (*githubRelease, error) {
 		return nil, fmt.Errorf("failed to parse release JSON: %w", err)
 	}
 	return &rel, nil
+}
+
+func fetchReleaseByTag(tag string) (*githubRelease, error) {
+	url := apiReleasesURL + "/tags/" + tag
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "caw-updater")
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("release %s not found", tag)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("github API rate limit exceeded or access forbidden (status 403)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %s", resp.Status)
+	}
+
+	var rel githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, fmt.Errorf("failed to parse release JSON: %w", err)
+	}
+	return &rel, nil
+}
+
+func GetChangelog(currentVersion string) (*ChangelogResult, error) {
+	if currentVersion == "dev" {
+		rel, err := fetchLatestRelease()
+		if err != nil {
+			return nil, err
+		}
+		return &ChangelogResult{
+			TagName: rel.TagName,
+			Body:    rel.Body,
+			HTMLURL: rel.HTMLURL,
+		}, nil
+	}
+
+	rel, err := fetchReleaseByTag(currentVersion)
+	if err != nil {
+		return nil, err
+	}
+	return &ChangelogResult{
+		TagName: rel.TagName,
+		Body:    rel.Body,
+		HTMLURL: rel.HTMLURL,
+	}, nil
 }
 
 func Check(currentVersion string) (*CheckResult, error) {

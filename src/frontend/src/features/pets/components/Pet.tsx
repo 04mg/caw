@@ -1,0 +1,519 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type AgentStatus } from '@/features/agents/types'
+import { getPetState } from '../petStates'
+import { type PetEntry } from '../petsStore'
+import { PET_STRIP_HEIGHT } from '../petAssignment'
+
+// Base sprite state driven by the agent's live status. Persisting states
+// stay active as long as the status holds: failed for any failure, jumping
+// while the agent awaits input, review while working, idle once finished.
+const STATUS_STATE: Record<string, string> = {
+  thinking: 'review',
+  executing: 'review',
+  waiting_input: 'jumping',
+  idle: 'idle',
+  crashed: 'failed',
+  tool_failed: 'failed',
+  interrupted: 'failed',
+}
+
+function baseStateFromStatus(status: AgentStatus | undefined): string {
+  if (!status) return 'idle'
+  return STATUS_STATE[status.status] ?? 'idle'
+}
+
+function isWorking(status: AgentStatus | undefined): boolean {
+  const s = status?.status
+  return s === 'thinking' || s === 'executing'
+}
+
+function hashString(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0
+  }
+  return Math.abs(h)
+}
+
+const PAD = 8
+const WALK_GAP = 6
+const MIN_SCALE = 0.42
+const MAX_SCALE = 0.8
+const FALL_SPEED = 85
+
+// The pet's speech bubble and on-stage run state are persisted per agent
+// leaf so they survive workspace switches and remounts, and the pet resumes
+// exactly where it was (same spot, still pacing) instead of resetting.
+const PET_STATE_KEY = 'caw:petStates'
+
+interface PetPersistState {
+  x: number
+  y: number
+  dir: 1 | -1
+  targetX: number
+  walking: boolean
+  decisionAt: number
+  hadStatus: boolean
+  spriteState: string
+  spriteStarted: number
+  bubble: string | null
+  dismissed: boolean
+  started: boolean
+}
+
+const readPetState = (leafId: string): PetPersistState | null => {
+  try {
+    const raw = window.localStorage.getItem(PET_STATE_KEY)
+    if (!raw) return null
+    const all = JSON.parse(raw) as Record<string, PetPersistState>
+    return all[leafId] ?? null
+  } catch {
+    return null
+  }
+}
+
+const savePetState = (leafId: string, state: PetPersistState) => {
+  try {
+    const raw = window.localStorage.getItem(PET_STATE_KEY)
+    const all: Record<string, PetPersistState> = raw ? (JSON.parse(raw) as Record<string, PetPersistState>) : {}
+    all[leafId] = state
+    window.localStorage.setItem(PET_STATE_KEY, JSON.stringify(all))
+  } catch {
+    // storage unavailable — non-fatal
+  }
+}
+
+export interface PetRange {
+  x: number
+  w: number
+}
+
+interface PetProps {
+  pet: PetEntry
+  leafId: string
+  status: AgentStatus | undefined
+  x?: number
+  y?: number
+  containerW: number
+  containerH: number
+  getOtherRanges: () => PetRange[]
+  onPose: (pose: PetRange) => void
+  onClick: () => void
+}
+
+interface PetState {
+  x: number
+  y: number
+  groundY: number
+  targetX: number
+  dir: 1 | -1
+  walking: boolean
+  decisionAt: number
+  lastTick: number
+  flashState: string | null
+  flashUntil: number
+  spriteState: string
+  spriteStarted: number
+  status: AgentStatus | undefined
+  hadStatus: boolean
+}
+
+export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH, getOtherRanges, onPose, onClick }: PetProps) {
+  const elRef = useRef<HTMLDivElement | null>(null)
+  const [size, setSize] = useState<{ petW: number; petH: number; rows: number } | null>(null)
+  const stateRef = useRef<PetState | null>(null)
+  const propsRef = useRef({ containerW, containerH })
+  propsRef.current = { containerW, containerH }
+  // Live status is read from a ref so the animation loop and the status
+  // effect can see the latest value without restarting the loop.
+  const statusRef = useRef<AgentStatus | undefined>(status)
+  statusRef.current = status
+  // Speech bubble: "Finished" after a run, "Question" while awaiting input.
+  // Both are dismissed on click (which also focuses the terminal).
+  const [bubbleText, setBubbleText] = useState<string | null>(null)
+  const bubbleTextRef = useRef<string | null>(bubbleText)
+  bubbleTextRef.current = bubbleText
+  const bubbleDismissedRef = useRef(false)
+  // Tracks whether the agent has ever left idle, so a freshly opened agent
+  // (which sits idle from the start) is never greeted with "Finished".
+  const startedWorkRef = useRef(false)
+  // Pointer drag state: hold and move the pet anywhere (even vertically);
+  // on release it slowly falls back to its ground position.
+  const draggingRef = useRef(false)
+  const dragMovedRef = useRef(false)
+  const dragPointerIdRef = useRef<number | null>(null)
+  const dragLastRef = useRef({ x: 0, y: 0 })
+  // Pane origin is read from a ref so pane moves (splitter drags) apply to
+  // the running animation loop without restarting it.
+  const originRef = useRef({ x, y })
+  originRef.current = { x, y }
+  const apiRef = useRef({ getOtherRanges, onPose })
+  apiRef.current = { getOtherRanges, onPose }
+
+  // Rounded to two decimals so small pane resize deltas don't restart the
+  // preload effect (and with it the animation loop) on every drag tick.
+  const scale = useMemo(() => {
+    if (containerH <= 0) return MIN_SCALE
+    const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, containerH / 640))
+    return Math.round(s * 100) / 100
+  }, [containerH])
+
+  // Preload the spritesheet so the pet appears only once it can render.
+  useEffect(() => {
+    let cancelled = false
+    const img = new Image()
+    img.onload = () => {
+      if (cancelled) return
+      const w = img.naturalWidth || 192 * 8
+      const h = img.naturalHeight || 208 * 9
+      const rows = Math.round((h * 1536) / (208 * w)) || 9
+      // The pet floats on the bottom strip over the terminals, so cap its
+      // height to keep it inside that strip.
+      const petH = Math.round(Math.min(208 * scale, PET_STRIP_HEIGHT))
+      const petW = Math.round((petH * 192) / 208)
+      setSize({ petW, petH, rows })
+    }
+    img.src = pet.spritesheetUrl
+    return () => {
+      cancelled = true
+      img.onload = null
+      img.src = ''
+    }
+  }, [pet.spritesheetUrl, scale])
+
+  // Restore the agent's last known bubble state on remount (e.g. after a
+  // workspace switch) so a "Finished"/"Question" status isn't forgotten.
+  // The saved run state (position, pacing) is stashed for the animation
+  // loop, which creates the state object on first run.
+  const savedStateRef = useRef<PetPersistState | null>(null)
+  useEffect(() => {
+    const saved = readPetState(leafId)
+    if (!saved) return
+    savedStateRef.current = saved
+    if (saved.bubble) setBubbleText(saved.bubble)
+    bubbleDismissedRef.current = saved.dismissed
+    startedWorkRef.current = saved.started
+  }, [leafId])
+
+  // Handle status transitions. A freshly spawned agent waves once; the
+  // "Finished" bubble follows the first completed run and the "Question"
+  // bubble appears while the agent waits for input, both until dismissed.
+  useEffect(() => {
+    const st = stateRef.current
+    if (st) st.status = status
+
+    const isIdle = status?.status === 'idle'
+    const needsInput = status?.status === 'waiting_input'
+    if (status && status.status !== 'idle') {
+      startedWorkRef.current = true
+    }
+    if (needsInput) {
+      if (!bubbleDismissedRef.current) setBubbleText('Question')
+    } else if (isIdle) {
+      if (startedWorkRef.current && !bubbleDismissedRef.current) setBubbleText('Finished')
+    } else {
+      bubbleDismissedRef.current = false
+      setBubbleText(null)
+    }
+
+    if (!st || !status) return
+    if (!st.hadStatus) {
+      st.hadStatus = true
+      st.flashState = 'waving'
+      st.flashUntil = performance.now() + 900
+    }
+  }, [status])
+
+  // Persist the current bubble state so it survives workspace switches.
+  const persistState = useCallback(() => {
+    // Only persist once the animation loop has initialised the pose. This
+    // effect also runs on mount before the spritesheet loads, and writing
+    // default zeros there would clobber the saved position, making a
+    // reloaded pet spawn at the top of the stage and fall to the ground.
+    const st = stateRef.current
+    if (!st) return
+    savePetState(leafId, {
+      x: st.x,
+      y: st.y,
+      dir: st.dir,
+      targetX: st.targetX,
+      walking: st.walking,
+      decisionAt: st.decisionAt,
+      hadStatus: st.hadStatus || startedWorkRef.current,
+      spriteState: st.spriteState,
+      spriteStarted: st.spriteStarted,
+      bubble: bubbleTextRef.current,
+      dismissed: bubbleDismissedRef.current,
+      started: startedWorkRef.current,
+    })
+  }, [leafId])
+  useEffect(() => {
+    persistState()
+  }, [leafId, bubbleText, persistState])
+
+  // Main animation loop: movement + sprite frame stepping, driven
+  // imperatively against the DOM to avoid per-frame React re-renders.
+  useEffect(() => {
+    if (!size) return
+    const el = elRef.current
+    if (!el) return
+    const { petW, petH, rows } = size
+    let st = stateRef.current
+    let created = false
+    if (!st) {
+      const saved = savedStateRef.current
+      st = {
+        x: saved?.x ?? PAD,
+        y: 0,
+        groundY: 0,
+        targetX: saved?.targetX ?? PAD,
+        dir: saved?.dir ?? 1,
+        walking: saved?.walking ?? false,
+        decisionAt: saved?.decisionAt ?? 0,
+        lastTick: 0,
+        flashState: null,
+        flashUntil: 0,
+        spriteState: saved?.spriteState ?? 'idle',
+        spriteStarted: saved?.spriteStarted ?? 0,
+        // Seed from the live status prop (via statusRef) rather than leaving
+        // it undefined. The status effect runs on mount before the animation
+        // loop has created this state object, so it can't set st.status; if
+        // the status then doesn't change (e.g. a pet remounted after a
+        // workspace switch for an agent still in the interrupted/failed
+        // state), st.status would stay undefined and the pet would show its
+        // idle sprite instead of the failed one. Seeding here makes the first
+        // frame reflect the real status immediately.
+        status: statusRef.current,
+        hadStatus: saved?.hadStatus ?? false,
+      }
+      stateRef.current = st
+      created = true
+    }
+    // The pet appears for an agent that is already running: welcome it with
+    // a wave, just like a fresh spawn. A restored pet skips the wave.
+    if (created && !st.hadStatus && statusRef.current) {
+      st.hadStatus = true
+      st.flashState = 'waving'
+      st.flashUntil = performance.now() + 900
+    }
+
+    const { containerW, containerH } = propsRef.current
+    const max = Math.max(PAD, containerW - petW - PAD)
+    st.groundY = containerH - petH
+    if (st.lastTick === 0) {
+      if (savedStateRef.current) {
+        // Restored pet: clamp its position to the current stage so a resized
+        // container never leaves it off-screen, and pick up where it left off.
+        const saved = savedStateRef.current
+        st.x = Math.min(max, Math.max(PAD, saved.x))
+        st.targetX = Math.min(max, Math.max(PAD, saved.targetX))
+        st.y = Math.min(st.groundY, Math.max(0, saved.y))
+        st.decisionAt = performance.now() + 200 + Math.random() * 600
+      } else {
+        const x0 = PAD + (hashString(leafId + pet.slug + 'pos') % Math.max(1, Math.round(max - PAD)))
+        st.x = Math.min(max, Math.max(PAD, x0))
+        st.targetX = st.x
+        st.y = st.groundY
+      }
+    }
+    if (created && !savedStateRef.current) st.y = st.groundY
+    st.lastTick = performance.now()
+
+    el.style.backgroundImage = `url(${pet.spritesheetUrl})`
+    el.style.backgroundSize = `${8 * petW}px ${rows * petH}px`
+    el.style.width = `${petW}px`
+    el.style.height = `${petH}px`
+    el.style.imageRendering = 'pixelated'
+
+    const applyPose = () => {
+      const { x: ox, y: oy } = originRef.current
+      el.style.transform = `translate3d(${ox + st.x}px, ${oy + st.y}px, 0)`
+    }
+
+    // Movement decisions for a working agent: keep pacing, pausing for a
+    // review between segments. The pet runs in its current direction and
+    // turns around at the edges instead of wrapping across the stage.
+    const decide = (now: number) => {
+      const { containerW } = propsRef.current
+      const maxX = Math.max(PAD, containerW - petW - PAD)
+      // Head back toward the middle when hugging an edge.
+      if (st.x >= maxX - 1) {
+        st.dir = -1
+      } else if (st.x <= PAD + 1) {
+        st.dir = 1
+      }
+      const bound = st.dir > 0 ? maxX : PAD
+      const step = Math.min(90 + Math.random() * 200, Math.max(20, Math.abs(bound - st.x)))
+      const others = apiRef.current.getOtherRanges()
+      const candidate = st.x + st.dir * step
+      const blocked = others.some(
+        (r) => candidate < r.x + r.w + WALK_GAP && candidate + petW + WALK_GAP > r.x,
+      )
+      if (blocked) {
+        st.decisionAt = now + 1000 + Math.random() * 1000
+        return
+      }
+      st.targetX = candidate
+      st.walking = true
+      st.decisionAt = now + 30000
+    }
+
+    let raf = 0
+    const tick = (now: number) => {
+      const { containerW } = propsRef.current
+      const maxX = Math.max(PAD, containerW - petW - PAD)
+      const dt = Math.min((now - st.lastTick) / 1000, 0.1)
+      st.lastTick = now
+
+      const working = isWorking(st.status)
+      // Idle / failed / awaiting-input pets stay put and spam their state.
+      if (!working) st.walking = false
+
+      // A pet dropped in mid-air slowly falls back to its ground position.
+      st.groundY = containerH - petH
+      if (!draggingRef.current && st.y < st.groundY) {
+        st.y = Math.min(st.groundY, st.y + FALL_SPEED * dt)
+      }
+      if (draggingRef.current) st.walking = false
+
+      if (st.walking) {
+        const speed = 90 * dt
+        if (Math.abs(st.targetX - st.x) <= speed) {
+          st.x = st.targetX
+          st.walking = false
+          st.decisionAt = now + 600 + Math.random() * 1400
+        } else {
+          st.x += st.dir * speed
+          if (st.dir > 0 && st.x >= maxX) {
+            // Reached the right edge: run back toward the left.
+            st.x = maxX
+            st.dir = -1
+            st.targetX = PAD
+          } else if (st.dir < 0 && st.x <= PAD) {
+            // Reached the left edge: run back toward the right.
+            st.x = PAD
+            st.dir = 1
+            st.targetX = maxX
+          }
+        }
+      } else if (working && now >= st.decisionAt && !draggingRef.current) {
+        decide(now)
+      }
+
+      // Resolve the sprite state: flashes win while active, walking uses the
+      // running rows, otherwise the status base state.
+      let state: string
+      if (st.flashState && now < st.flashUntil) {
+        state = st.flashState
+      } else if (st.walking) {
+        state = st.dir > 0 ? 'running-right' : 'running-left'
+      } else {
+        state = baseStateFromStatus(st.status)
+      }
+      if (state !== st.spriteState) {
+        st.spriteState = state
+        st.spriteStarted = now
+      }
+      const def = getPetState(state)
+      const elapsed = (now - st.spriteStarted) % def.duration
+      const frame = Math.min(def.frames - 1, Math.floor((elapsed / def.duration) * def.frames))
+      el.style.backgroundPosition = `-${frame * petW}px -${def.row * petH}px`
+
+      applyPose()
+      apiRef.current.onPose({ x: st.x, w: petW })
+      raf = requestAnimationFrame(tick)
+    }
+    applyPose()
+    apiRef.current.onPose({ x: st.x, w: petW })
+    raf = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      persistState()
+      apiRef.current.onPose({ x: -99999, w: 0 })
+    }
+  }, [size, leafId, pet.slug, pet.spritesheetUrl, onPose, persistState])
+
+  const handleClick = () => {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
+    const st = stateRef.current
+    const now = performance.now()
+    if (st) {
+      st.walking = false
+      st.flashState = 'waving'
+      st.flashUntil = now + 700
+      st.decisionAt = now + 800
+    }
+    bubbleDismissedRef.current = true
+    setBubbleText(null)
+    onClick()
+  }
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = elRef.current
+    if (!el) return
+    draggingRef.current = true
+    dragMovedRef.current = false
+    dragPointerIdRef.current = e.pointerId
+    dragLastRef.current = { x: e.clientX, y: e.clientY }
+    el.setPointerCapture(e.pointerId)
+    el.style.cursor = 'pointer'
+  }
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current || dragPointerIdRef.current !== e.pointerId) return
+    const st = stateRef.current
+    if (!st) return
+    const dx = e.clientX - dragLastRef.current.x
+    const dy = e.clientY - dragLastRef.current.y
+    dragLastRef.current = { x: e.clientX, y: e.clientY }
+    if (Math.abs(dx) + Math.abs(dy) > 3) dragMovedRef.current = true
+    const { containerW, containerH } = propsRef.current
+    const { petW, petH } = size ?? { petW: 0, petH: 0 }
+    if (petW <= 0 || petH <= 0) return
+    st.x = Math.min(Math.max(0, containerW - petW), Math.max(0, st.x + dx))
+    st.y = Math.min(Math.max(0, containerH - petH), Math.max(0, st.y + dy))
+    st.walking = false
+  }
+
+  const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragPointerIdRef.current !== e.pointerId) return
+    const el = elRef.current
+    if (el) {
+      try {
+        el.releasePointerCapture(e.pointerId)
+      } catch {
+        // already released
+      }
+      el.style.cursor = ''
+    }
+    draggingRef.current = false
+    dragPointerIdRef.current = null
+  }
+
+  if (!size) return null
+  return (
+    <div
+      ref={elRef}
+      onClick={handleClick}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+      className="pointer-events-auto absolute left-0 top-0 cursor-pointer select-none touch-none"
+      aria-hidden="true"
+    >
+      {bubbleText && (
+        <div className="pointer-events-none absolute bottom-full left-1/2 z-10 -translate-x-1/2 pb-1.5">
+          <div className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-lg">
+            {bubbleText}
+          </div>
+          <div className="mx-auto -mt-[5px] h-2 w-2 rotate-45 border-b border-r border-border bg-popover" />
+        </div>
+      )}
+    </div>
+  )
+}

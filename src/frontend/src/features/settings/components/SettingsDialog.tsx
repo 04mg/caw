@@ -3,10 +3,10 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -25,7 +25,43 @@ import {
 	type KrokoLanguage,
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
+import { HotkeyRecorder } from './HotkeyRecorder'
+import { SaveToast } from './SaveToast'
+import { PetsSettingsPanel } from './PetsSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
+
+const EMOJI_MAP: Record<string, string> = {
+  feat: '✨',
+  fix: '🐛',
+  chore: '🔧',
+  docs: '📝',
+  refactor: '♻️',
+  style: '💄',
+  release: '',
+}
+
+function parseChangelog(body: string): string[] {
+  return body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false
+      if (line.startsWith('**Full Changelog**')) return false
+      if (line.startsWith('* release:')) return false
+      if (line.startsWith('* ')) return true
+      return false
+    })
+    .map((line) => {
+      const match = line.match(/^\*\s*(\w+):\s*(.+)/)
+      if (!match) return line.replace(/^\*\s*/, '')
+      const [, type, rest] = match
+      const emoji = EMOJI_MAP[type] || ''
+      const prefix = emoji ? `${emoji} ` : ''
+      const cleaned = rest.replace(/ by @\S+.*$/, '').trim()
+      return prefix + cleaned
+    })
+    .filter(Boolean)
+}
 
 
 interface SettingsDialogProps {
@@ -34,17 +70,19 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates'
+type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [dialogSize, setDialogSize] = useState({ w: 660, h: 590 })
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
+  const [parkedLimit, setParkedLimit] = useState(DEFAULT_PARKED_TERMINALS)
   const [scrollSensitivity, setScrollSensitivity] = useState(0.02)
   const [scrollFriction, setScrollFriction] = useState(0.85)
   const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.05)
@@ -77,8 +115,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
   const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
-  const [prefSaveStatus, setPrefSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  const prefSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const [hotkeyRecording, setHotkeyRecording] = useState<string | null>(null)
+  const [hotkeyError, setHotkeyError] = useState('')
 
   const [pushEnabled, setPushEnabled] = useState(false)
   const [pushNeedsInput, setPushNeedsInput] = useState(true)
@@ -118,6 +159,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'updating' | 'updated' | 'latest' | 'error'>('idle')
   const [updateLatestVersion, setUpdateLatestVersion] = useState('')
   const [updateMessage, setUpdateMessage] = useState('')
+  const [changelog, setChangelog] = useState<{ tagName: string; body: string; htmlUrl: string } | null>(null)
+  const [changelogLoading, setChangelogLoading] = useState(false)
 
   const loadQuotaSettings = useCallback(async () => {
     try {
@@ -167,6 +210,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Desktop dialog scales with the viewport: it grows to fill the screen
+  // (whichever side is the limiter), never exceeds the screen height, and
+  // stays a bit smaller than the old fixed 720x650 at its base. Both width
+  // and height get a flat ~100px reduction so the dialog feels shorter than
+  // full-screen.
+  useEffect(() => {
+    if (isMobile) return
+    const measure = () => {
+      const baseW = 660
+      const baseH = 590
+      const scale = Math.min((window.innerWidth - 64) / baseW, (window.innerHeight - 96) / baseH, 1.2)
+      setDialogSize({
+        w: Math.max(400, Math.round(baseW * scale) - 100),
+        h: Math.max(360, Math.round(baseH * scale) - 100),
+      })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [isMobile])
+
   // Reset mobile section selection when dialog closes
   useEffect(() => {
     if (!open) setMobileSectionSelected(false)
@@ -174,10 +238,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   // Clear any pending save-status auto-hide timer when the dialog closes
   useEffect(() => {
-    if (!open && prefSaveTimerRef.current) {
-      clearTimeout(prefSaveTimerRef.current)
-      prefSaveTimerRef.current = undefined
-      setPrefSaveStatus('idle')
+    if (!open && saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = undefined
+      setSaveStatus('idle')
     }
   }, [open])
 
@@ -198,6 +262,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setDisabledAgents(p.disabledAgents)
         setDefaultNewAgent(p.defaultNewAgent)
         setShellPath(p.defaultShell)
+        const v = p.parkedTerminals
+        setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
       })
 
       const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
@@ -304,6 +370,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           if (v) setAppVersion(v)
         })
         .catch(() => {})
+
+      setChangelogLoading(true)
+      setChangelog(null)
+      fetch('/api/update/changelog')
+        .then((res) => res.ok ? res.json() : Promise.resolve({ data: null }))
+        .then((json) => {
+          const c = json?.data
+          if (c?.body) setChangelog(c)
+        })
+        .catch(() => {})
+        .finally(() => setChangelogLoading(false))
     }
   }, [open, loadQuotaSettings, loadQuotas, initialSection, pushSupported, pushIOSPWA])
 
@@ -431,13 +508,23 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     localStorage.setItem('caw:theme', newTheme)
   }
 
-  // savePref persists a work-pref change and shows transient inline feedback
+  // savePref persists a work-pref change and shows transient feedback
   // ("Saved" / "Save failed") that auto-hides shortly after.
   const savePref = async (fn: () => Promise<boolean>) => {
     const ok = await fn()
-    setPrefSaveStatus(ok ? 'success' : 'error')
-    if (prefSaveTimerRef.current) clearTimeout(prefSaveTimerRef.current)
-    prefSaveTimerRef.current = setTimeout(() => setPrefSaveStatus('idle'), 1500)
+    setSaveStatus(ok ? 'success' : 'error')
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+  }
+
+  // PetsSettingsPanel reports its own save outcomes through this callback so
+  // all settings sections share the same floating save toast.
+  const handlePetsSaveStatus = (status: 'idle' | 'success' | 'error') => {
+    setSaveStatus(status)
+    if (status !== 'idle') {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+    }
   }
 
   const toggleAgent = (agentId: string) => {
@@ -483,29 +570,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
+    { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
     { id: 'notifications', label: 'Notifications', icon: Bell, category: 'General' },
     { id: 'agents', label: 'Agents', icon: Bot, category: 'Integrations' },
     { id: 'limits', label: 'Limits', icon: ChartSpline, category: 'Integrations' },
+    { id: 'pets', label: 'Pets', icon: PawPrint, category: 'Integrations' },
   ]
 
   const renderSectionContent = () => (
     <>
-      {(prefSaveStatus === 'success' || prefSaveStatus === 'error') && (
-        <div className="flex items-center gap-1.5 text-[10px] font-medium shrink-0 pb-1 -mt-1">
-          {prefSaveStatus === 'success' ? (
-            <span className="text-emerald-500 flex items-center gap-1">
-              <Check className="h-3 w-3" /> Saved
-            </span>
-          ) : (
-            <span className="text-destructive flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" /> Save failed
-            </span>
-          )}
-        </div>
-      )}
-          {activeSection === 'appearance' && (
+      {activeSection === 'appearance' && (
             <div className="flex flex-col gap-4">
               <div>
                 <h3 className="text-sm font-medium mb-1">Appearance</h3>
@@ -756,6 +832,33 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
                 </div>
 
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Background Terminals</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={16}
+                      value={parkedLimit}
+                      className="no-spinner flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground outline-none focus:border-ring transition-colors"
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(16, Math.floor(Number(e.target.value) || 0)))
+                        setParkedLimit(v)
+                        void savePref(() => setPrefParkedTerminals(v))
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        setParkedLimit(DEFAULT_PARKED_TERMINALS)
+                        void savePref(() => setPrefParkedTerminals(DEFAULT_PARKED_TERMINALS))
+                      }}
+                      className="px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Number of recently-used terminals kept mounted in the background so switching back to them is instant. Higher values use more memory. Set to 0 to disable.</p>                </div>
+
                 <div className="pt-4 mt-2 border-t border-border">
                   <div className="flex flex-col gap-1 mb-3">
                     <label className="text-xs font-medium">Touch Scroll</label>
@@ -863,6 +966,80 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               </div>
             </div>
           )}
+
+          {activeSection === 'hotkeys' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-medium mb-1">Hotkeys</h3>
+                <p className="text-xs text-muted-foreground">Customize keyboard shortcuts for common actions.</p>
+              </div>
+
+              <div className="flex flex-col mt-1">
+                {Object.entries(HOTKEY_LABELS).map(([action, label]) => {
+                  const current = getHotkey(action)
+                  const isRecording = hotkeyRecording === action
+                  return (
+                    <div key={action} className="flex items-center justify-between gap-2 py-1.5 border-b border-border last:border-0">
+                      <span className="text-xs font-medium text-foreground">{label}</span>
+                      <div className="flex items-center gap-1.5">
+                        {isRecording ? (
+                          <HotkeyRecorder
+                            onSave={(combo) => {
+                              const conflict = Object.entries(HOTKEY_LABELS).find(
+                                ([a, _]) => a !== action && getHotkey(a) === combo
+                              )
+                              if (conflict) {
+                                setHotkeyError(`Already used by "${HOTKEY_LABELS[conflict[0]]}"`)
+                                return
+                              }
+                              setHotkeyError('')
+                              void savePref(() => setPrefHotkey(action, combo))
+                              setHotkeyRecording(null)
+                            }}
+                            onCancel={() => {
+                              setHotkeyRecording(null)
+                              setHotkeyError('')
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className="px-2.5 py-1 rounded-md border border-border text-xs font-mono text-muted-foreground cursor-pointer hover:border-primary hover:text-foreground transition-colors"
+                            onClick={() => {
+                              setHotkeyRecording(action)
+                              setHotkeyError('')
+                            }}
+                          >
+                            {current}
+                          </span>
+                        )}
+                        {current !== DEFAULT_HOTKEYS[action] && !isRecording && (
+                          <button
+                            onClick={() => void savePref(() => resetPrefHotkey(action))}
+                            className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                {hotkeyError && (
+                  <p className="text-[10px] text-destructive mt-2">{hotkeyError}</p>
+                )}
+                <div className="flex justify-end mt-2">
+                  <button
+                    onClick={() => void savePref(() => resetAllPrefHotkeys())}
+                    className="px-2.5 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors cursor-pointer"
+                  >
+                    Reset All to Defaults
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePetsSaveStatus} />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">
@@ -1750,74 +1927,98 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'updates' && (
-            <div className="flex flex-col items-center justify-center gap-6 flex-1">
-              <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
-              <div className="flex flex-col items-center gap-1">
-                <h3 className="text-2xl font-semibold">Caw</h3>
-                <p className="text-sm text-muted-foreground">{appVersion ? `v${appVersion}` : ''}</p>
-              </div>
-              <div className="flex flex-col items-center gap-3">
-                <button
-                  onClick={async () => {
-                    if (updateState === 'updating' || updateState === 'checking') return
-                    if (updateState === 'available') {
-                      setUpdateState('updating')
-                      setUpdateMessage('')
-                      try {
-                        const res = await fetch('/api/update/apply', { method: 'POST' })
-                        const data = (await res.json())?.data
-                        if (data?.updated) {
-                          setUpdateState('updated')
-                          setUpdateLatestVersion(data.latestVersion)
-                          setUpdateMessage(data.message || 'Updated. Restart Caw to apply.')
-                        } else {
-                          setUpdateState('latest')
-                          setUpdateMessage(data?.message || "You're on the latest version.")
-                        }
-                      } catch {
-                        setUpdateState('error')
-                        setUpdateMessage('Failed to update. Try again later.')
-                      }
-                    } else {
-                      setUpdateState('checking')
-                      setUpdateMessage('')
-                      try {
-                        const res = await fetch('/api/update/check', { method: 'POST' })
-                        const data = (await res.json())?.data
-                        if (data?.updateAvailable) {
-                          setUpdateState('available')
-                          setUpdateLatestVersion(data.latestVersion)
-                          setUpdateMessage(`Update ${data.latestVersion} available`)
-                        } else {
-                          setUpdateState('latest')
-                          setUpdateMessage("You're on the latest version.")
-                        }
-                      } catch {
-                        setUpdateState('error')
-                        setUpdateMessage('Failed to check for updates. Check your internet connection.')
-                      }
-                    }
-                  }}
-                  disabled={updateState === 'checking' || updateState === 'updating'}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {(updateState === 'checking' || updateState === 'updating') && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+            <div className="flex flex-col items-center justify-center gap-6 flex-1 p-6">
+              {changelogLoading ? (
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              ) : (
+                <>
+                  <img src={cawLogoSvg} alt="Caw" className="h-24 w-24" />
+                  <div className="flex flex-col items-center gap-1">
+                    <h3 className="text-2xl font-semibold">{appVersion ? `Caw v${appVersion}` : 'Caw'}</h3>
+                  </div>
+                  {changelog && (
+                    <div className="w-full max-w-md rounded-xl border border-border bg-secondary/10 p-4">
+                      <h4 className="text-sm font-semibold mb-3">What's Changed</h4>
+                      <ul className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
+                        {parseChangelog(changelog.body).map((item, i) => (
+                          <li key={i} className="text-xs text-muted-foreground leading-relaxed">{item}</li>
+                        ))}
+                      </ul>
+                      <a
+                        href={changelog.htmlUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-3 text-xs text-primary hover:underline"
+                      >
+                        See full changelog
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
                   )}
-                  {updateState === 'idle' && 'Check for updates'}
-                  {updateState === 'checking' && 'Checking...'}
-                  {updateState === 'available' && `Update to ${updateLatestVersion}`}
-                  {updateState === 'updating' && 'Updating...'}
-                  {updateState === 'updated' && 'Restart Caw'}
-                  {updateState === 'latest' && 'Check for updates'}
-                  {updateState === 'error' && 'Try again'}
-                </button>
-                {updateMessage && (
-                  <p className={`text-xs ${updateState === 'error' ? 'text-red-400' : updateState === 'updated' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                    {updateMessage}
-                  </p>
-                )}
-              </div>
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      onClick={async () => {
+                        if (updateState === 'updating' || updateState === 'checking' || updateState === 'updated') return
+                        if (updateState === 'available') {
+                          setUpdateState('updating')
+                          setUpdateMessage('')
+                          try {
+                            const res = await fetch('/api/update/apply', { method: 'POST' })
+                            const data = (await res.json())?.data
+                            if (data?.updated) {
+                              setUpdateState('updated')
+                              setUpdateLatestVersion(data.latestVersion)
+                              setUpdateMessage(data.message || 'Updated. Restart Caw to apply.')
+                            } else {
+                              setUpdateState('latest')
+                              setUpdateMessage(data?.message || "You're on the latest version.")
+                            }
+                          } catch {
+                            setUpdateState('error')
+                            setUpdateMessage('Failed to update. Try again later.')
+                          }
+                        } else {
+                          setUpdateState('checking')
+                          setUpdateMessage('')
+                          try {
+                            const res = await fetch('/api/update/check', { method: 'POST' })
+                            const data = (await res.json())?.data
+                            if (data?.updateAvailable) {
+                              setUpdateState('available')
+                              setUpdateLatestVersion(data.latestVersion)
+                              setUpdateMessage(`Update ${data.latestVersion} available`)
+                            } else {
+                              setUpdateState('latest')
+                              setUpdateMessage("You're on the latest version.")
+                            }
+                          } catch {
+                            setUpdateState('error')
+                            setUpdateMessage('Failed to check for updates. Check your internet connection.')
+                          }
+                        }
+                      }}
+                      disabled={updateState === 'checking' || updateState === 'updating' || updateState === 'updated'}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {(updateState === 'checking' || updateState === 'updating') && (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                      {updateState === 'idle' && 'Check for updates'}
+                      {updateState === 'checking' && 'Checking...'}
+                      {updateState === 'available' && `Update to ${updateLatestVersion}`}
+                      {updateState === 'updating' && 'Updating...'}
+                      {updateState === 'updated' && 'Restart Caw'}
+                      {updateState === 'latest' && 'Check for updates'}
+                      {updateState === 'error' && 'Try again'}
+                    </button>
+                    {updateMessage && (
+                      <p className={`text-xs ${updateState === 'error' ? 'text-red-400' : updateState === 'updated' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                        {updateMessage}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
     </>
@@ -1825,11 +2026,20 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent hideClose={isMobile} data-testid="settings-dialog" className={`p-0 flex flex-row overflow-hidden bg-background ${
-        isMobile
-          ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
-          : 'w-[600px] h-[400px] max-w-none max-h-none border border-border sm:rounded-lg'
-      }`}>
+      <DialogContent
+        hideClose={isMobile}
+        data-testid="settings-dialog"
+        style={
+          isMobile
+            ? undefined
+            : { width: dialogSize.w, height: dialogSize.h, maxWidth: 'none', maxHeight: 'none' }
+        }
+        className={`p-0 flex flex-row overflow-hidden bg-background ${
+          isMobile
+            ? 'w-full h-full max-w-none max-h-none rounded-none fixed inset-0 translate-x-0 translate-y-0 left-0 top-0 border-0'
+            : 'max-w-none max-h-none border border-border sm:rounded-lg'
+        }`}
+      >
         {isMobile ? (
           <>
             {/* Mobile: two-step layout */}
@@ -1878,7 +2088,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
             ) : (
-              <div className="w-full flex flex-col">
+              <div className="relative w-full flex flex-col">
                 <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-border">
                   <button
                     onClick={() => {
@@ -1908,6 +2118,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                   {renderSectionContent()}
                 </div>
+                <SaveToast status={saveStatus} />
               </div>
             )}
           </>
@@ -1955,7 +2166,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               })()}
             </div>
 
-            <div className="flex-1 flex flex-col">
+            <div className="relative flex-1 flex flex-col">
               {((activeSection === 'agents' && agentStep === 2) || (activeSection === 'limits' && limitStep === 2)) && (
                 <div className="flex items-center gap-2 px-4 h-[40px] shrink-0 border-b border-border">
                   <button
@@ -1978,6 +2189,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                 {renderSectionContent()}
               </div>
+              <SaveToast status={saveStatus} />
             </div>
           </>
         )}

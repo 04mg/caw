@@ -1,10 +1,59 @@
 import { wsMux } from '@/features/shared/services/wsMultiplexer'
 
+export interface PetsConfig {
+  enabled: boolean
+  roster: string[]
+  agentPins: Record<string, string>
+  // Persistent per-agent assignments (agentId -> pet slug), kept in sync
+  // automatically so a pet survives its terminal being closed and reopened.
+  assignments?: Record<string, string>
+  // When true, only as many pets as there are roster entries are shown at
+  // once; extra agents get no pet until one frees up.
+  uniquePerAgent?: boolean
+}
+
 export interface PrefsState {
   defaultNewAgent: string
   disabledAgents: string[]
   agentCmds: Record<string, string[]>
   defaultShell: string
+  parkedTerminals: number
+  hotkeys: Record<string, string>
+  pets: PetsConfig
+}
+
+export const DEFAULT_PARKED_TERMINALS = 6
+
+export const DEFAULT_PETS: PetsConfig = {
+  enabled: false,
+  roster: [],
+  agentPins: {},
+  assignments: {},
+  uniquePerAgent: false,
+}
+
+export const DEFAULT_HOTKEYS: Record<string, string> = {
+  closePane: 'Alt+W',
+  switchPaneLeft: 'Alt+ArrowLeft',
+  switchPaneRight: 'Alt+ArrowRight',
+  newTerminal: 'Alt+T',
+  splitHorizontal: 'Alt+H',
+  splitVertical: 'Alt+V',
+  commandPalette: 'Alt+P',
+  commandPaletteCmd: 'Alt+Shift+P',
+  toggleKanban: 'Alt+C',
+}
+
+export const HOTKEY_LABELS: Record<string, string> = {
+  closePane: 'Close pane',
+  switchPaneLeft: 'Switch pane left',
+  switchPaneRight: 'Switch pane right',
+  newTerminal: 'New terminal',
+  splitHorizontal: 'Horizontal split',
+  splitVertical: 'Vertical split',
+  commandPalette: 'Command palette',
+  commandPaletteCmd: 'Command palette (commands)',
+  toggleKanban: 'Toggle Command Center',
 }
 
 let cache: PrefsState = {
@@ -12,6 +61,9 @@ let cache: PrefsState = {
   disabledAgents: [],
   agentCmds: {},
   defaultShell: '',
+  parkedTerminals: DEFAULT_PARKED_TERMINALS,
+  hotkeys: { ...DEFAULT_HOTKEYS },
+  pets: { ...DEFAULT_PETS, agentPins: {} },
 }
 
 let loaded = false
@@ -84,6 +136,15 @@ export function getDefaultShell(): string {
   return cache.defaultShell
 }
 
+export function getParkedTerminalLimit(): number {
+  const v = cache.parkedTerminals
+  return Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS
+}
+
+export async function setParkedTerminals(v: number): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, parkedTerminals: v })
+}
+
 async function persistAndBroadcast(next: PrefsState): Promise<boolean> {
   cache = next
   loaded = true
@@ -133,4 +194,79 @@ export async function setAgentCmdOverride(agentId: string, cmd: string[] | null)
 
 export async function setDefaultShell(v: string): Promise<boolean> {
   return persistAndBroadcast({ ...cache, defaultShell: v })
+}export function getHotkey(action: string): string {
+  return cache.hotkeys[action] || DEFAULT_HOTKEYS[action] || ''
+}
+
+export async function setHotkey(action: string, combo: string): Promise<boolean> {
+  return persistAndBroadcast({
+    ...cache,
+    hotkeys: { ...cache.hotkeys, [action]: combo },
+  })
+}
+
+export async function resetHotkey(action: string): Promise<boolean> {
+  const next = { ...cache.hotkeys }
+  delete next[action]
+  return persistAndBroadcast({ ...cache, hotkeys: next })
+}
+
+export async function resetAllHotkeys(): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, hotkeys: { ...DEFAULT_HOTKEYS } })
+}
+
+export function getPetsConfig(): PetsConfig {
+  return cache.pets
+}
+
+export async function setPetsConfig(pets: PetsConfig): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets })
+}
+
+export async function setPetsEnabled(enabled: boolean): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, enabled } })
+}
+
+export async function setPetsUniquePerAgent(uniquePerAgent: boolean): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, uniquePerAgent } })
+}
+
+export async function setPetRoster(roster: string[]): Promise<boolean> {
+  const agentPins = { ...cache.pets.agentPins }
+  // Drop pins for slugs no longer in the roster so they fall back to rotation.
+  for (const [agentId, slug] of Object.entries(agentPins)) {
+    if (!roster.includes(slug)) delete agentPins[agentId]
+  }
+  const assignments = { ...(cache.pets.assignments ?? {}) }
+  for (const [agentId, slug] of Object.entries(assignments)) {
+    if (!roster.includes(slug)) delete assignments[agentId]
+  }
+  return persistAndBroadcast({
+    ...cache,
+    pets: { ...cache.pets, roster, agentPins, assignments },
+  })
+}
+
+export async function setAgentPetAssignment(agentId: string, slug: string | null): Promise<boolean> {
+  const assignments = { ...(cache.pets.assignments ?? {}) }
+  if (slug && cache.pets.roster.includes(slug)) {
+    assignments[agentId] = slug
+  } else {
+    delete assignments[agentId]
+  }
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, assignments } })
+}
+
+export async function setAgentPetAssignments(all: Record<string, string>): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, assignments: all } })
+}
+
+export async function setAgentPetPin(agentId: string, slug: string | null): Promise<boolean> {
+  const agentPins = { ...cache.pets.agentPins }
+  if (slug && cache.pets.roster.includes(slug)) {
+    agentPins[agentId] = slug
+  } else {
+    delete agentPins[agentId]
+  }
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, agentPins } })
 }
