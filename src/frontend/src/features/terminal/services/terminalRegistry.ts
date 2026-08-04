@@ -644,6 +644,18 @@ function applyPendingResize(inst: TerminalInstance) {
     inst.term.resize(cols, rows)
   } catch { /* ignore if not attached */ }
   requestAnimationFrame(() => applyPadding(inst))
+  // Safety net for the black/partial first frame: after the re-fit resize
+  // that reconciles the grid following a scrollback replay, force the
+  // renderer to repaint the whole viewport from the buffer. xterm.js
+  // reflows the buffer on resize() but does not always repaint every row
+  // on the very first frame (the TUI's alt-screen base frame was parsed at
+  // the replay's framing grid and reflowed to the panel grid). This
+  // explicit refresh mirrors what a manual resize does (a ResizeObserver
+  // fires and repaints the viewport) — cheap, and idempotent when the
+  // renderer already has the correct frame.
+  try {
+    inst.term.refresh(0, inst.term.rows - 1)
+  } catch { /* ignore if not attached */ }
 }
 
 // scheduleFlush accumulates output chunks and flushes them to xterm.js in

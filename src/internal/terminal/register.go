@@ -155,12 +155,25 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			// different grid wraps/clips the TUI frame — the artifacts seen
 			// on first open that a reload clears. prevCols/prevRows are the
 			// PTY dims captured by resizePTY before this connection's first
-			// resize drove the PTY to the client's size.
-			if wc.prevCols > 0 && wc.prevRows > 0 {
+			// resize drove the PTY to the client's size; on a first attach
+			// (PTY freshly sized by this very client) they fall back to the
+			// current PTY size or, failing that, the client's own dims, so
+			// the client is always told a grid to parse the replay at
+			// instead of landing on its own (possibly intermediate) panel
+			// size — the root cause of the black/partial first frame.
+			frameCols := wc.prevCols
+			frameRows := wc.prevRows
+			if frameCols <= 0 || frameRows <= 0 {
+				frameCols, frameRows = sess.cols, sess.rows
+			}
+			if frameCols <= 0 || frameRows <= 0 {
+				frameCols, frameRows = wc.cols, wc.rows
+			}
+			if frameCols > 0 && frameRows > 0 {
 				msg, _ := json.Marshal(map[string]any{
 					"type": "replay-start",
-					"cols": wc.prevCols,
-					"rows": wc.prevRows,
+					"cols": frameCols,
+					"rows": frameRows,
 				})
 				wc.WriteMessage(websocket.TextMessage, msg)
 			}
