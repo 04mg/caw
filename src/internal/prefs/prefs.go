@@ -2,6 +2,7 @@ package prefs
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"github.com/04mg/caw/internal/state"
 )
@@ -24,17 +25,23 @@ type PrefsState struct {
 	DisabledAgents  []string            `json:"disabledAgents"`
 	AgentCmds       map[string][]string `json:"agentCmds"`
 	DefaultShell    string              `json:"defaultShell"`
-	Hotkeys         map[string]string   `json:"hotkeys"`
-	Pets            PetsConfig          `json:"pets"`
+	// ParkedTerminals is the number of recently-used terminal xterm.js
+	// instances the client keeps mounted in the background so switching back
+	// to them is instant (no scrollback replay / WS reconnect). Desktop only.
+	ParkedTerminals int               `json:"parkedTerminals"`
+	Hotkeys         map[string]string `json:"hotkeys"`
+	Pets            PetsConfig        `json:"pets"`
 }
 
 const (
-	keyDefaultNewAgent = "pref_default_new_agent"
-	keyDisabledAgents  = "pref_disabled_agents"
-	keyAgentCmds       = "pref_agent_cmds"
-	keyDefaultShell    = "pref_default_shell"
-	keyHotkeys         = "pref_hotkeys"
-	keyPets            = "pref_pets"
+	keyDefaultNewAgent  = "pref_default_new_agent"
+	keyDisabledAgents   = "pref_disabled_agents"
+	keyAgentCmds        = "pref_agent_cmds"
+	keyDefaultShell     = "pref_default_shell"
+	keyParkedTerminals  = "pref_parked_terminals"
+	keyHotkeys          = "pref_hotkeys"
+	keyPets             = "pref_pets"
+	defaultParkedTerminals = 6
 )
 
 func defaultHotkeys() map[string]string {
@@ -57,6 +64,7 @@ func defaultPrefs() PrefsState {
 		DisabledAgents:  []string{},
 		AgentCmds:       map[string][]string{},
 		DefaultShell:    "",
+		ParkedTerminals: defaultParkedTerminals,
 		Hotkeys:         defaultHotkeys(),
 		Pets: PetsConfig{
 			Enabled:     false,
@@ -88,6 +96,11 @@ func GetPrefs(store *state.Store) PrefsState {
 	}
 	if v, err := store.GetSetting(keyDefaultShell); err == nil && v != "" {
 		p.DefaultShell = v
+	}
+	if v, err := store.GetSetting(keyParkedTerminals); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			p.ParkedTerminals = n
+		}
 	}
 	if v, err := store.GetSetting(keyHotkeys); err == nil && v != "" {
 		var hk map[string]string
@@ -122,6 +135,9 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 		return err
 	}
 	if err := store.SetSetting(keyDefaultShell, p.DefaultShell); err != nil {
+		return err
+	}
+	if err := store.SetSetting(keyParkedTerminals, strconv.Itoa(p.ParkedTerminals)); err != nil {
 		return err
 	}
 	hotkeysJSON, _ := json.Marshal(p.Hotkeys)
