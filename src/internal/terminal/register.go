@@ -116,14 +116,25 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		}
 		scrolled = true
 
+		// Build and deliver the replay while holding s.mu. ReadLoop also
+		// broadcasts live output while holding s.mu, so keeping this write
+		// under the same lock serializes the snapshot strictly before any
+		// subsequent live chunk — a freshly attached client can never
+		// receive newer output before the (older) scrollback replay, which
+		// is what caused stale bytes to be re-rendered over fresh output
+		// (visible as artifacts) when the lock was dropped between
+		// snapshotting and writing.
 		sess.mu.Lock()
-		scrollback := make([]byte, len(sess.scrollback))
-		copy(scrollback, sess.scrollback)
+		// A reconnecting client that already holds the current scrollback
+		// (sent "no-scrollback") skips the history replay — re-rendering the
+		// last 256KiB on top of the content it already has would duplicate
+		// the tail of its scrollback. It still registers as a viewer (so PTY
+		// sizing accounts for it) and still receives the sync-mode sequence.
+		skipReplay := wc.noScrollback
 		syncSeq := sess.syncMessage()
 		onAltScreen := sess.altScreen
 		sess.pendingResizes--
 		sess.conns[wc] = true
-		sess.mu.Unlock()
 
 		// Build the replay payload. When the running program is on the
 		// alternate screen, drive the reattaching client onto the alt
@@ -136,16 +147,35 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		// entries don't bounce the client back to the normal buffer
 		// mid-replay.
 		var data []byte
-		if len(scrollback) > 0 {
-			payload := scrollback
-			if onAltScreen {
-				if frame := currentAltScreenFrame(scrollback); frame != nil {
-					payload = frame
-				}
-				data = append(data, "\x1b[?1049h"...)
+		if !skipReplay {
+			// Frame the replay for the dimensions the scrollback tail was
+			// drawn at. The client gridded itself to its own panel size,
+			// which on a first page-load often differs from the PTY size
+			// (the layout is still settling). Parsing the replay at a
+			// different grid wraps/clips the TUI frame — the artifacts seen
+			// on first open that a reload clears. prevCols/prevRows are the
+			// PTY dims captured by resizePTY before this connection's first
+			// resize drove the PTY to the client's size.
+			if wc.prevCols > 0 && wc.prevRows > 0 {
+				msg, _ := json.Marshal(map[string]any{
+					"type": "replay-start",
+					"cols": wc.prevCols,
+					"rows": wc.prevRows,
+				})
+				wc.WriteMessage(websocket.TextMessage, msg)
 			}
-			stripped := stripAlternateScreen(payload)
-			data = append(data, stripped...)
+			scrollback := sess.scrollbackBytes()
+			if len(scrollback) > 0 {
+				payload := scrollback
+				if onAltScreen {
+					if frame := currentAltScreenFrame(scrollback); frame != nil {
+						payload = frame
+					}
+					data = append(data, "\x1b[?1049h"...)
+				}
+				stripped := stripAlternateScreen(payload)
+				data = append(data, stripped...)
+			}
 		}
 		if len(data) > 0 {
 			msg, _ := json.Marshal(map[string]any{
@@ -161,6 +191,11 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			})
 			wc.WriteMessage(websocket.TextMessage, msg)
 		}
+		// Signal the end of the replay so the client can leave replay mode
+		// (re-enable deferred fits/resizes) once the final chunk is parsed.
+		msg, _ := json.Marshal(map[string]any{"type": "replay-end"})
+		wc.WriteMessage(websocket.TextMessage, msg)
+		sess.mu.Unlock()
 	}
 
 	go func() {
@@ -211,6 +246,14 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			if OnPtyFocus != nil {
 				OnPtyFocus(id, focused)
 			}
+		case "no-scrollback":
+			// The client already holds the current scrollback (it reconnected
+			// without re-creating its xterm.js instance). sendScrollback reads
+			// this flag and skips the history replay, preventing the tail of
+			// the scrollback from being duplicated on every reconnect.
+			sess.mu.Lock()
+			wc.noScrollback = true
+			sess.mu.Unlock()
 		}
 	}
 }

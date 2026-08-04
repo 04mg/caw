@@ -23,6 +23,23 @@ export interface TerminalInstance {
   /** @internal rAF id for the scheduled output flush, 0 when idle */
   _rafId: number
   /**
+   * @internal Number of term.write calls whose data has been handed to
+   * xterm.js but not yet parsed (write callbacks still pending). xterm.js
+   * reflows its buffer synchronously inside resize(); doing that while a
+   * large write (scrollback replay / batched flush) is still being parsed
+   * corrupts the buffer and the viewport — the "artifacts + broken
+   * scrollbar" bug when returning to a terminal. Resize requests are
+   * deferred until this reaches 0 (see _pendingResize).
+   */
+  _pendingWrites: number
+  /**
+   * @internal Latest resize request received while the terminal was busy
+   * (a write in flight or a replay in progress). Applied as soon as the
+   * pending writes drain, so the client still lands on the grid the backend
+   * asked for without resizing mid-write.
+   */
+  _pendingResize: { cols: number; rows: number } | null
+  /**
    * @internal True while the xterm.js instance is detached from the DOM
    * (e.g. the user switched to another tab). The WebSocket is kept alive so
    * that re-attaching replays the local ring buffer instead of reconnecting
@@ -390,7 +407,9 @@ export function reconnectTerminalWs(leafId: string) {
   cancelFlush(inst)
   try { inst.ws?.close() } catch { /* ignore */ }
   inst.ws = null
-  connectWs(inst, inst.backendId)
+  // The term is still populated, so skip the backend scrollback replay —
+  // re-sending it would duplicate the tail of the scrollback.
+  connectWs(inst, inst.backendId, true)
 }
 
 export function setTerminalUserScrolling(leafId: string, scrolling: boolean) {
@@ -488,6 +507,42 @@ function safeScrollToBottom(inst: TerminalInstance) {
   } catch { /* ignore if not attached to DOM */ }
 }
 
+// writeToTerm routes every term.write through a shared pending-write
+// counter. xterm.js resize() reflows the buffer synchronously; if it runs
+// while a write callback is still pending the parser sits in an
+// intermediate state and the reflow corrupts scrollback (artifacts, and a
+// scrollbar that no longer tracks the content). By counting in-flight
+// writes, resize requests can be deferred (see _pendingResize) until the
+// buffer is quiescent.
+function writeToTerm(inst: TerminalInstance, data: string, after?: () => void) {
+  inst._pendingWrites++
+  const finish = () => {
+    inst._pendingWrites = Math.max(0, inst._pendingWrites - 1)
+    after?.()
+    if (inst._pendingWrites === 0) applyPendingResize(inst)
+  }
+  try {
+    inst.term.write(data, finish)
+  } catch {
+    finish()
+  }
+}
+
+// applyPendingResize applies the most recent resize request that was
+// deferred while writes were in flight. Only meaningful once the buffer is
+// quiescent (no pending writes), so the reflow runs against a settled
+// parser state.
+function applyPendingResize(inst: TerminalInstance) {
+  if (!inst._pendingResize) return
+  const { cols, rows } = inst._pendingResize
+  inst._pendingResize = null
+  if (inst._detached) return
+  try {
+    inst.term.resize(cols, rows)
+  } catch { /* ignore if not attached */ }
+  requestAnimationFrame(() => applyPadding(inst))
+}
+
 // scheduleFlush accumulates output chunks and flushes them to xterm.js in
 // a single term.write per animation frame. This replaces the previous
 // pattern of calling term.write(data, cb) + scrollToBottom for every WS
@@ -511,9 +566,7 @@ function scheduleFlush(inst: TerminalInstance) {
     inst._pendingOutput = []
     if (chunks.length === 0) return
     const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
-    inst.term.write(combined, () => {
-      safeScrollToBottom(inst)
-    })
+    writeToTerm(inst, combined, () => safeScrollToBottom(inst))
     for (const ch of chunks) {
       inst.buffer.push(ch)
     }
@@ -531,7 +584,7 @@ function cancelFlush(inst: TerminalInstance) {
     if (chunks.length > 0) {
       if (!inst._detached) {
         const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
-        try { inst.term.write(combined) } catch { /* ignore */ }
+        writeToTerm(inst, combined)
       }
       for (const ch of chunks) inst.buffer.push(ch)
     }
@@ -542,22 +595,33 @@ function flushPending(inst: TerminalInstance) {
   const queue = inst._pendingQueue
   inst._pendingQueue = []
   for (const data of queue) {
-    inst.term.write(data, () => {
+    writeToTerm(inst, data, () => {
       safeScrollToBottom(inst)
     })
     inst.buffer.push(data)
   }
-  // After replay, any subsequently batched output should resume normal
-  // rAF scheduling.
 }
 
-function connectWs(inst: TerminalInstance, backendId: string) {
+// connectWs opens a WebSocket to the backend terminal session. When
+// noScrollback is true (a reconnect of a terminal whose xterm.js instance is
+// still populated), the client tells the backend to skip the full scrollback
+// replay — replaying the last 256KiB on top of the content the client already
+// rendered would duplicate the tail of the scrollback on every reconnect.
+// Fresh attaches (empty term / cleared buffer) leave it false so the backend
+// repopulates history normally.
+function connectWs(inst: TerminalInstance, backendId: string, noScrollback = false) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${protocol}//${location.host}/ws/terminals/${backendId}`)
   inst.ws = ws
 
   ws.onopen = () => {
     inst._reconnectAttempts = 0
+    // Sent before any resize so the backend processes it first; the
+    // scrollback replay is gated on the first resize / 2s timeout, so by
+    // then this flag is already set and the history is skipped.
+    if (noScrollback) {
+      ws.send(JSON.stringify({ type: 'no-scrollback' }))
+    }
     // Only resize the backend PTY when this document is visible. When the
     // mobile OS wakes the PWA to deliver a push notification the page is
     // still backgrounded, so proposeDimensions returns stale mobile sizes.
@@ -593,14 +657,65 @@ function connectWs(inst: TerminalInstance, backendId: string) {
         // instead of writing + scrollToBottom per WS message.
         inst._pendingOutput.push(msg.data)
         scheduleFlush(inst)
+      } else if (msg.type === 'replay-start') {
+        // The backend is about to stream the scrollback replay. Enter replay
+        // mode: queue WS output so it can't interleave with the replay write,
+        // defer any resizes, and grid the terminal to the dimensions the
+        // replay was framed at — the PTY size when that content was drawn,
+        // which on a first page-load often differs from this client's own
+        // panel size (the layout is still settling). Parsing the replay at
+        // the wrong grid wraps/clips the TUI frame: the artifacts seen on
+        // first open that a reload clears (on reload the layout is settled
+        // and the grids already match). A subsequent replay-end re-fits to
+        // the panel size.
+        inst._replaying = true
+        inst._pendingQueue = []
+        const rCols = Number(msg.cols)
+        const rRows = Number(msg.rows)
+        if (!inst._detached && rCols > 0 && rRows > 0) {
+          try { inst.term.resize(rCols, rRows) } catch { /* ignore */ }
+        }
+      } else if (msg.type === 'replay-end') {
+        const hadReplay = inst._replaying
+        inst._replaying = false
+        // After the replay drains, re-fit to this client's panel size so the
+        // live TUI repaint that follows (triggered by the backend's first-
+        // resize SIGWINCH) is parsed at the client's own grid instead of the
+        // replay's framing grid. For the single-viewer case the backend does
+        // not echo a resize, so the deferred resize here is what realigns the
+        // grid; for multi-viewer, the backend's resize (deferred while busy)
+        // is already sitting in _pendingResize and takes precedence.
+        if (hadReplay && !inst._detached && !inst._pendingResize) {
+          try {
+            const dims = inst.fit.proposeDimensions()
+            if (dims && (dims.cols !== inst.term.cols || dims.rows !== inst.term.rows)) {
+              inst._pendingResize = { cols: dims.cols, rows: dims.rows }
+            }
+          } catch { /* ignore */ }
+        }
+        flushPending(inst)
+        // If nothing was queued there is no write to drain and thus no
+        // applyPendingResize; apply the re-fit immediately.
+        if (hadReplay && inst._pendingResize && inst._pendingWrites === 0) {
+          applyPendingResize(inst)
+        }
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
-        if (cols > 0 && rows > 0 && !inst._detached) {
-          inst.term.resize(cols, rows)
-        }
         inst._padCols = Number(msg.padCols) || 0
         inst._padRows = Number(msg.padRows) || 0
+        if (cols <= 0 || rows <= 0 || inst._detached) return
+        const busy = inst._replaying || inst._pendingWrites > 0 || inst._pendingQueue.length > 0
+        if (busy) {
+          // xterm.js reflows its buffer synchronously inside resize(); doing
+          // that while the scrollback replay / batched flush is still being
+          // parsed corrupts the buffer and the viewport (artifacts + broken
+          // scrollbar). Defer the resize and apply it once the pending
+          // writes drain.
+          inst._pendingResize = { cols, rows }
+          return
+        }
+        inst.term.resize(cols, rows)
         // Re-apply padding on the next frame: term.resize() updates the
         // renderer dimensions asynchronously, and applyPadding reads them
         // to compute pixel-exact margins.
@@ -648,7 +763,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
             } else {
               setTimeout(() => {
                 if (!inst.exited && inst.ws === null) {
-                  connectWs(inst, inst.backendId)
+                  connectWs(inst, inst.backendId, true)
                 }
               }, 1000)
             }
@@ -657,7 +772,7 @@ function connectWs(inst: TerminalInstance, backendId: string) {
             // Network/offline error, continue retrying
             setTimeout(() => {
               if (!inst.exited && inst.ws === null) {
-                connectWs(inst, inst.backendId)
+                connectWs(inst, inst.backendId, true)
               }
             }, 1000)
           })
@@ -712,8 +827,12 @@ export async function attachTerminal(
     existing.term = term
     existing.fit = fit
     // The terminal is being re-attached to the DOM, so live output can
-    // once again be rendered directly to xterm.js.
+    // once again be rendered directly to xterm.js. Reset the pending-write
+    // accounting: any callback for the previously disposed term is gone, so
+    // a stuck counter would defer every future resize forever.
     existing._detached = false
+    existing._pendingWrites = 0
+    existing._pendingResize = null
     // A previous releaseTerminal call (mobile tab switch) set this flag to
     // suppress auto-reconnect. We're now explicitly re-attaching, so clear
     // it so a future socket drop reconnects normally.
@@ -755,20 +874,24 @@ export async function attachTerminal(
         existing._replaying = true
         existing._pendingQueue = []
         if (existing.buffer.length > 0) {
-          term.write(existing.buffer.join(''), () => {
-            term.scrollToBottom()
+          // The replay is one big write; resize requests arriving while it is
+          // being parsed are deferred (writeToTerm → _pendingResize) and
+          // applied once the buffer is quiescent, so the reflow never runs
+          // mid-write and the scrollback/scrollbar stay intact.
+          writeToTerm(existing, existing.buffer.join(''), () => {
+            try { term.scrollToBottom() } catch { /* ignore */ }
             existing._replaying = false
             // Re-apply the tracked DEC private modes (mouse tracking, SGR
             // mouse, bracketed paste, etc.) so the fresh xterm.js instance
             // enters the same input-routing mode the running TUI expects.
             const sync = syncModes(existing)
-            if (sync) term.write(sync)
+            if (sync) writeToTerm(existing, sync)
             flushPending(existing)
           })
         } else {
           existing._replaying = false
           const sync = syncModes(existing)
-          if (sync) term.write(sync)
+          if (sync) writeToTerm(existing, sync)
           flushPending(existing)
         }
 
@@ -798,7 +921,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -836,6 +959,7 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  inst._pendingWrites = 0
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
@@ -849,6 +973,10 @@ export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  // Reset pending-write accounting: the disposed term's write callbacks
+  // will never fire, so without this a stuck counter would defer every
+  // resize on the next attach forever.
+  inst._pendingWrites = 0
   // Mark the terminal as detached from the DOM so the live WS output
   // handler keeps buffering into the ring buffer WITHOUT writing to the
   // disposed xterm.js instance. The WebSocket is intentionally left open
@@ -858,6 +986,16 @@ export function detachTerminal(leafId: string) {
   // switch" regression the ring buffer was meant to prevent.
   inst._detached = true
   try { inst.term.dispose() } catch { /* ignore */ }
+}
+
+// isTerminalReplaying reports whether the terminal's xterm.js instance is
+// busy parsing a write (scrollback replay or a batched output flush). Callers
+// that would trigger a synchronous resize — e.g. the panel's fit/ResizeObserver
+// handler — must defer while this is true, since resizing mid-write reflows
+// the buffer into a corrupted state (artifacts + broken scrollbar).
+export function isTerminalReplaying(leafId: string): boolean {
+  const inst = registry.get(leafId)
+  return !!inst && (inst._replaying || inst._pendingWrites > 0 || inst._pendingQueue.length > 0)
 }
 
 // releaseTerminal drops this client's hold on a terminal (disposes the
@@ -872,6 +1010,7 @@ export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
   cancelFlush(inst)
+  inst._pendingWrites = 0
   // Mark as intentionally released so ws.onclose does not auto-reconnect
   // and re-pin the backend PTY (used by the mobile single-active-terminal
   // model). A later attachTerminal call clears this flag and reconnects.
