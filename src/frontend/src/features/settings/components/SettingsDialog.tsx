@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -82,6 +82,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
+  const [parkedLimit, setParkedLimit] = useState(DEFAULT_PARKED_TERMINALS)
   const [scrollSensitivity, setScrollSensitivity] = useState(0.02)
   const [scrollFriction, setScrollFriction] = useState(0.85)
   const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.05)
@@ -261,6 +262,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setDisabledAgents(p.disabledAgents)
         setDefaultNewAgent(p.defaultNewAgent)
         setShellPath(p.defaultShell)
+        const v = p.parkedTerminals
+        setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
       })
 
       const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
@@ -828,6 +831,33 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   </div>
                   <p className="text-[10px] text-muted-foreground">Path to the default shell binary (e.g. /bin/zsh, pwsh.exe). Leave empty to use the system default.</p>
                 </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium">Background Terminals</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={16}
+                      value={parkedLimit}
+                      className="no-spinner flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground outline-none focus:border-ring transition-colors"
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(16, Math.floor(Number(e.target.value) || 0)))
+                        setParkedLimit(v)
+                        void savePref(() => setPrefParkedTerminals(v))
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        setParkedLimit(DEFAULT_PARKED_TERMINALS)
+                        void savePref(() => setPrefParkedTerminals(DEFAULT_PARKED_TERMINALS))
+                      }}
+                      className="px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Number of recently-used terminals kept mounted in the background so switching back to them is instant. Higher values use more memory. Set to 0 to disable.</p>                </div>
 
                 <div className="pt-4 mt-2 border-t border-border">
                   <div className="flex flex-col gap-1 mb-3">

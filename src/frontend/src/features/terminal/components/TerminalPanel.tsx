@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
-import { attachTerminal, detachTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
+import { attachTerminal, parkTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 
 interface TerminalPanelProps {
@@ -237,16 +237,19 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       forceResizeTimers.length = 0
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
-      // Desktop buffers non-active terminals (detach keeps the WS open so
-      // re-attaching replays the local ring buffer instantly). Mobile
-      // renders only the selected terminal, so switching terminals must
+      // Desktop parks non-active terminals: the live xterm.js instance is
+      // moved into an off-screen parking lot (WS stays open, output keeps
+      // flowing into its buffer) so switching back re-attaches instantly with
+      // no ring-buffer replay / backend scrollback replay. Terminals parked
+      // past the configured limit are demoted to the plain detach behavior.
+      // Mobile renders only the selected terminal, so switching terminals must
       // fully release the previous one — closing the WS without killing
       // the backend PTY — so the backend's smallest-viewer resize can grow
       // the PTY back to desktop size when the mobile viewer drops off.
       if (window.innerWidth < 768) {
         releaseTerminal(terminalId)
       } else {
-        detachTerminal(terminalId)
+        parkTerminal(terminalId)
       }
     }
   }, [terminalId, stableCmd, env])
