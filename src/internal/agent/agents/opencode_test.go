@@ -2,6 +2,7 @@ package agents
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,6 +274,133 @@ func TestParseOpenCodeDBInterruptedReportsInterrupted(t *testing.T) {
 	})
 	if status != "interrupted" {
 		t.Fatalf("status = %q, want interrupted", status)
+	}
+}
+
+// TestParseOpenCodeDBFinishedShellCommandReportsIdle covers a "!" shell
+// command (e.g. "!git status"): OpenCode runs it directly in the PTY and
+// writes an assistant message holding only a bash tool part. The part
+// transitions to "completed" and the message is finalized (time.completed
+// set) but never receives a finish reason. The watcher must report "idle",
+// not "executing bash", so the card doesn't stay stuck in Working forever.
+func TestParseOpenCodeDBFinishedShellCommandReportsIdle(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","time":{"created":` + fmt.Sprint(now) + `,"completed":` + fmt.Sprint(now) + `}}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"git status"}}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "idle" {
+		t.Fatalf("status = %q, want idle", status)
+	}
+}
+
+// TestParseOpenCodeDBRunningShellCommandReportsExecuting ensures a "!" shell
+// command that is still running (bash tool part in state "running", message
+// not yet finalized) still reports "executing bash".
+func TestParseOpenCodeDBRunningShellCommandReportsExecuting(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","time":{"created":` + fmt.Sprint(now) + `}}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"running"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing", status)
+	}
+}
+
+// TestParseOpenCodeDBMidTurnCompletedToolNotIdle guards the comment in the
+// watcher about not reporting "idle" for a message row that is still being
+// written: an LLM turn where a tool just completed but the message has not
+// been finalized (no time.completed) must NOT report idle, otherwise the
+// status would flash idle→executing. It should report "executing".
+func TestParseOpenCodeDBMidTurnCompletedToolNotIdle(t *testing.T) {
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"step-start"}`},
+			{"p2", "msg", "ses", now, `{"type":"tool","tool":"bash","state":{"status":"completed"}}`},
+			{"p3", "msg", "ses", now, `{"type":"step-finish"}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing", status)
 	}
 }
 
