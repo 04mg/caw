@@ -350,6 +350,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
         }
       }
     }
+    return dims
   }
   
   // Register OSC 52 handler to capture TUI clipboard writes
