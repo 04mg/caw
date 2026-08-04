@@ -835,19 +835,19 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium">Parked Terminals</label>
+                  <label className="text-xs font-medium">Background Terminals</label>
                   <div className="flex gap-2">
                     <input
                       type="number"
                       min={0}
                       max={16}
                       value={parkedLimit}
+                      className="no-spinner flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground outline-none focus:border-ring transition-colors"
                       onChange={(e) => {
                         const v = Math.max(0, Math.min(16, Math.floor(Number(e.target.value) || 0)))
                         setParkedLimit(v)
                         void savePref(() => setPrefParkedTerminals(v))
                       }}
-                      className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground outline-none focus:border-ring transition-colors"
                     />
                     <button
                       onClick={() => {
@@ -859,8 +859,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       Reset
                     </button>
                   </div>
-                  <p className="text-[10px] text-muted-foreground">Number of recently-used terminals kept mounted in the background so switching back to them is instant. Higher values use more memory. Set to 0 to disable.</p>
-                </div>
+                  <p className="text-[10px] text-muted-foreground">Number of recently-used terminals kept mounted in the background so switching back to them is instant. Higher values use more memory. Set to 0 to disable.</p>                </div>
 
                 <div className="pt-4 mt-2 border-t border-border">
                   <div className="flex flex-col gap-1 mb-3">
