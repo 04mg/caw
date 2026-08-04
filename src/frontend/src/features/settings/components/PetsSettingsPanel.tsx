@@ -9,6 +9,7 @@ import { deletePet, downloadPetdex, uploadPet } from '@/features/pets/services/p
 import {
   getPetsConfig,
   setPetsEnabled,
+  setPetsUniquePerAgent,
   setPetRoster,
   subscribePrefs,
   type PetsConfig,
@@ -56,6 +57,10 @@ export function PetsSettingsPanel({ onSaveStatusChange }: PetsSettingsPanelProps
 
   const toggleEnabled = () => {
     void save(() => setPetsEnabled(!cfg.enabled))
+  }
+
+  const toggleUniquePerAgent = () => {
+    void save(() => setPetsUniquePerAgent(!cfg.uniquePerAgent))
   }
 
   // Removing a pet from the roster deletes its locally stored copy too, so
@@ -163,6 +168,26 @@ export function PetsSettingsPanel({ onSaveStatusChange }: PetsSettingsPanelProps
         <div className="flex flex-col">
           <span className="text-xs font-medium">Enable pets</span>
           <span className="text-[10px] text-muted-foreground">One pet per agent; click to focus terminal.</span>
+        </div>
+      </label>
+
+      <label
+        className={cn(
+          'flex items-center gap-2.5',
+          cfg.enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+        )}
+      >
+        <Checkbox
+          checked={Boolean(cfg.uniquePerAgent)}
+          disabled={!cfg.enabled}
+          onChange={toggleUniquePerAgent}
+        />
+        <div className="flex flex-col">
+          <span className="text-xs font-medium">Limit pets to roster size</span>
+          <span className="text-[10px] text-muted-foreground">
+            Only as many pets as you have in your roster are shown at once; extra agents get no pet
+            until one frees up.
+          </span>
         </div>
       </label>
 

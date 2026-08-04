@@ -7,6 +7,9 @@ export interface PetsConfig {
   // Persistent per-agent assignments (agentId -> pet slug), kept in sync
   // automatically so a pet survives its terminal being closed and reopened.
   assignments?: Record<string, string>
+  // When true, only as many pets as there are roster entries are shown at
+  // once; extra agents get no pet until one frees up.
+  uniquePerAgent?: boolean
 }
 
 export interface PrefsState {
@@ -26,6 +29,7 @@ export const DEFAULT_PETS: PetsConfig = {
   roster: [],
   agentPins: {},
   assignments: {},
+  uniquePerAgent: false,
 }
 
 export const DEFAULT_HOTKEYS: Record<string, string> = {
@@ -221,6 +225,10 @@ export async function setPetsConfig(pets: PetsConfig): Promise<boolean> {
 
 export async function setPetsEnabled(enabled: boolean): Promise<boolean> {
   return persistAndBroadcast({ ...cache, pets: { ...cache.pets, enabled } })
+}
+
+export async function setPetsUniquePerAgent(uniquePerAgent: boolean): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, pets: { ...cache.pets, uniquePerAgent } })
 }
 
 export async function setPetRoster(roster: string[]): Promise<boolean> {
