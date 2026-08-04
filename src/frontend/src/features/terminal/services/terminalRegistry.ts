@@ -66,6 +66,18 @@ export interface TerminalInstance {
    */
   _padCols: number
   /**
+   * @internal True when the running program is displaying the alternate
+   * screen (DEC 47 / 1047 / 1049 set). Tracked incrementally from the live
+   * WS stream, mirroring the backend's altScreenModes in session.go. Used
+   * by attachTerminal to decide how to re-attach: a TUI on the alt screen
+   * renders only incremental updates relative to its last full frame, so a
+   * local ring-buffer replay (recent chunks) leaves most of the screen
+   * blank/black — such terminals must instead be re-attached through the
+   * backend's scrollback replay, which emits the enter-sequence and the
+   * current alt-screen frame, then fires SIGWINCH so the TUI repaints.
+   */
+  _altScreen: boolean
+  /**
    * @internal Cell-based vertical padding (rows) for centering. See _padCols.
    */
   _padRows: number
@@ -453,6 +465,10 @@ function wireInput(inst: TerminalInstance) {
 // xterm.js instance so mouse clicks / wheel scroll / bracketed paste keep
 // working. Mirrors the server-side syncModes set in session.go.
 const SYNC_MODES = new Set([1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004])
+// DEC private modes that switch the terminal to the alternate screen
+// buffer. A TUI sets one of these on startup and clears it on exit. Mirrors
+// the server-side altScreenModes set in session.go.
+const ALT_SCREEN_MODES = new Set([47, 1047, 1049])
 // Matches a single DEC private mode set/reset, e.g. "\x1b[?1003h" or
 // "\x1b[?2004l". TUI apps emit one mode per sequence.
 const MODE_RE = new RegExp(String.fromCharCode(27) + '\\[\\?(\\d+)([hl])', 'g')
@@ -464,6 +480,12 @@ function trackModes(inst: TerminalInstance, data: string) {
     const n = parseInt(m[1], 10)
     if (SYNC_MODES.has(n)) {
       inst._modes.set(n, m[2] === 'h')
+    }
+    if (ALT_SCREEN_MODES.has(n)) {
+      // Entering an alt-screen mode puts the program on the alt screen;
+      // leaving any of them returns it to the normal buffer. A TUI uses a
+      // single mode consistently, so tracking the union is safe in practice.
+      inst._altScreen = m[2] === 'h'
     }
   }
 }
@@ -826,35 +848,57 @@ export async function attachTerminal(
     wireInput(existing)
 
     if (existing.ws && existing.ws.readyState === WebSocket.OPEN) {
-      // Replay buffered output so the terminal isn't blank after re-attach.
-      // Queue incoming WS messages during replay to avoid interleaved writes.
-      existing._replaying = true
-      existing._pendingQueue = []
-      if (existing.buffer.length > 0) {
-        // The replay is one big write; resize requests arriving while it is
-        // being parsed are deferred (writeToTerm → _pendingResize) and
-        // applied once the buffer is quiescent, so the reflow never runs
-        // mid-write and the scrollback/scrollbar stay intact.
-        writeToTerm(existing, existing.buffer.join(''), () => {
-          try { term.scrollToBottom() } catch { /* ignore */ }
+      if (existing._altScreen) {
+        // A TUI on the alternate screen renders incremental updates relative
+        // to its last full frame, which a local ring-buffer replay (recent
+        // chunks only) does not contain — replaying it into a fresh xterm.js
+        // instance leaves most of the screen blank/black until a manual
+        // resize forces a repaint. Route such terminals through the backend
+        // instead: its scrollback replay emits the enter-sequence and the
+        // current alt-screen frame, and the fresh WS connection re-fires
+        // SIGWINCH (first resize) so the TUI repaints the full frame. The
+        // local buffer is cleared so the replay isn't duplicated on top of
+        // already-rendered content.
+        existing.buffer.clear()
+        existing._replaying = false
+        existing._pendingQueue = []
+        cancelFlush(existing)
+        try { existing.ws.close() } catch { /* ignore */ }
+        existing.ws = null
+        if (!existing.exited && existing.backendId) {
+          connectWs(existing, existing.backendId)
+        }
+      } else {
+        // Replay buffered output so the terminal isn't blank after re-attach.
+        // Queue incoming WS messages during replay to avoid interleaved writes.
+        existing._replaying = true
+        existing._pendingQueue = []
+        if (existing.buffer.length > 0) {
+          // The replay is one big write; resize requests arriving while it is
+          // being parsed are deferred (writeToTerm → _pendingResize) and
+          // applied once the buffer is quiescent, so the reflow never runs
+          // mid-write and the scrollback/scrollbar stay intact.
+          writeToTerm(existing, existing.buffer.join(''), () => {
+            try { term.scrollToBottom() } catch { /* ignore */ }
+            existing._replaying = false
+            // Re-apply the tracked DEC private modes (mouse tracking, SGR
+            // mouse, bracketed paste, etc.) so the fresh xterm.js instance
+            // enters the same input-routing mode the running TUI expects.
+            const sync = syncModes(existing)
+            if (sync) writeToTerm(existing, sync)
+            flushPending(existing)
+          })
+        } else {
           existing._replaying = false
-          // Re-apply the tracked DEC private modes (mouse tracking, SGR
-          // mouse, bracketed paste, etc.) so the fresh xterm.js instance
-          // enters the same input-routing mode the running TUI expects.
           const sync = syncModes(existing)
           if (sync) writeToTerm(existing, sync)
           flushPending(existing)
-        })
-      } else {
-        existing._replaying = false
-        const sync = syncModes(existing)
-        if (sync) writeToTerm(existing, sync)
-        flushPending(existing)
-      }
+        }
 
-      // Send a resize for the new dimensions.
-      const dims = fit.proposeDimensions()
-      if (dims) existing.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+        // Send a resize for the new dimensions.
+        const dims = fit.proposeDimensions()
+        if (dims) existing.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+      }
     } else {
       // WebSocket is closed, closing, or null. Clear the local buffer to prevent
       // duplication of replayed scrollback from the new WS connection.
@@ -877,7 +921,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _focused: false, _released: false, _reconnectAttempts: 0 }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
