@@ -34,6 +34,12 @@ type openCodePart struct {
 type openCodeMessage struct {
 	Role   string `json:"role"`
 	Finish string `json:"finish,omitempty"`
+	Time   struct {
+		// Completed is set (nonzero) once the message row is fully written.
+		// A "!" shell command message is finalized without a finish reason,
+		// so it can be told apart from a mid-flight LLM turn by this field.
+		Completed int64 `json:"completed,omitempty"`
+	} `json:"time,omitempty"`
 	Parts  []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -583,6 +589,18 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 				// The user aborted the turn. Report "interrupted" (not idle)
 				// so the UI surfaces it with a red dot and no push is sent.
 				callback("interrupted", "", "", sessionTitle)
+				return
+			}
+			// A shell command executed with "!" (e.g. "!git status") is
+			// written by OpenCode as an assistant message with a single
+			// bash tool part and no finish reason: the command runs directly
+			// in the PTY, not through the model, so the message is finalized
+			// (time.completed set) without finish. A mid-flight LLM turn
+			// never has time.completed set, so this only matches finished
+			// shell commands. Without this, the branch below would report
+			// "executing bash" forever and leave the card stuck in Working.
+			if msg.Time.Completed != 0 && lastToolName != "" {
+				callback("idle", "", "", sessionTitle)
 				return
 			}
 			if lastToolName != "" {
