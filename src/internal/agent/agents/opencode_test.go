@@ -404,6 +404,134 @@ func TestParseOpenCodeDBMidTurnCompletedToolNotIdle(t *testing.T) {
 	}
 }
 
+func TestParseOpenCodeDBDismissedQuestionReportsInterrupted(t *testing.T) {
+	// When the user dismisses an open "question" prompt (ESC), OpenCode marks
+	// the question part as error ("The user dismissed this question") but
+	// keeps the message finish at "tool-calls" and stops the turn — no new
+	// rows are written until the user prompts again. The watcher must report
+	// "interrupted" (not "executing", which would strand the card in Working).
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":"tool-calls"}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The user dismissed this question"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status, tool, details string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status, tool, details = s, tl, d
+	})
+	if status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", status)
+	}
+	if tool != "question" {
+		t.Fatalf("tool = %q, want question", tool)
+	}
+	if !strings.Contains(details, "dismissed") {
+		t.Fatalf("details = %q, want dismissed text", details)
+	}
+}
+
+func TestParseOpenCodeDBDismissedQuestionNotToolFailed(t *testing.T) {
+	// A dismissed question with finish="" must not fall into the tool_failed
+	// branch (which also renders as Working); it is an interrupt, so the card
+	// must leave Working just like the finish="tool-calls" variant.
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The user dismissed this question"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", status)
+	}
+}
+
+func TestParseOpenCodeDBInvalidQuestionArgsNotInterrupted(t *testing.T) {
+	// A question tool error caused by invalid arguments (schema mismatch) is
+	// NOT a dismissal: the model receives the error and continues working.
+	// The watcher must keep reporting tool_failed, not interrupted.
+	now := time.Now().UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]struct {
+			id              string
+			directory       string
+			timeCreatedMs   int64
+			timeUpdatedMs   int64
+			parentID        string
+		}{{"ses", testCwd, now, now, ""}},
+		[]struct {
+			id            string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{{"msg", "ses", now, `{"role":"assistant","finish":""}`}},
+		[]struct {
+			id            string
+			messageID     string
+			sessionID     string
+			timeCreatedMs int64
+			dataJSON      string
+		}{
+			{"p1", "msg", "ses", now, `{"type":"tool","tool":"question","state":{"status":"error","error":"The question tool was called with invalid arguments"}}`},
+		},
+	)
+	defer cleanup()
+
+	var status string
+	(&OpenCodeWatcher{}).parseOpenCodeDB(dbPath, testCwd, "ses", func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "tool_failed" {
+		t.Fatalf("status = %q, want tool_failed", status)
+	}
+}
+
 // TestOldSessionClaimedWhenRecentlyUpdated covers the /sessions reattach case:
 // the user reattaches to a pre-existing old session inside a fresh agent
 // launch, and the session's time_updated has just advanced (the reattach
