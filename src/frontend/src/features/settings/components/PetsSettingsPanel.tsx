@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Check, ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
+import { ImagePlus, Loader2, PawPrint, Plus, Upload, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { Checkbox } from '@/components/checkbox'
 import { Input } from '@/components/input'
@@ -17,11 +17,15 @@ import { cn } from '@/features/shared/utils/utils'
 
 type SaveStatus = 'idle' | 'success' | 'error'
 
+interface PetsSettingsPanelProps {
+  onSaveStatusChange?: (status: SaveStatus) => void
+}
+
 const LIBRARY_LIMIT = 20
 // The Petdex library has thousands of entries; cap the grid at this many
 // results and rely on search to narrow it down.
 
-export function PetsSettingsPanel() {
+export function PetsSettingsPanel({ onSaveStatusChange }: PetsSettingsPanelProps) {
   const [cfg, setCfg] = useState<PetsConfig>(() => getPetsConfig())
   const [library, setLibrary] = useState<PetEntry[]>(() => getPetLibrary())
   const [loading, setLoading] = useState(false)
@@ -30,12 +34,10 @@ export function PetsSettingsPanel() {
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadError, setUploadError] = useState('')
   const [uploadBusy, setUploadBusy] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [downloading, setDownloading] = useState<Set<string>>(new Set())
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const saveTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -49,9 +51,7 @@ export function PetsSettingsPanel() {
 
   const save = async (fn: () => Promise<boolean>) => {
     const ok = await fn()
-    setSaveStatus(ok ? 'success' : 'error')
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = window.setTimeout(() => setSaveStatus('idle'), 1500)
+    onSaveStatusChange?.(ok ? 'success' : 'error')
   }
 
   const toggleEnabled = () => {
@@ -88,10 +88,10 @@ export function PetsSettingsPanel() {
       const roster = cfg.roster.includes(uploaded.id) ? cfg.roster : [...cfg.roster, uploaded.id]
       await setPetRoster(roster)
       await loadPetLibrary(true)
-      setSaveStatus('success')
+      onSaveStatusChange?.('success')
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Download failed')
-      setSaveStatus('error')
+      onSaveStatusChange?.('error')
     } finally {
       setDownloading((prev) => {
         const next = new Set(prev)
@@ -117,7 +117,7 @@ export function PetsSettingsPanel() {
       setUploadName('')
       setUploadFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
-      setSaveStatus('success')
+      onSaveStatusChange?.('success')
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -157,20 +157,6 @@ export function PetsSettingsPanel() {
           wander along the bottom of terminal areas and react to your agents.
         </p>
       </div>
-
-      {(saveStatus === 'success' || saveStatus === 'error') && (
-        <div className="flex items-center gap-1.5 text-[10px] font-medium shrink-0 -mt-2">
-          {saveStatus === 'success' ? (
-            <span className="text-emerald-500 flex items-center gap-1">
-              <Check className="h-3 w-3" /> Saved
-            </span>
-          ) : (
-            <span className="text-destructive flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" /> Save failed
-            </span>
-          )}
-        </div>
-      )}
 
       <label className="flex items-center gap-2.5 cursor-pointer">
         <Checkbox checked={cfg.enabled} onChange={toggleEnabled} />

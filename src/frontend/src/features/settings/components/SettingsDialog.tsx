@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, AlertCircle, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS } from '@/features/prefs/stores/prefsStore'
@@ -26,6 +26,7 @@ import {
 } from '@/features/voice-mode/services/krokoAsr'
 import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { SaveToast } from './SaveToast'
 import { PetsSettingsPanel } from './PetsSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
 
@@ -113,8 +114,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
   const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
-  const [prefSaveStatus, setPrefSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  const prefSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const [hotkeyRecording, setHotkeyRecording] = useState<string | null>(null)
   const [hotkeyError, setHotkeyError] = useState('')
@@ -236,10 +237,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   // Clear any pending save-status auto-hide timer when the dialog closes
   useEffect(() => {
-    if (!open && prefSaveTimerRef.current) {
-      clearTimeout(prefSaveTimerRef.current)
-      prefSaveTimerRef.current = undefined
-      setPrefSaveStatus('idle')
+    if (!open && saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = undefined
+      setSaveStatus('idle')
     }
   }, [open])
 
@@ -504,13 +505,23 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     localStorage.setItem('caw:theme', newTheme)
   }
 
-  // savePref persists a work-pref change and shows transient inline feedback
+  // savePref persists a work-pref change and shows transient feedback
   // ("Saved" / "Save failed") that auto-hides shortly after.
   const savePref = async (fn: () => Promise<boolean>) => {
     const ok = await fn()
-    setPrefSaveStatus(ok ? 'success' : 'error')
-    if (prefSaveTimerRef.current) clearTimeout(prefSaveTimerRef.current)
-    prefSaveTimerRef.current = setTimeout(() => setPrefSaveStatus('idle'), 1500)
+    setSaveStatus(ok ? 'success' : 'error')
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+  }
+
+  // PetsSettingsPanel reports its own save outcomes through this callback so
+  // all settings sections share the same floating save toast.
+  const handlePetsSaveStatus = (status: 'idle' | 'success' | 'error') => {
+    setSaveStatus(status)
+    if (status !== 'idle') {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+    }
   }
 
   const toggleAgent = (agentId: string) => {
@@ -567,20 +578,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   const renderSectionContent = () => (
     <>
-      {(prefSaveStatus === 'success' || prefSaveStatus === 'error') && (
-        <div className="flex items-center gap-1.5 text-[10px] font-medium shrink-0 pb-1 -mt-1">
-          {prefSaveStatus === 'success' ? (
-            <span className="text-emerald-500 flex items-center gap-1">
-              <Check className="h-3 w-3" /> Saved
-            </span>
-          ) : (
-            <span className="text-destructive flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" /> Save failed
-            </span>
-          )}
-        </div>
-      )}
-          {activeSection === 'appearance' && (
+      {activeSection === 'appearance' && (
             <div className="flex flex-col gap-4">
               <div>
                 <h3 className="text-sm font-medium mb-1">Appearance</h3>
@@ -1011,7 +1009,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
-          {activeSection === 'pets' && <PetsSettingsPanel />}
+          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePetsSaveStatus} />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">
@@ -2060,7 +2058,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
             ) : (
-              <div className="w-full flex flex-col">
+              <div className="relative w-full flex flex-col">
                 <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-border">
                   <button
                     onClick={() => {
@@ -2090,6 +2088,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                   {renderSectionContent()}
                 </div>
+                <SaveToast status={saveStatus} />
               </div>
             )}
           </>
@@ -2137,7 +2136,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               })()}
             </div>
 
-            <div className="flex-1 flex flex-col">
+            <div className="relative flex-1 flex flex-col">
               {((activeSection === 'agents' && agentStep === 2) || (activeSection === 'limits' && limitStep === 2)) && (
                 <div className="flex items-center gap-2 px-4 h-[40px] shrink-0 border-b border-border">
                   <button
@@ -2160,6 +2159,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex-1 flex flex-col p-5 overflow-y-auto thin-scroll" style={{ scrollbarWidth: 'thin' }}>
                 {renderSectionContent()}
               </div>
+              <SaveToast status={saveStatus} />
             </div>
           </>
         )}
