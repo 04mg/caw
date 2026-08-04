@@ -13,10 +13,11 @@ import (
 // automatically-maintained per-agent assignments that survive a terminal
 // being closed and reopened.
 type PetsConfig struct {
-	Enabled     bool              `json:"enabled"`
-	Roster      []string          `json:"roster"`
-	AgentPins   map[string]string `json:"agentPins"`
-	Assignments map[string]string `json:"assignments"`
+	Enabled        bool              `json:"enabled"`
+	Roster         []string          `json:"roster"`
+	AgentPins      map[string]string `json:"agentPins"`
+	Assignments    map[string]string `json:"assignments"`
+	UniquePerAgent bool              `json:"uniquePerAgent"`
 }
 
 // PrefsState holds the user's work preferences shared across all devices.

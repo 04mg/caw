@@ -8,6 +8,8 @@ export const PET_STRIP_HEIGHT = 64
 // petSlugForAgent computes the pet assigned to an agent pane. A per-agent
 // pinned pet wins, otherwise the roster rotates by the pane's ordinal
 // position among agent leaves in the layout tree. Deterministic, no counters.
+// When uniquePerAgent is set, only as many pets as there are roster entries
+// are shown at once: panes past the roster size get no pet until one frees up.
 export function petSlugForAgent(
   agentId: string | undefined,
   ordinal: number,
@@ -17,5 +19,6 @@ export function petSlugForAgent(
   if (cfg.roster.length === 0) return undefined
   const pinned = cfg.agentPins[agentId]
   if (pinned && cfg.roster.includes(pinned)) return pinned
+  if (cfg.uniquePerAgent && ordinal >= cfg.roster.length) return undefined
   return cfg.roster[ordinal % cfg.roster.length]
 }
