@@ -128,7 +128,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   // effect can see the latest value without restarting the loop.
   const statusRef = useRef<AgentStatus | undefined>(status)
   statusRef.current = status
-  // Speech bubble: "Finished" after a run, "Question?" while awaiting input.
+  // Speech bubble: "Finished" after a run, "Question" while awaiting input.
   // Both are dismissed on click (which also focuses the terminal).
   const [bubbleText, setBubbleText] = useState<string | null>(null)
   const bubbleTextRef = useRef<string | null>(bubbleText)
@@ -182,7 +182,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [pet.spritesheetUrl, scale])
 
   // Restore the agent's last known bubble state on remount (e.g. after a
-  // workspace switch) so a "Finished"/"Question?" status isn't forgotten.
+  // workspace switch) so a "Finished"/"Question" status isn't forgotten.
   // The saved run state (position, pacing) is stashed for the animation
   // loop, which creates the state object on first run.
   const savedStateRef = useRef<PetPersistState | null>(null)
@@ -196,7 +196,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
   }, [leafId])
 
   // Handle status transitions. A freshly spawned agent waves once; the
-  // "Finished" bubble follows the first completed run and the "Question?"
+  // "Finished" bubble follows the first completed run and the "Question"
   // bubble appears while the agent waits for input, both until dismissed.
   useEffect(() => {
     const st = stateRef.current
@@ -208,7 +208,7 @@ export function Pet({ pet, leafId, status, x = 0, y = 0, containerW, containerH,
       startedWorkRef.current = true
     }
     if (needsInput) {
-      if (!bubbleDismissedRef.current) setBubbleText('Question?')
+      if (!bubbleDismissedRef.current) setBubbleText('Question')
     } else if (isIdle) {
       if (startedWorkRef.current && !bubbleDismissedRef.current) setBubbleText('Finished')
     } else {
