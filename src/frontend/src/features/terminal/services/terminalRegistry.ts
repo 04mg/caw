@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { RingBuffer } from './ringBuffer'
-import { getDefaultShell } from '@/features/prefs/stores/prefsStore'
+import { getDefaultShell, getParkedTerminalLimit, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 export interface TerminalInstance {
   leafId: string
@@ -48,6 +48,17 @@ export interface TerminalInstance {
    * disposed terminal.
    */
   _detached: boolean
+  /**
+   * @internal True while the terminal's live xterm.js instance sits in the
+   * off-screen parking lot (see parkTerminal). The instance is NOT disposed:
+   * its buffer and current frame stay intact, the WebSocket keeps streaming
+   * output into it, and re-attaching just moves the element back — no ring
+   * buffer replay and no backend scrollback replay, so switching back to a
+   * recently-used terminal is instant even on slow connections. Set to false
+   * once the terminal is parked at/over the configured limit (see
+   * detachTerminal).
+   */
+  _parked: boolean
   /**
    * @internal Last-set state of the DEC private modes that affect input
    * routing (mouse tracking, SGR mouse, bracketed paste, focus reporting).
@@ -117,6 +128,97 @@ export interface TerminalInstance {
 const registry = new Map<string, TerminalInstance>()
 const subscribers = new Set<() => void>()
 let onTerminalExit: ((leafId: string) => void) | null = null
+
+/**
+ * Off-screen parking lot for hot terminals. When a desktop TerminalPanel
+ * unmounts (tab/workspace switch) the live xterm.js instance is MOVED here
+ * instead of being disposed, so its buffer + current frame survive and
+ * re-attaching is instant. The element is kept at `visibility:hidden` off to
+ * the left; xterm.js only resizes when fit()/resize() is called explicitly
+ * (it has no internal ResizeObserver), so the frozen grid here never drives
+ * the backend PTY, and the still-open WebSocket keeps writing output into the
+ * instance's buffer so the frame stays current while parked.
+ */
+let parkingLot: HTMLDivElement | null = null
+/**
+ * LRU order of parked terminals: index 0 is the oldest (first to be evicted
+ * when the configured limit is exceeded), the tail is the most recently
+ * parked. Re-attaching a terminal removes it from this list.
+ */
+const parkedIds: string[] = []
+
+function getParkingLot(): HTMLDivElement {
+  if (!parkingLot) {
+    parkingLot = document.createElement('div')
+    parkingLot.setAttribute('data-caw-parking-lot', '')
+    parkingLot.style.position = 'fixed'
+    parkingLot.style.top = '0'
+    parkingLot.style.left = '-99999px'
+    parkingLot.style.width = '1px'
+    parkingLot.style.height = '1px'
+    parkingLot.style.visibility = 'hidden'
+    parkingLot.style.overflow = 'hidden'
+    parkingLot.style.pointerEvents = 'none'
+    document.body.appendChild(parkingLot)
+  }
+  return parkingLot
+}
+
+function removeFromParkingLot(leafId: string) {
+  const idx = parkedIds.indexOf(leafId)
+  if (idx !== -1) parkedIds.splice(idx, 1)
+}
+
+// parkTerminal parks the live xterm.js instance of an otherwise-detached
+// desktop terminal into the off-screen parking lot so switching back to it
+// re-attaches instantly (no ring-buffer replay, no backend scrollback
+// replay). The WebSocket is left open — output keeps being written into the
+// instance's buffer, keeping the frame current — and the element keeps its
+// last grid (no resize fires while off-screen). If the configured limit is
+// already reached, the oldest parked terminal is demoted to the plain
+// detachTerminal behavior (xterm instance disposed, WS + ring buffer kept).
+export function parkTerminal(leafId: string) {
+  const inst = registry.get(leafId)
+  if (!inst || inst.exited || !inst.term.element) return
+  cancelFlush(inst)
+  inst._pendingWrites = 0
+  inst._pendingResize = null
+  // Reset the replay guard: the parked instance is live, so any buffered WS
+  // output can be written straight into it rather than queued.
+  inst._replaying = false
+  inst._pendingQueue = []
+  // The parked instance is fully alive, so the detached (disposed) path's
+  // buffering behavior must not apply.
+  inst._detached = false
+
+  if (getParkedTerminalLimit() <= 0) {
+    detachTerminal(leafId)
+    return
+  }
+
+  const lot = getParkingLot()
+  try { lot.appendChild(inst.term.element) } catch { /* element already attached elsewhere */ }
+  inst._parked = true
+  removeFromParkingLot(leafId)
+  parkedIds.push(leafId)
+  evictParkedOverLimit()
+}
+
+// evictParkedOverLimit demotes parked terminals beyond the configured limit
+// to the plain detached state, oldest first.
+function evictParkedOverLimit() {
+  const limit = getParkedTerminalLimit()
+  while (parkedIds.length > limit) {
+    const oldest = parkedIds.shift()
+    if (oldest) detachTerminal(oldest)
+  }
+}
+
+// Keep the parking lot sized to the current preference. When the user lowers
+// the limit, demote the excess oldest terminals.
+subscribePrefs(() => {
+  evictParkedOverLimit()
+})
 
 /**
  * Maximum number of consecutive WebSocket reconnect attempts before giving
@@ -248,6 +350,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
         }
       }
     }
+    return dims
   }
   
   // Register OSC 52 handler to capture TUI clipboard writes
@@ -536,7 +639,7 @@ function applyPendingResize(inst: TerminalInstance) {
   if (!inst._pendingResize) return
   const { cols, rows } = inst._pendingResize
   inst._pendingResize = null
-  if (inst._detached) return
+  if (inst._detached || inst._parked) return
   try {
     inst.term.resize(cols, rows)
   } catch { /* ignore if not attached */ }
@@ -672,7 +775,7 @@ function connectWs(inst: TerminalInstance, backendId: string, noScrollback = fal
         inst._pendingQueue = []
         const rCols = Number(msg.cols)
         const rRows = Number(msg.rows)
-        if (!inst._detached && rCols > 0 && rRows > 0) {
+        if (!inst._detached && !inst._parked && rCols > 0 && rRows > 0) {
           try { inst.term.resize(rCols, rRows) } catch { /* ignore */ }
         }
       } else if (msg.type === 'replay-end') {
@@ -685,7 +788,7 @@ function connectWs(inst: TerminalInstance, backendId: string, noScrollback = fal
         // not echo a resize, so the deferred resize here is what realigns the
         // grid; for multi-viewer, the backend's resize (deferred while busy)
         // is already sitting in _pendingResize and takes precedence.
-        if (hadReplay && !inst._detached && !inst._pendingResize) {
+        if (hadReplay && !inst._detached && !inst._parked && !inst._pendingResize) {
           try {
             const dims = inst.fit.proposeDimensions()
             if (dims && (dims.cols !== inst.term.cols || dims.rows !== inst.term.rows)) {
@@ -704,7 +807,7 @@ function connectWs(inst: TerminalInstance, backendId: string, noScrollback = fal
         const rows = Number(msg.rows)
         inst._padCols = Number(msg.padCols) || 0
         inst._padRows = Number(msg.padRows) || 0
-        if (cols <= 0 || rows <= 0 || inst._detached) return
+        if (cols <= 0 || rows <= 0 || inst._detached || inst._parked) return
         const busy = inst._replaying || inst._pendingWrites > 0 || inst._pendingQueue.length > 0
         if (busy) {
           // xterm.js reflows its buffer synchronously inside resize(); doing
@@ -820,6 +923,51 @@ export async function attachTerminal(
 ): Promise<TerminalInstance> {
   const existing = registry.get(leafId)
   if (existing) {
+    if (existing._parked) {
+      // Fast path: the live xterm.js instance was parked off-screen with its
+      // buffer and current frame intact and the WebSocket still streaming
+      // output into it. Switching back is just moving the element into this
+      // panel — no ring-buffer replay, no WebSocket reconnect, no backend
+      // scrollback replay, no SIGWINCH round-trip. This is the whole point
+      // of parking: re-attaching a recently-used terminal is instant even on
+      // slow connections.
+      removeFromParkingLot(leafId)
+      existing._detached = false
+      existing._released = false
+      existing._pendingWrites = 0
+      existing._pendingResize = null
+      // Wait for the container to have real dimensions, then move the live
+      // element back in. The term was already opened on first attach; it does
+      // not need term.open() again.
+      await waitForLayout(el)
+      const parkedEl = existing.term.element
+      if (parkedEl) {
+        try {
+          el.appendChild(parkedEl)
+        } catch { /* ignore */ }
+      }
+      // The element is now back in the live panel. Clear _parked (which was
+      // kept set through the layout wait so resize/replay WS messages stayed
+      // deferred — TerminalPanel's flushResize reconciles the grid instead).
+      existing._parked = false
+      // The browser may have skipped paints while the element sat hidden
+      // (visibility:hidden), so repaint the current frame from the buffer.
+      try {
+        existing.term.refresh(0, existing.term.rows - 1)
+      } catch { /* ignore */ }
+      // No fit() here: if the new panel is a different size than the grid the
+      // terminal was parked at, TerminalPanel's flushResize (double-rAF plus
+      // staggered re-fits) reconciles the grid to the panel and sends the
+      // backend resize, gated on isTerminalReplaying so the reflow never runs
+      // mid-write. Same-size re-attaches stay a pure no-op.
+      if (!existing.ws && !existing.exited && existing.backendId) {
+        // The WebSocket dropped while parked; reconnect without re-running the
+        // backend scrollback replay since the live instance already holds it.
+        connectWs(existing, existing.backendId, true)
+      }
+      return existing
+    }
+
     // Recreate the xterm instance bound to the new DOM element, while
     // preserving the existing WebSocket/backend connection.
     try { existing.term.dispose() } catch { /* ignore */ }
@@ -921,7 +1069,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _parked: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
@@ -958,6 +1106,7 @@ export function setAllTerminalThemes(theme: 'dark' | 'light') {
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
   const inst = registry.get(leafId)
   if (!inst) return
+  removeFromParkingLot(leafId)
   cancelFlush(inst)
   inst._pendingWrites = 0
   try { inst.ws?.close() } catch { /* ignore */ }
@@ -972,6 +1121,16 @@ export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
 export function detachTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  // If the terminal was parked (live instance in the off-screen lot), detach
+  // it from the lot and fall through to the dispose path: the terminal is
+  // being demoted past the parking limit, so only the WS + ring buffer stay.
+  if (inst._parked) {
+    removeFromParkingLot(leafId)
+    try {
+      inst.term.element?.remove()
+    } catch { /* ignore */ }
+    inst._parked = false
+  }
   cancelFlush(inst)
   // Reset pending-write accounting: the disposed term's write callbacks
   // will never fire, so without this a stuck counter would defer every
@@ -1009,12 +1168,14 @@ export function isTerminalReplaying(leafId: string): boolean {
 export function releaseTerminal(leafId: string) {
   const inst = registry.get(leafId)
   if (!inst) return
+  removeFromParkingLot(leafId)
   cancelFlush(inst)
   inst._pendingWrites = 0
   // Mark as intentionally released so ws.onclose does not auto-reconnect
   // and re-pin the backend PTY (used by the mobile single-active-terminal
   // model). A later attachTerminal call clears this flag and reconnects.
   inst._released = true
+  inst._parked = false
   try { inst.ws?.close() } catch { /* ignore */ }
   try { inst.term.dispose() } catch { /* ignore */ }
   registry.delete(leafId)
