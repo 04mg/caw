@@ -40,6 +40,20 @@ export interface TerminalInstance {
    */
   _pendingResize: { cols: number; rows: number } | null
   /**
+   * @internal Set by the replay-end handler after the scrollback tail
+   * drains, to force a full-viewport repaint once the in-flight writes
+   * finish parsing. This mirrors what a manual resize does at the xterm.js
+   * renderer level (the ResizeObserver fires and repaints the viewport),
+   * which is the only thing that clears the black/partial first frame on a
+   * single-viewer first open: on that path the framing grid already equals
+   * the panel grid, so _pendingResize stays null and the existing safety
+   * net in applyPendingResize never runs. Clearing is deferred to
+   * writeToTerm's finish callback so the refresh runs against a populated
+   * buffer (not the pre-write state). Idempotent — if applyPendingResize
+   * also fires its own refresh, the second repaint is a harmless no-op.
+   */
+  _needsFirstPaintRefresh: boolean
+  /**
    * @internal True while the xterm.js instance is detached from the DOM
    * (e.g. the user switched to another tab). The WebSocket is kept alive so
    * that re-attaching replays the local ring buffer instead of reconnecting
@@ -183,6 +197,7 @@ export function parkTerminal(leafId: string) {
   cancelFlush(inst)
   inst._pendingWrites = 0
   inst._pendingResize = null
+  inst._needsFirstPaintRefresh = false
   // Reset the replay guard: the parked instance is live, so any buffered WS
   // output can be written straight into it rather than queued.
   inst._replaying = false
@@ -622,13 +637,36 @@ function writeToTerm(inst: TerminalInstance, data: string, after?: () => void) {
   const finish = () => {
     inst._pendingWrites = Math.max(0, inst._pendingWrites - 1)
     after?.()
-    if (inst._pendingWrites === 0) applyPendingResize(inst)
+    if (inst._pendingWrites === 0) {
+      // First-paint safety net: after the replayed scrollback tail drains,
+      // force a full-viewport repaint from the buffer regardless of whether
+      // a resize is pending. On a single-viewer first open the framing grid
+      // already equals the panel grid, so _pendingResize stays null and
+      // applyPendingResize's own refresh never runs — leaving the black/
+      // partial first frame that only a manual resize clears. Running here
+      // (against a populated buffer) mirrors that manual resize's repaint;
+      // it is cheap and idempotent (a second repaint is a no-op).
+      if (inst._needsFirstPaintRefresh) applyFirstPaintRefresh(inst)
+      applyPendingResize(inst)
+    }
   }
   try {
     inst.term.write(data, finish)
   } catch {
     finish()
   }
+}
+
+// applyFirstPaintRefresh forces a full-viewport repaint from the buffer. This
+// mirrors what a manual resize does at the xterm.js renderer level (the
+// ResizeObserver fires and repaints the viewport), which is the only thing that
+// clears the black/partial first frame on a single-viewer first open: on that
+// path the framing grid already equals the panel grid, so _pendingResize stays
+// null and applyPendingResize's own refresh never runs. Cheap and idempotent.
+function applyFirstPaintRefresh(inst: TerminalInstance) {
+  inst._needsFirstPaintRefresh = false
+  if (inst._detached || inst._parked) return
+  try { inst.term.refresh(0, inst.term.rows - 1) } catch { /* ignore if not attached */ }
 }
 
 // applyPendingResize applies the most recent resize request that was
@@ -814,6 +852,18 @@ function connectWs(inst: TerminalInstance, backendId: string, noScrollback = fal
         if (hadReplay && inst._pendingResize && inst._pendingWrites === 0) {
           applyPendingResize(inst)
         }
+        // First-paint safety net: after the replay drains, force a full
+        // viewport repaint. When the framing grid equals the panel grid
+        // (single-viewer first open) _pendingResize stays null, so the
+        // refresh is deferred to writeToTerm's finish via the flag; when no
+        // write was queued at all, run it directly here.
+        if (hadReplay && !inst._detached && !inst._parked) {
+          if (inst._pendingWrites === 0) {
+            applyFirstPaintRefresh(inst)
+          } else {
+            inst._needsFirstPaintRefresh = true
+          }
+        }
       } else if (msg.type === 'resize') {
         const cols = Number(msg.cols)
         const rows = Number(msg.rows)
@@ -948,6 +998,7 @@ export async function attachTerminal(
       existing._released = false
       existing._pendingWrites = 0
       existing._pendingResize = null
+      existing._needsFirstPaintRefresh = false
       // Wait for the container to have real dimensions, then move the live
       // element back in. The term was already opened on first attach; it does
       // not need term.open() again.
@@ -993,6 +1044,7 @@ export async function attachTerminal(
     existing._detached = false
     existing._pendingWrites = 0
     existing._pendingResize = null
+    existing._needsFirstPaintRefresh = false
     // A previous releaseTerminal call (mobile tab switch) set this flag to
     // suppress auto-reconnect. We're now explicitly re-attaching, so clear
     // it so a future socket drop reconnects normally.
@@ -1081,7 +1133,7 @@ export async function attachTerminal(
   term.open(el)
   fit.fit()
 
-  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _modes: new Map(), userScrolling: false, _detached: false, _parked: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
+  const inst: TerminalInstance = { leafId, term, fit, ws: null, backendId: '', buffer: new RingBuffer<string>(), exited: false, _replaying: false, _pendingQueue: [], _pendingOutput: [], _rafId: 0, _pendingWrites: 0, _pendingResize: null, _needsFirstPaintRefresh: false, _modes: new Map(), userScrolling: false, _detached: false, _parked: false, _padCols: 0, _padRows: 0, _altScreen: false, _focused: false, _released: false, _reconnectAttempts: 0 }
   registry.set(leafId, inst)
   wireInput(inst)
 
