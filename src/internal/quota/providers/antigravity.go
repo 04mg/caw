@@ -100,8 +100,8 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	// pane is never touched.
 	defer closeBgAgy(spawned)
 
-	// Wait up to 3 minutes for the background agy to bind a port
-	for i := 0; i < 360; i++ {
+	// Wait up to 15s for the background agy to bind a port
+	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
 		pids, err := findAgyPids()
 		if err == nil && len(pids) > 0 {
