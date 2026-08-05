@@ -318,7 +318,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl gap-4">
         {step === 1 ? (
           <>
             <DialogHeader>
