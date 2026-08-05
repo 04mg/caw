@@ -2,10 +2,18 @@ package quota
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/04mg/caw/internal/httpx"
 	"github.com/04mg/caw/internal/state"
 )
+
+// perProviderTimeout bounds how long a single quota provider may block the
+// /quotas response. A slow or hung provider (e.g. antigravity spawning an
+// agy instance that never binds a port) returns an error instead of
+// stalling the entire API call.
+const perProviderTimeout = 30 * time.Second
 
 type Service struct {
 	store *state.Store
@@ -22,6 +30,14 @@ func (s *Service) Quotas() (map[string]ProviderResponse, error) {
 	}
 
 	res := make(map[string]ProviderResponse)
+	type result struct {
+		name string
+		resp ProviderResponse
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan result, len(registry))
+
 	for name, provider := range registry {
 		if checker, ok := provider.(interface{ IsInstalled() bool }); ok {
 			if !checker.IsInstalled() {
@@ -38,12 +54,31 @@ func (s *Service) Quotas() (map[string]ProviderResponse, error) {
 			}
 		}
 
-		data, err := provider.GetQuotas(config)
-		if err != nil {
-			res[name] = ProviderResponse{Error: err.Error()}
-		} else {
-			res[name] = ProviderResponse{Data: data}
-		}
+		wg.Add(1)
+		go func(name string, provider QuotaProvider, config map[string]string) {
+			defer wg.Done()
+			done := make(chan struct{})
+			go func() {
+				data, err := provider.GetQuotas(config)
+				if err != nil {
+					results <- result{name, ProviderResponse{Error: err.Error()}}
+				} else {
+					results <- result{name, ProviderResponse{Data: data}}
+				}
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(perProviderTimeout):
+				results <- result{name, ProviderResponse{Error: "provider timed out"}}
+			}
+		}(name, provider, config)
+	}
+
+	wg.Wait()
+	close(results)
+	for r := range results {
+		res[r.name] = r.resp
 	}
 	return res, nil
 }
