@@ -7,6 +7,10 @@ import { WorkspacePickerDialog } from './WorkspacePickerDialog'
 import { WorkspaceEditDialog } from './WorkspaceEditDialog'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { type Workspace } from '@/features/workspaces/types'
+import { collectLeafIds } from '@/features/shared/utils/layout'
+import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
+import { getAgentStatusDot, getStrongestStatus } from '@/features/agents/utils/statusDot'
+import { type AgentStatus } from '@/features/agents/types'
 
 
 const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '🎨', '💡', '📁', '🔧', '📊', '🎮', '🤖', '🛠️', '📦', '🔬', '🎪', '🏗️', '🧩', '🎭', '📡', '🔍', '💎', '🌿', '🍀', '🎵', '📚', '⚙️', '🧪']
@@ -58,6 +62,10 @@ export function WorkspacePanel({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
   const [generalContextMenu, setGeneralContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isMobile, setIsMobile] = useState(getIsMobile)
+
+  // Subscribe to live agent statuses so the per-workspace roll-up status dot
+  // in the sidebar stays in sync with the tab-panes dots.
+  const statuses = useAgentStatuses()
 
   useEffect(() => {
     const onResize = () => setIsMobile(getIsMobile())
@@ -287,6 +295,18 @@ export function WorkspacePanel({
               const label = ws.name || ws.path || 'Workspace'
               const isDragging = dragIndex === i
               const isDragOver = dragOverIndex === i && dragIndex !== null && dragIndex !== i
+              // Aggregate the strongest agent status across all panes in this
+              // workspace (leaf ids = session ids). Used for the roll-up dot.
+              const wsStatuses: AgentStatus[] = []
+              for (const tab of ws.layouts) {
+                for (const leafId of collectLeafIds(tab.layout)) {
+                  const s = statuses[leafId]
+                  if (s) wsStatuses.push(s)
+                }
+              }
+              const strongest = getStrongestStatus(wsStatuses)
+              const hasAnyAgent = wsStatuses.length > 0
+              const dotColors = strongest ? getAgentStatusDot(strongest) : null
               return (
                 <div
                   key={ws.id}
@@ -300,7 +320,7 @@ export function WorkspacePanel({
                   onPointerDown={(e) => onPointerDown(e, i)}
                   onPointerMove={(e) => onPointerMove(e, i)}
                   onPointerUp={(e) => onPointerUp(e)}
-                  className={`group flex items-center gap-1.5 px-2 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
+                  className={`group flex items-center gap-1.5 pl-2 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
                     i === 0 ? 'border-t-0' : ''
                   } ${isDragOver ? 'border-t-2 border-t-primary' : ''} ${
                     isActive ? 'bg-accent/70 text-accent-foreground' : 'hover:bg-accent/40 text-muted-foreground'
@@ -314,11 +334,36 @@ export function WorkspacePanel({
                 >
                   <span className="text-base leading-none shrink-0">{ws.emoji || commonEmojis[i % commonEmojis.length]}</span>
                   <span className="truncate flex-1" title={ws.path}>{label}</span>
-                  <div className={`transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                    <WorkspaceMenu
-                      onDelete={() => onDeleteWorkspace(ws.id)}
-                      onEdit={() => setEditTarget(ws)}
-                    />
+                  {/* Status dot + three-dots share the exact same 20x20 slot.
+                      On hover the dot fades out and the kebab fades in, both
+                      pinned to the right edge so they stay aligned with the
+                      "Add workspace" + button in the header (px-3). */}
+                  <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+                    <span
+                      className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${
+                        isMobile ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
+                      }`}
+                      title={strongest ? strongest.status : undefined}
+                    >
+                      {dotColors ? (
+                        <span className="relative flex" style={{ height: 7, width: 7 }}>
+                          {dotColors.ring && (
+                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotColors.ring} opacity-75`} />
+                          )}
+                          <span className={`relative inline-flex rounded-full ${dotColors.dot}`} style={{ height: 7, width: 7 }} />
+                        </span>
+                      ) : hasAnyAgent ? (
+                        <span className="relative inline-flex rounded-full bg-slate-400" style={{ height: 7, width: 7 }} />
+                      ) : (
+                        <span className="relative inline-flex rounded-full bg-slate-400 opacity-25" style={{ height: 7, width: 7 }} />
+                      )}
+                    </span>
+                    <div className={`absolute inset-0 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                      <WorkspaceMenu
+                        onDelete={() => onDeleteWorkspace(ws.id)}
+                        onEdit={() => setEditTarget(ws)}
+                      />
+                    </div>
                   </div>
                 </div>
               )
