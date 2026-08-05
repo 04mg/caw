@@ -142,10 +142,10 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		await fetchQuotas()
 	}, [fetchSettings, fetchQuotas])
 
-	// Auto poll every 60s
+	// Auto poll every 3 minutes
 	useEffect(() => {
 		refreshAll()
-		const timer = setInterval(fetchQuotas, 60000)
+		const timer = setInterval(fetchQuotas, 180000)
 
 		window.addEventListener('caw:settings-updated', refreshAll)
 
