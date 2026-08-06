@@ -48,6 +48,16 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
   const lastResizeAtRef = useRef<number>(0)
+  // True until the first flushResize that proceeds after attach. The
+  // terminalRegistry replay-end handler forces a full-viewport repaint once
+  // the scrollback replay drains, but on a fresh attach in a new tab —
+  // especially right after a workspace switch — that repaint can land before
+  // the freshly-mounted panel has been rasterized, so the canvas stays
+  // stale/black. flushResize's own short-circuit path (dims already match)
+  // never calls term.refresh, so nothing else re-paints until a real grid
+  // change (manual resize) or a visibility change. Forcing one repaint here
+  // once the layout has settled recovers that wasted early first-paint.
+  const firstPaintRef = useRef(true)
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
   const keyboardOpenRef = useRef(false)
@@ -71,6 +81,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     if (!el) return
     let cancelled = false
     let inst: TerminalInstance | null = null
+    // Each attach gets its own first-paint recovery pass.
+    firstPaintRef.current = true
 
     const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
 
@@ -86,6 +98,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       if (isTerminalReplaying(terminalId)) {
         fitTimerRef.current = setTimeout(flushResize, 100)
         return
+      }
+      // First-paint recovery: the registry's replay-end repaint is one-shot
+      // and can fire before this freshly-mounted panel is rasterized (new
+      // tab / workspace switch), leaving a stale frame that the unchanged-
+      // dims short-circuit below never re-paints. Force one full-viewport
+      // repaint on the first flushResize that proceeds after attach — after
+      // the double-rAF / staggered timers, so the layout has settled and
+      // the repaint hits a live, sized canvas. Idempotent with the
+      // replay-end refresh; a no-op when that refresh already landed.
+      if (firstPaintRef.current) {
+        firstPaintRef.current = false
+        try { inst.term.refresh(0, inst.term.rows - 1) } catch { /* ignore */ }
       }
       // A fresh fit supersedes any resize that was deferred while the
       // terminal was busy replaying; if the backend still wants a different
