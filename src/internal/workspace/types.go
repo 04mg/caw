@@ -35,3 +35,7 @@ type PasteRequest struct {
 	SourcePath string `json:"sourcePath"`
 	TargetDir  string `json:"targetDir"`
 }
+
+type MultiDownloadRequest struct {
+	Paths []string `json:"paths"`
+}
