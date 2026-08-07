@@ -400,6 +400,40 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, statusResponse{Status: "ok"})
 }
 
+func (h *Handler) SearchContent(w http.ResponseWriter, r *http.Request) {
+	var req SearchContentRequest
+	if !httpx.BindRequest(w, r, &req) {
+		return
+	}
+	if req.Query == "" {
+		httpx.RespondJSON(w, SearchContentResponse{Results: []SearchHit{}})
+		return
+	}
+	resp, err := h.svc.SearchContent(req.Root, req.Query, req.Regex, req.CaseSensitive)
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	httpx.RespondJSON(w, resp)
+}
+
+func (h *Handler) ReplaceInFiles(w http.ResponseWriter, r *http.Request) {
+	var req ReplaceRequest
+	if !httpx.BindRequest(w, r, &req) {
+		return
+	}
+	if req.Query == "" {
+		httpx.RespondJSON(w, ReplaceResponse{Files: []string{}})
+		return
+	}
+	resp, err := h.svc.ReplaceInFiles(req)
+	if err != nil {
+		httpx.RespondInternalErr(w, err)
+		return
+	}
+	httpx.RespondJSON(w, resp)
+}
+
 func Register(mux *http.ServeMux) {
 	h := NewHandler(NewService())
 	mux.HandleFunc("GET /workspaces/details", h.OpenDir)
@@ -412,4 +446,6 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /workspaces/files", h.FileRename)
 	mux.HandleFunc("POST /workspaces/files", h.FileCreateDispatch)
 	mux.HandleFunc("POST /workspaces/history", h.History)
+	mux.HandleFunc("POST /workspaces/search", h.SearchContent)
+	mux.HandleFunc("POST /workspaces/replace", h.ReplaceInFiles)
 }

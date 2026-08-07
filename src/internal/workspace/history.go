@@ -10,11 +10,12 @@ import (
 )
 
 type HistoryEntry struct {
-	Type      string `json:"type"`      // "create", "rename", "delete", "paste"
+	Type      string `json:"type"`      // "create", "rename", "delete", "paste", "replace"
 	Path      string `json:"path"`      // Original/Old path
 	DestPath  string `json:"destPath"`  // New path (for rename/paste)
 	TrashPath string `json:"trashPath"` // Location of deleted file/folder in trash
 	IsDir     bool   `json:"isDir"`
+	Files     []ReplaceBackup `json:"files,omitempty"` // Content backups for batch replace
 }
 
 type HistoryManager struct {
@@ -235,6 +236,24 @@ func (h *HistoryManager) Undo() error {
 			redoEntry.TrashPath = trashPath
 			getHub().EmitEvent(entry.DestPath, "file-deleted", entry.IsDir)
 		}
+
+	case "replace":
+		// Batch replace. Undo restores every file's original content.
+		redoEntry.Files = make([]ReplaceBackup, 0, len(entry.Files))
+		for _, b := range entry.Files {
+			cur, readErr := os.ReadFile(b.Path)
+			if readErr != nil {
+				continue
+			}
+			if writeErr := os.WriteFile(b.Path, []byte(b.Old), 0644); writeErr != nil {
+				continue
+			}
+			redoEntry.Files = append(redoEntry.Files, ReplaceBackup{Path: b.Path, Old: b.New, New: string(cur)})
+			getHub().EmitEvent(b.Path, "file-modified", false)
+		}
+		if len(redoEntry.Files) == 0 {
+			err = fmt.Errorf("nothing to undo")
+		}
 	}
 
 	if err != nil {
@@ -307,6 +326,20 @@ func (h *HistoryManager) Redo() error {
 			undoEntry.Path = entry.Path
 			undoEntry.DestPath = entry.DestPath
 			getHub().EmitEvent(entry.DestPath, "file-created", entry.IsDir)
+		}
+
+	case "replace":
+		// Batch replace. Redo re-applies the new content.
+		undoEntry.Files = make([]ReplaceBackup, 0, len(entry.Files))
+		for _, b := range entry.Files {
+			if writeErr := os.WriteFile(b.Path, []byte(b.New), 0644); writeErr != nil {
+				continue
+			}
+			undoEntry.Files = append(undoEntry.Files, b)
+			getHub().EmitEvent(b.Path, "file-modified", false)
+		}
+		if len(undoEntry.Files) == 0 {
+			err = fmt.Errorf("nothing to redo")
 		}
 	}
 

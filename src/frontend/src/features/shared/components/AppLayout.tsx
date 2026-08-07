@@ -113,6 +113,8 @@ export function AppLayout() {
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(
     () => localStorage.getItem('caw:folderSidebarCollapsed') !== '0',
   )
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false)
+  const [searchPanelMode, setSearchPanelMode] = useState<'find' | 'replace'>('find')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
@@ -549,6 +551,17 @@ export function AppLayout() {
       localStorage.setItem('caw:folderSidebarCollapsed', next ? '1' : '0')
       return next
     })
+  }, [])
+
+  const openSearch = useCallback((mode: 'find' | 'replace') => {
+    setFolderSidebarCollapsed((v) => {
+      if (v) {
+        localStorage.setItem('caw:folderSidebarCollapsed', '0')
+      }
+      return false
+    })
+    setSearchPanelMode(mode)
+    setSearchPanelOpen(true)
   }, [])
 
   useEffect(() => {
@@ -1224,15 +1237,20 @@ export function AppLayout() {
   )
 
   const openFile = useCallback(
-    (filePath: string, cwd?: string) => {
+    (filePath: string, cwd?: string, line?: number, column?: number) => {
       if (!activeWorkspace) return
       const name = filePath.split(/[\\/]/).pop() || filePath
 
       const existing = activeWorkspace.layouts.find(
         (t) => t.layout.type === 'leaf' && t.layout.filePath === filePath,
       )
-      if (existing) {
+      if (existing && existing.layout.type === 'leaf') {
         switchTab(existing.id)
+        if (line) {
+          window.dispatchEvent(new CustomEvent('caw:reveal-line', {
+            detail: { paneId: existing.layout.id, line, column: column ?? 0 },
+          }))
+        }
         return
       }
 
@@ -1244,6 +1262,8 @@ export function AppLayout() {
           id: crypto.randomUUID(),
           cwd: cwd || activeWorkspace.path || '',
           filePath,
+          revealLine: line,
+          revealColumn: column ?? 0,
         },
       }
 
@@ -1659,6 +1679,8 @@ export function AppLayout() {
       if (agentBoardOpen) closeAgentBoard()
       else setAgentBoardOpen(true)
     },
+    [getHotkey('findInFiles')]: () => openSearch('find'),
+    [getHotkey('replaceInFiles')]: () => openSearch('replace'),
   })
 
   useEffect(() => {
@@ -1686,7 +1708,7 @@ export function AppLayout() {
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
         onOpenDiff={openDiff}
-        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+        onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -1852,8 +1874,8 @@ export function AppLayout() {
               <FolderSidebar
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
-                onOpenFile={(path) => {
-                  openFile(path, currentWorkspacePath)
+                onOpenFile={(path, line, column) => {
+                  openFile(path, currentWorkspacePath, line, column)
                   setExplorerDrawerOpen(false)
                   setMobileView('terminals')
                 }}
@@ -1863,6 +1885,9 @@ export function AppLayout() {
                 onClose={() => setExplorerDrawerOpen(false)}
                 copyToWorktrees={activeWorkspace?.copyToWorktrees}
                 onToggleCopyToWorktree={toggleCopyToWorktree}
+                searchPanelOpen={searchPanelOpen}
+                searchPanelMode={searchPanelMode}
+                onCloseSearchPanel={() => setSearchPanelOpen(false)}
               />
             </div>
           </div>
@@ -1924,7 +1949,10 @@ export function AppLayout() {
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
-                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} onOpenFile={(path) => openFile(path, currentWorkspacePath)} />
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff}                       onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
+                        revealLine={currentActiveLeaf.revealLine}
+                        revealColumn={currentActiveLeaf.revealColumn}
+                    />
                     ) : (
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
@@ -2064,7 +2092,7 @@ export function AppLayout() {
                             onSizesChange={handleSizesChange}
                             onGroupSizesChange={handleGroupSizesChange}
                             onOpenDiff={openDiff}
-                            onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                            onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
                             onOpenSettings={() => setSettingsOpen(true)}
                             onToggleFolderSidebar={toggleFolderSidebar}
                           />
@@ -2147,6 +2175,9 @@ export function AppLayout() {
                       onClose={() => setFolderSidebarCollapsed(true)}
                       copyToWorktrees={activeWorkspace.copyToWorktrees}
                       onToggleCopyToWorktree={toggleCopyToWorktree}
+                      searchPanelOpen={searchPanelOpen}
+                      searchPanelMode={searchPanelMode}
+                      onCloseSearchPanel={() => setSearchPanelOpen(false)}
                     />
                   ) : null}
                 </div>
