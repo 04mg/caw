@@ -30,6 +30,8 @@ export interface LazyFileNodeProps {
   onDropFiles: (e: React.DragEvent, targetDir: string) => void
   onHoverPath?: (path: string) => void
   copyToWorktrees?: string[]
+  selectedPaths?: string[]
+  onSelectClick?: (path: string, e: React.MouseEvent) => void
 }
 
 export function LazyFileNode({
@@ -55,6 +57,8 @@ export function LazyFileNode({
   onDropFiles,
   onHoverPath,
   copyToWorktrees,
+  selectedPaths,
+  onSelectClick,
 }: LazyFileNodeProps) {
   const [expanded, setExpanded] = useState(startExpanded)
   const [loaded, setLoaded] = useState(false)
@@ -184,6 +188,7 @@ export function LazyFileNode({
   const statusXY = gitStatuses[path] || ''
   const isIgnored = !!(gitIgnored && gitIgnored[path])
   const isCopyToWorktree = !!(copyToWorktrees && copyToWorktrees.some((p) => normalizePath(p) === normalizePath(path)))
+  const isSelected = !!(selectedPaths && selectedPaths.some((p) => normalizePath(p) === normalizePath(path)))
 
   // For files, the status comes directly from gitStatuses[path].
   // For folders, derive the effective status from any descendant that has
@@ -251,6 +256,7 @@ export function LazyFileNode({
     <div className="min-w-full">
       <div
         className={`flex items-center ${isDragOver ? 'bg-accent/30 ring-1 ring-primary rounded-sm' : ''}`}
+        data-path={path}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => onHoverPath?.(path)}
         draggable
@@ -264,14 +270,16 @@ export function LazyFileNode({
         onDrop={(e) => { if (isDir) onDropFiles(e, path) }}
       >
         <button
-          onClick={() => {
+          onClick={(e) => {
+            onSelectClick?.(path, e)
+            if (e.ctrlKey || e.metaKey || e.shiftKey) return
             if (isDir) {
               toggle()
             } else {
               onOpenFile(path)
             }
           }}
-          className={`group flex w-full items-center gap-1.5 px-2.5 py-1 text-xs hover:bg-accent/40 text-left select-none border-b border-transparent hover:border-accent/10 transition-colors ${textClass} ${isDragOver ? 'bg-accent/20' : ''}`}
+          className={`group flex w-full items-center gap-1.5 px-2.5 py-1 text-xs hover:bg-accent/40 text-left select-none border-b border-transparent hover:border-accent/10 transition-colors ${textClass} ${isDragOver ? 'bg-accent/20' : ''} ${isSelected ? 'bg-primary/15' : ''}`}
           style={{ paddingLeft: `${depth * 12 + 10}px` }}
         >
           {isDir ? (
@@ -359,6 +367,8 @@ export function LazyFileNode({
               onDropFiles={onDropFiles}
               onHoverPath={onHoverPath}
               copyToWorktrees={copyToWorktrees}
+              selectedPaths={selectedPaths}
+              onSelectClick={onSelectClick}
             />
           ))}
 

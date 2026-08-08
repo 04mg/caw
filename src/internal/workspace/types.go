@@ -36,6 +36,10 @@ type PasteRequest struct {
 	TargetDir  string `json:"targetDir"`
 }
 
+type MultiDownloadRequest struct {
+	Paths []string `json:"paths"`
+}
+
 type SearchHit struct {
 	Path    string `json:"path"`
 	Line    int    `json:"line"`   // 1-based
