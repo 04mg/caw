@@ -481,14 +481,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   // flag is cleared (auto-follow resumes) only when the user scrolls back
   // down to the bottom or sends input (see wireInput in terminalRegistry).
   // We only observe the wheel event (passive, no preventDefault): xterm.js
-  // v6's own handler on .xterm-scrollable-element / .xterm-viewport does the
-  // actual scrolling, and safeScrollToBottom already respects userScrolling.
+  // v6's own handler on .xterm-scrollable-element does the actual scrolling,
+  // and safeScrollToBottom already respects userScrolling.
+  //
+  // The at-bottom check uses xterm's buffer API (ydisp === ybase) rather than
+  // DOM scroll measurements. In xterm.js v6 the .xterm-scrollable-element is
+  // the real scroller while .xterm-viewport is a legacy element whose
+  // scrollTop/scrollHeight don't reflect the actual scroll position, so
+  // measuring it would always report "at bottom" and prematurely clear the
+  // pin — causing the view to jump to the bottom on the second scroll-up.
   useEffect(() => {
     const el = elRef.current
     if (!el) return
-
-    const getScroller = (): HTMLElement | null =>
-      el.querySelector('.xterm-viewport') || el.querySelector('.xterm-scrollable-element')
 
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
@@ -496,17 +500,19 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         setTerminalUserScrolling(terminalId, true)
         return
       }
-      // Scrolling down: resume auto-follow only once the viewport reaches the
+      // Scrolling down: resume auto-follow only once the buffer reaches the
       // bottom. Defer to the next frame so xterm.js has applied the wheel
-      // delta to the scroller before we measure it.
+      // delta to the buffer before we measure ydisp/ybase.
       requestAnimationFrame(() => {
-        const vp = getScroller()
-        if (!vp) {
+        const inst = getTerminal(terminalId)
+        if (!inst) {
           setTerminalUserScrolling(terminalId, true)
           return
         }
-        const atBottom = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 2
-        if (atBottom) setTerminalUserScrolling(terminalId, false)
+        const buf = inst.term.buffer.active
+        if (buf.viewportY >= buf.baseY) {
+          setTerminalUserScrolling(terminalId, false)
+        }
       })
     }
 
