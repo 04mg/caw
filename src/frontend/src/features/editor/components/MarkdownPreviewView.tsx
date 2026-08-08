@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
@@ -129,6 +129,147 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
     [],
   )
 
+  // Memoize the components map so its renderer function references stay
+  // stable across re-renders. Without this, every parent re-render (e.g. a
+  // git-status refresh when any repo file changes, or a click that focuses
+  // the pane) hands ReactMarkdown brand-new element types, causing it to
+  // unmount/remount the whole subtree — which makes Mermaid diagrams flash
+  // and disappear while their async render restarts.
+  const components = useMemo<Components>(
+    () => ({
+      h1: ({ children }) => (
+        <h1 className="text-2xl font-bold mt-6 mb-4 pb-2 border-b border-border">{children}</h1>
+      ),
+      h2: ({ children }) => (
+        <h2 className="text-xl font-bold mt-5 mb-3 pb-1 border-b border-border/60">{children}</h2>
+      ),
+      h3: ({ children }) => (
+        <h3 className="text-lg font-semibold mt-4 mb-2">{children}</h3>
+      ),
+      h4: ({ children }) => (
+        <h4 className="text-base font-semibold mt-3 mb-2">{children}</h4>
+      ),
+      h5: ({ children }) => (
+        <h5 className="text-sm font-semibold mt-3 mb-1.5 opacity-70">{children}</h5>
+      ),
+      h6: ({ children }) => (
+        <h6 className="text-xs font-semibold mt-3 mb-1.5 uppercase tracking-wide opacity-70">{children}</h6>
+      ),
+      p: ({ children, ...props }) => {
+        // Map the deprecated align="center" attribute to text-align so
+        // raw HTML like <p align="center"> renders centered like GitHub.
+        const align = (props as { align?: string }).align
+        return (
+          <p
+            className="my-3"
+            style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}
+          >
+            {children}
+          </p>
+        )
+      },
+      a: ({ children, href, ...rest }) => (
+        <a
+          href={href}
+          target={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? '_blank' : undefined}
+          rel={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? 'noreferrer noopener' : undefined}
+          onClick={(e) => handleLinkClick(e, href)}
+          className="text-blue-500 underline underline-offset-2 hover:opacity-80 cursor-pointer"
+          {...rest}
+        >
+          {children}
+        </a>
+      ),
+      ul: ({ children }) => <ul className="my-3 pl-6 list-disc space-y-1">{children}</ul>,
+      ol: ({ children }) => <ol className="my-3 pl-6 list-decimal space-y-1">{children}</ol>,
+      li: ({ children }) => <li>{children}</li>,
+      blockquote: ({ children }) => (
+        <blockquote className="my-4 pl-4 border-l-4 border-border italic opacity-70">
+          {children}
+        </blockquote>
+      ),
+      hr: () => <hr className="my-6 border-t border-border" />,
+      table: ({ children }) => (
+        <div className="my-4 overflow-x-auto">
+          <table className="min-w-full border-collapse border border-border text-xs">
+            {children}
+          </table>
+        </div>
+      ),
+      thead: ({ children }) => <thead className="bg-muted/40">{children}</thead>,
+      th: ({ children }) => (
+        <th className="border border-border px-3 py-1.5 text-left font-semibold">{children}</th>
+      ),
+      td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
+      pre: ({ children }) => (
+        <pre className="my-4 overflow-x-auto p-3 text-xs font-mono leading-relaxed">
+          {children}
+        </pre>
+      ),
+      code: ({ className, children, ...props }) => {
+        const isMermaid = className?.includes('language-mermaid')
+        if (isMermaid) {
+          const text = String(children).replace(/\n$/, '')
+          return <MermaidBlock code={text} isDark={isDark} />
+        }
+        const isInline = !className
+        if (isInline) {
+          return (
+            <code className="rounded bg-muted/60 px-1.5 py-0.5 text-xs font-mono">
+              {children}
+            </code>
+          )
+        }
+        return <code className={className} {...props}>{children}</code>
+      },
+      img: ({ src, alt, ...props }) => {
+        const finalSrc = typeof src === 'string' ? toInlineUrl(src) : src
+        return (
+          <img
+            src={finalSrc}
+            alt={alt}
+            style={{ display: 'inline', verticalAlign: 'middle' }}
+            {...props}
+          />
+        )
+      },
+      // Raw HTML <img> inside <picture> etc. — same rewriting.
+      source: ({ src, srcSet, ...props }) => (
+        <source
+          src={typeof src === 'string' ? toInlineUrl(src) : src}
+          srcSet={typeof srcSet === 'string' ? srcSet.split(',').map((s) => {
+            const parts = s.trim().split(/\s+/)
+            if (parts[0]) parts[0] = toInlineUrl(parts[0])
+            return parts.join(' ')
+          }).join(', ') : srcSet}
+          {...props}
+        />
+      ),
+      input: ({ checked, ...props }) => {
+        void checked
+        return (
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled
+            className="mr-2 accent-blue-500"
+            {...props}
+          />
+        )
+      },
+      div: ({ children, ...props }) => {
+        const align = (props as { align?: string }).align
+        return (
+          <div style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}>
+            {children}
+          </div>
+        )
+      },
+      section: ({ children }) => <section className="my-2">{children}</section>,
+    }),
+    [isDark, toInlineUrl, handleLinkClick],
+  )
+
   return (
     <div
       className="flex h-full w-full flex-col overflow-hidden"
@@ -155,137 +296,7 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
         <ReactMarkdown
           remarkPlugins={plugins.remarkPlugins}
           rehypePlugins={plugins.rehypePlugins}
-          components={{
-            h1: ({ children }) => (
-              <h1 className="text-2xl font-bold mt-6 mb-4 pb-2 border-b border-border">{children}</h1>
-            ),
-            h2: ({ children }) => (
-              <h2 className="text-xl font-bold mt-5 mb-3 pb-1 border-b border-border/60">{children}</h2>
-            ),
-            h3: ({ children }) => (
-              <h3 className="text-lg font-semibold mt-4 mb-2">{children}</h3>
-            ),
-            h4: ({ children }) => (
-              <h4 className="text-base font-semibold mt-3 mb-2">{children}</h4>
-            ),
-            h5: ({ children }) => (
-              <h5 className="text-sm font-semibold mt-3 mb-1.5 opacity-70">{children}</h5>
-            ),
-            h6: ({ children }) => (
-              <h6 className="text-xs font-semibold mt-3 mb-1.5 uppercase tracking-wide opacity-70">{children}</h6>
-            ),
-            p: ({ children, ...props }) => {
-              // Map the deprecated align="center" attribute to text-align so
-              // raw HTML like <p align="center"> renders centered like GitHub.
-              const align = (props as { align?: string }).align
-              return (
-                <p
-                  className="my-3"
-                  style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}
-                >
-                  {children}
-                </p>
-              )
-            },
-            a: ({ children, href, ...rest }) => (
-              <a
-                href={href}
-                target={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? '_blank' : undefined}
-                rel={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? 'noreferrer noopener' : undefined}
-                onClick={(e) => handleLinkClick(e, href)}
-                className="text-blue-500 underline underline-offset-2 hover:opacity-80 cursor-pointer"
-                {...rest}
-              >
-                {children}
-              </a>
-            ),
-            ul: ({ children }) => <ul className="my-3 pl-6 list-disc space-y-1">{children}</ul>,
-            ol: ({ children }) => <ol className="my-3 pl-6 list-decimal space-y-1">{children}</ol>,
-            li: ({ children }) => <li>{children}</li>,
-            blockquote: ({ children }) => (
-              <blockquote className="my-4 pl-4 border-l-4 border-border italic opacity-70">
-                {children}
-              </blockquote>
-            ),
-            hr: () => <hr className="my-6 border-t border-border" />,
-            table: ({ children }) => (
-              <div className="my-4 overflow-x-auto">
-                <table className="min-w-full border-collapse border border-border text-xs">
-                  {children}
-                </table>
-              </div>
-            ),
-            thead: ({ children }) => <thead className="bg-muted/40">{children}</thead>,
-            th: ({ children }) => (
-              <th className="border border-border px-3 py-1.5 text-left font-semibold">{children}</th>
-            ),
-            td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
-            pre: ({ children }) => (
-              <pre className="my-4 overflow-x-auto p-3 text-xs font-mono leading-relaxed">
-                {children}
-              </pre>
-            ),
-            code: ({ className, children, ...props }) => {
-              const isMermaid = className?.includes('language-mermaid')
-              if (isMermaid) {
-                const text = String(children).replace(/\n$/, '')
-                return <MermaidBlock code={text} isDark={isDark} />
-              }
-              const isInline = !className
-              if (isInline) {
-                return (
-                  <code className="rounded bg-muted/60 px-1.5 py-0.5 text-xs font-mono">
-                    {children}
-                  </code>
-                )
-              }
-              return <code className={className} {...props}>{children}</code>
-            },
-            img: ({ src, alt, ...props }) => {
-              const finalSrc = typeof src === 'string' ? toInlineUrl(src) : src
-              return (
-                <img
-                  src={finalSrc}
-                  alt={alt}
-                  style={{ display: 'inline', verticalAlign: 'middle' }}
-                  {...props}
-                />
-              )
-            },
-            // Raw HTML <img> inside <picture> etc. — same rewriting.
-            source: ({ src, srcSet, ...props }) => (
-              <source
-                src={typeof src === 'string' ? toInlineUrl(src) : src}
-                srcSet={typeof srcSet === 'string' ? srcSet.split(',').map((s) => {
-                  const parts = s.trim().split(/\s+/)
-                  if (parts[0]) parts[0] = toInlineUrl(parts[0])
-                  return parts.join(' ')
-                }).join(', ') : srcSet}
-                {...props}
-              />
-            ),
-            input: ({ checked, ...props }) => {
-              void checked
-              return (
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled
-                  className="mr-2 accent-blue-500"
-                  {...props}
-                />
-              )
-            },
-            div: ({ children, ...props }) => {
-              const align = (props as { align?: string }).align
-              return (
-                <div style={align ? { textAlign: align as 'left' | 'center' | 'right' | 'justify' } : undefined}>
-                  {children}
-                </div>
-              )
-            },
-            section: ({ children }) => <section className="my-2">{children}</section>,
-          }}
+          components={components}
         >
           {content}
         </ReactMarkdown>
