@@ -34,7 +34,7 @@ interface TabGroupTreeProps {
   onSizesChange: (splitId: string, sizes: number[]) => void
   onGroupSizesChange: (splitId: string, sizes: number[]) => void
   onOpenDiff?: (filePath?: string) => void
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string, line?: number, column?: number) => void
   onOpenSettings?: () => void
   onToggleFolderSidebar?: () => void
 }

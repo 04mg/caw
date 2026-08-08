@@ -38,7 +38,7 @@ interface TabGroupViewProps {
   onClosePane: (paneId: string) => void
   onSizesChange: (splitId: string, sizes: number[]) => void
   onOpenDiff?: (filePath?: string) => void
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string, line?: number, column?: number) => void
   onOpenSettings?: () => void
   onToggleFolderSidebar?: () => void
 }

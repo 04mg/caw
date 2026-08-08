@@ -42,6 +42,8 @@ export const DEFAULT_HOTKEYS: Record<string, string> = {
   commandPalette: 'Alt+P',
   commandPaletteCmd: 'Alt+Shift+P',
   toggleKanban: 'Alt+C',
+  findInFiles: 'Alt+Shift+F',
+  replaceInFiles: 'Alt+Shift+H',
 }
 
 export const HOTKEY_LABELS: Record<string, string> = {
@@ -54,6 +56,8 @@ export const HOTKEY_LABELS: Record<string, string> = {
   commandPalette: 'Command palette',
   commandPaletteCmd: 'Command palette (commands)',
   toggleKanban: 'Toggle Command Center',
+  findInFiles: 'Find in files',
+  replaceInFiles: 'Replace in files',
 }
 
 let cache: PrefsState = {
