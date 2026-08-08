@@ -135,10 +135,7 @@ func searchFileContent(absPath, root, q string, opts searchContentOpts, results 
 		return false, nil
 	}
 
-	rel, relErr := filepath.Rel(root, absPath)
-	if relErr != nil {
-		rel = absPath
-	}
+	absPathRel := filepath.ToSlash(absPath)
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), searchMaxLineLen)
@@ -156,7 +153,7 @@ func searchFileContent(absPath, root, q string, opts searchContentOpts, results 
 				continue
 			}
 			*results = append(*results, SearchHit{
-				Path:    filepath.ToSlash(rel),
+				Path:    absPathRel,
 				Line:    lineNo,
 				Column:  loc[0],
 				Preview: trimPreview(line),
@@ -172,7 +169,7 @@ func searchFileContent(absPath, root, q string, opts searchContentOpts, results 
 				continue
 			}
 			*results = append(*results, SearchHit{
-				Path:    filepath.ToSlash(rel),
+				Path:    absPathRel,
 				Line:    lineNo,
 				Column:  idx,
 				Preview: trimPreview(line),
