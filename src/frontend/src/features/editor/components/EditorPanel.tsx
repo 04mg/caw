@@ -206,6 +206,26 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           setEditedContent(text)
           originalContentRef.current = text
           setIsBinaryRuntime(isBinaryContent(text))
+
+          // If a Monaco model already exists for this path (kept alive via
+          // keepCurrentModel), `defaultValue` is ignored on mount. When the
+          // file is NOT dirty (no unsaved user edits), sync the live model to
+          // the on-disk content so reopening a file reflects external changes.
+          // If the file IS dirty, leave the user's edits intact and surface a
+          // disk-conflict prompt instead of silently clobbering their work.
+          const model = getLiveModel()
+          if (model) {
+            const currentValue = model.getValue()
+            if (currentValue !== text) {
+              if (isFileDirty(filePath)) {
+                setDiskConflict(true)
+              } else {
+                const fullRange = model.getFullModelRange()
+                model.applyEdits([{ range: fullRange, text, forceMoveMarkers: true }])
+                try { model.pushStackElement() } catch { /* ignore */ }
+              }
+            }
+          }
         } else {
           const json = await res.json().catch(() => null)
           setError(json?.error?.message ?? `Failed to read file: ${res.statusText}`)
@@ -216,7 +236,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setLoading(false)
     }
-  }, [filePath, isDiff, cwd, forceOpenBinary])
+  }, [filePath, isDiff, cwd, forceOpenBinary, getLiveModel])
 
   useEffect(() => {
     loadFile()
