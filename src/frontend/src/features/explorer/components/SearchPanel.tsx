@@ -75,9 +75,10 @@ export function SearchPanel({ workspacePath, mode, onOpenFile, onRefresh, onClos
           setTruncated(false)
           return
         }
-        const json = (await res.json()) as SearchResponse
-        setResults(json?.results ?? [])
-        setTruncated(!!json?.truncated)
+        const json = (await res.json()) as { data?: SearchResponse } | SearchResponse
+        const payload = (json as { data?: SearchResponse })?.data ?? (json as SearchResponse)
+        setResults(payload?.results ?? [])
+        setTruncated(!!payload?.truncated)
       } catch {
         setResults([])
         setTruncated(false)
@@ -132,11 +133,12 @@ export function SearchPanel({ workspacePath, mode, onOpenFile, onRefresh, onClos
         }),
       })
       if (res.ok) {
-        const json = (await res.json()) as ReplaceResponse
+        const json = (await res.json()) as { data?: ReplaceResponse } | ReplaceResponse
+        const payload = (json as { data?: ReplaceResponse })?.data ?? (json as ReplaceResponse)
         setReplaced(true)
         runSearch(query, regex, caseSensitive)
         onRefresh()
-        if (json?.replacements === 0) {
+        if (payload?.replacements === 0) {
           setTimeout(() => setReplaced(false), 1500)
         } else {
           setTimeout(() => setReplaced(false), 3000)
