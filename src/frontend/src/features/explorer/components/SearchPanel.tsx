@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, X, Regex, CaseSensitive, Replace, ChevronDown, ChevronRight, Loader2, FileText, Check } from 'lucide-react'
+import { X, Regex, CaseSensitive, ChevronDown, ChevronRight, Loader2, FileText, Check } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 import { Highlight } from './SearchHighlight'
@@ -172,8 +172,7 @@ export function SearchPanel({ workspacePath, mode, onOpenFile, onRefresh, onClos
 
   return (
     <div className="flex flex-col shrink-0 border-b border-border bg-muted/10">
-      <div className="flex items-center gap-2 px-2.5 pt-2">
-        <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+      <div className="flex items-center gap-1 px-3 h-[33px] shrink-0">
         <div className="flex items-center gap-1 min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1">
           <input
             ref={findInputRef}
@@ -193,13 +192,10 @@ export function SearchPanel({ workspacePath, mode, onOpenFile, onRefresh, onClos
             />
           )}
         </div>
-      </div>
-
-      <div className="flex items-center gap-0.5 px-2 py-1">
         <Button
           variant="ghost"
           size="icon"
-          className={`h-5 w-5 ${regex ? 'bg-accent text-foreground' : 'text-muted-foreground'}`}
+          className={`h-5 w-5 shrink-0 ${regex ? 'bg-accent text-foreground' : 'text-muted-foreground'}`}
           onClick={() => setRegex((v) => !v)}
           title="Use regular expression"
         >
@@ -208,33 +204,34 @@ export function SearchPanel({ workspacePath, mode, onOpenFile, onRefresh, onClos
         <Button
           variant="ghost"
           size="icon"
-          className={`h-5 w-5 ${caseSensitive ? 'bg-accent text-foreground' : 'text-muted-foreground'}`}
+          className={`h-5 w-5 shrink-0 ${caseSensitive ? 'bg-accent text-foreground' : 'text-muted-foreground'}`}
           onClick={() => setCaseSensitive((v) => !v)}
           title="Match case"
         >
           <CaseSensitive className="h-3 w-3" />
         </Button>
-        <div className="flex-1" />
-        {searchActive && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5 text-muted-foreground hover:text-foreground shrink-0"
+          onClick={onClose}
+          title="Close"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {searchActive && (
+        <div className="flex items-center px-3 pb-1">
           <span className="text-[10px] text-muted-foreground tabular-nums">
             {totalFiles} {totalFiles === 1 ? 'file' : 'files'}, {totalMatches} {totalMatches === 1 ? 'match' : 'matches'}
             {truncated ? ' (truncated)' : ''}
           </span>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-5 w-5 text-muted-foreground hover:text-foreground"
-          onClick={onClose}
-          title="Close"
-        >
-          <X className="h-3 w-3" />
-        </Button>
-      </div>
+        </div>
+      )}
 
       {mode === 'replace' && (
-        <div className="flex items-center gap-2 px-2.5 pb-2">
-          <Replace className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <div className="flex items-center gap-1 px-3 pb-2">
           <div className="flex items-center gap-1 min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1">
             <input
               ref={replaceInputRef}

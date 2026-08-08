@@ -129,6 +129,11 @@ func searchFileContent(absPath, root, q string, opts searchContentOpts, results 
 	if isBinaryFile(f) {
 		return false, nil
 	}
+	// isBinaryFile consumed the first 8 KB of the stream; rewind so the
+	// scanner sees the full file instead of starting partway through.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, nil
+	}
 
 	rel, relErr := filepath.Rel(root, absPath)
 	if relErr != nil {
