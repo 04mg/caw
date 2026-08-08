@@ -1621,15 +1621,20 @@ export function AppLayout() {
     }))
   }, [activeWorkspace, patchWorkspace])
 
-  const toggleCopyToWorktree = useCallback(
-    (path: string) => {
-      if (!activeWorkspace) return
+  const toggleCopyToWorktrees = useCallback(
+    (paths: string[]) => {
+      if (!activeWorkspace || paths.length === 0) return
       patchWorkspace(activeWorkspace.id, (ws) => {
         const current = Array.isArray(ws.copyToWorktrees) ? ws.copyToWorktrees : []
-        const norm = normalizePath(path)
-        const next = current.some((p) => normalizePath(p) === norm)
-          ? current.filter((p) => normalizePath(p) !== norm)
-          : [...current, norm]
+        const normalized = paths.map((p) => normalizePath(p))
+        const allPresent = normalized.every((p) => current.some((c) => normalizePath(c) === p))
+        let next: string[]
+        if (allPresent) {
+          next = current.filter((c) => !normalized.some((p) => normalizePath(c) === p))
+        } else {
+          const toAdd = normalized.filter((p) => !current.some((c) => normalizePath(c) === p))
+          next = [...current, ...toAdd]
+        }
         return { ...ws, copyToWorktrees: next }
       })
     },
@@ -1884,7 +1889,7 @@ export function AppLayout() {
                 onRefresh={fetchGitStatus}
                 onClose={() => setExplorerDrawerOpen(false)}
                 copyToWorktrees={activeWorkspace?.copyToWorktrees}
-                onToggleCopyToWorktree={toggleCopyToWorktree}
+                onToggleCopyToWorktrees={toggleCopyToWorktrees}
                 searchPanelOpen={searchPanelOpen}
                 searchPanelMode={searchPanelMode}
                 onCloseSearchPanel={() => setSearchPanelOpen(false)}
@@ -2174,7 +2179,7 @@ export function AppLayout() {
                       onRefresh={fetchGitStatus}
                       onClose={() => setFolderSidebarCollapsed(true)}
                       copyToWorktrees={activeWorkspace.copyToWorktrees}
-                      onToggleCopyToWorktree={toggleCopyToWorktree}
+                      onToggleCopyToWorktrees={toggleCopyToWorktrees}
                       searchPanelOpen={searchPanelOpen}
                       searchPanelMode={searchPanelMode}
                       onCloseSearchPanel={() => setSearchPanelOpen(false)}
