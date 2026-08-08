@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -133,6 +134,192 @@ func (s *Service) SearchAll(q, root string) ([]FileNode, error) {
 	results := []FileNode{}
 	searchAll(abs, q, &results, 0, 10, 50)
 	return results, nil
+}
+
+// SearchContent searches the text contents of every file under root and
+// returns up to searchMaxResults line matches. Hidden files and directories
+// (.git, dot-prefixed entries) are skipped, as are binary files.
+func (s *Service) SearchContent(root, q string, regex, caseSensitive bool) (*SearchContentResponse, error) {
+	if root == "" {
+		root = "."
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return &SearchContentResponse{Results: []SearchHit{}}, nil
+	}
+	opts := searchContentOpts{regex: regex, caseSensitive: caseSensitive}
+	results := []SearchHit{}
+	truncated := false
+
+	err = filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if name == "." || name == ".." {
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || name == ".git" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		done, serr := searchFileContent(path, abs, q, opts, &results)
+		if serr != nil {
+			return nil
+		}
+		if done {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && !truncated {
+		return nil, err
+	}
+	return &SearchContentResponse{Results: results, Truncated: truncated}, nil
+}
+
+// ReplaceInFiles applies a literal or regex replacement to every matching file
+// under root. Each modified file's original content is captured so the whole
+// batch can be undone with a single history entry.
+func (s *Service) ReplaceInFiles(req ReplaceRequest) (*ReplaceResponse, error) {
+	if req.Root == "" {
+		req.Root = "."
+	}
+	abs, err := filepath.Abs(req.Root)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return &ReplaceResponse{Files: []string{}}, nil
+	}
+
+	var re *regexp.Regexp
+	if req.Regex {
+		pattern := req.Query
+		if !req.CaseSensitive {
+			pattern = "(?i)" + pattern
+		}
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	backups := []ReplaceBackup{}
+	modified := []string{}
+	total := 0
+
+	err = filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if name == "." || name == ".." {
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || name == ".git" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if req.Query == "" {
+			return nil
+		}
+
+		orig, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if info, err := os.Stat(path); err == nil && info.Size() > searchMaxFileSize {
+			return nil
+		}
+		oldContent := string(orig)
+		if isBinaryFile(strings.NewReader(oldContent)) {
+			return nil
+		}
+
+		var replaced string
+		var count int
+		if re != nil {
+			matches := re.FindAllStringIndex(oldContent, -1)
+			if len(matches) == 0 {
+				return nil
+			}
+			count = len(matches)
+			replaced = re.ReplaceAllString(oldContent, req.Replace)
+		} else {
+			if req.CaseSensitive {
+				count = strings.Count(oldContent, req.Query)
+			} else {
+				count = strings.Count(strings.ToLower(oldContent), strings.ToLower(req.Query))
+			}
+			if count == 0 {
+				return nil
+			}
+			replaced = replaceAllFold(oldContent, req.Query, req.Replace)
+		}
+		if replaced == oldContent {
+			return nil
+		}
+		if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
+			return nil
+		}
+
+		backups = append(backups, ReplaceBackup{Path: path, Old: oldContent, New: replaced})
+		modified = append(modified, path)
+		total += count
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if total > 0 {
+		s.history.PushUndo(HistoryEntry{Type: "replace", Path: abs, Files: backups})
+		for _, p := range modified {
+			s.hub.EmitEvent(p, "file-modified", false)
+		}
+	}
+	return &ReplaceResponse{Files: modified, Replacements: total}, nil
+}
+
+// replaceAllFold replaces every case-insensitive occurrence of old in s with
+// repl, substituting the replacement verbatim.
+func replaceAllFold(s, old, repl string) string {
+	if old == "" {
+		return s
+	}
+	lowerS := strings.ToLower(s)
+	lowerOld := strings.ToLower(old)
+	var b strings.Builder
+	start := 0
+	for {
+		idx := strings.Index(lowerS[start:], lowerOld)
+		if idx == -1 {
+			b.WriteString(s[start:])
+			break
+		}
+		absIdx := start + idx
+		b.WriteString(s[start:absIdx])
+		b.WriteString(repl)
+		start = absIdx + len(old)
+	}
+	return b.String()
 }
 
 func (s *Service) ListAll(path string) ([]FileNode, error) {
