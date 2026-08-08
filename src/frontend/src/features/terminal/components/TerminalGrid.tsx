@@ -20,7 +20,7 @@ interface TerminalGridProps {
   onSizesChange: (splitId: string, sizes: number[]) => void
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string, line?: number, column?: number) => void
 }
 
 function childKey(child: LayoutNode): string {
