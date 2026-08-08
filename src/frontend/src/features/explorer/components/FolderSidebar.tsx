@@ -154,9 +154,9 @@ export function FolderSidebar({
     } else if (e.ctrlKey || e.metaKey) {
       toggleSelect(path)
     } else {
-      selectOne(path)
+      clearSelection()
     }
-  }, [selectRange, toggleSelect, selectOne])
+  }, [selectRange, toggleSelect, clearSelection])
 
   const handleDownload = useCallback(async (paths: string[]) => {
     setContextMenu(null)
