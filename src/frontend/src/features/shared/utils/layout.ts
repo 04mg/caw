@@ -1,5 +1,5 @@
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string; revealLine?: number; revealColumn?: number }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -24,6 +24,8 @@ export function normalizeLayout(node: unknown): LayoutNode {
       agentBranch: typeof n.agentBranch === 'string' ? n.agentBranch : undefined,
       baseBranch: typeof n.baseBranch === 'string' ? n.baseBranch : undefined,
       petSlug: typeof n.petSlug === 'string' ? n.petSlug : undefined,
+      revealLine: typeof n.revealLine === 'number' ? n.revealLine : undefined,
+      revealColumn: typeof n.revealColumn === 'number' ? n.revealColumn : undefined,
     }
   }
   if (n.type === 'split') {

@@ -14,10 +14,11 @@ import { SmartContextMenu } from './SmartContextMenu'
 import { DeleteDialog } from './DeleteDialog'
 import { ConflictDialog, type ConflictTarget } from './ConflictDialog'
 import { LazyFileNode } from './LazyFileNode'
+import { SearchPanel, type SearchPanelMode } from './SearchPanel'
 
 interface FolderSidebarProps {
   workspacePath: string
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, line?: number, column?: number) => void
   gitStatuses: Record<string, string>
   gitIgnored?: Record<string, boolean>
   onRefresh: () => void
@@ -26,6 +27,9 @@ interface FolderSidebarProps {
   onClose?: () => void
   copyToWorktrees?: string[]
   onToggleCopyToWorktrees?: (paths: string[]) => void
+  searchPanelOpen?: boolean
+  searchPanelMode?: SearchPanelMode
+  onCloseSearchPanel?: () => void
 }
 
 export function FolderSidebar({
@@ -39,6 +43,9 @@ export function FolderSidebar({
   onClose,
   copyToWorktrees,
   onToggleCopyToWorktrees,
+  searchPanelOpen,
+  searchPanelMode = 'find',
+  onCloseSearchPanel,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
   const isWorktree = !!(mainWorkspacePath && workspacePath && workspacePath !== mainWorkspacePath)
@@ -496,6 +503,16 @@ export function FolderSidebar({
             <PanelRightClose className="h-3.5 w-3.5" />
           </Button>
         </div>
+      )}
+
+      {searchPanelOpen && workspacePath && (
+        <SearchPanel
+          workspacePath={workspacePath}
+          mode={searchPanelMode}
+          onOpenFile={onOpenFile}
+          onRefresh={handleRefresh}
+          onClose={() => onCloseSearchPanel?.()}
+        />
       )}
 
       <ScrollArea
