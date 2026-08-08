@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -84,6 +84,14 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
   // Directory of the markdown file, used to resolve relative links/images.
   const baseDir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : cwd
 
+  // Keep onOpenFile in a ref so handleLinkClick (and therefore the components
+  // memo below) never depend on its identity. A parent that passes an inline
+  // arrow (creating a new function each render) would otherwise invalidate the
+  // components memo on every render, causing ReactMarkdown to unmount/remount
+  // the whole subtree and making Mermaid diagrams flash/disappear.
+  const onOpenFileRef = useRef(onOpenFile)
+  onOpenFileRef.current = onOpenFile
+
   // Build an inline-serving URL for a (possibly relative) src/srcset path.
   const toInlineUrl = useCallback(
     (raw: string): string => {
@@ -111,9 +119,10 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
       // Internal/relative link: open in the editor.
       e.preventDefault()
       const abs = toAbsPath(href)
-      if (onOpenFile) onOpenFile(abs)
+      const fn = onOpenFileRef.current
+      if (fn) fn(abs)
     },
-    [onOpenFile, toAbsPath],
+    [toAbsPath],
   )
 
   const plugins = useMemo(

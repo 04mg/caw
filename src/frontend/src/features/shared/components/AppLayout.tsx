@@ -1284,6 +1284,16 @@ export function AppLayout() {
     [activeWorkspace, patchWorkspace, switchTab],
   )
 
+  // Stable adapter so children (EditorPanel / FolderSidebar) receive a
+  // referentially stable onOpenFile even when currentWorkspacePath changes.
+  // Without this, every AppLayout re-render (e.g. a click focusing a pane, or
+  // a git-status WS refresh) hands MarkdownPreviewView a new onOpenFile,
+  // invalidating its components memo and remounting every Mermaid diagram.
+  const openFileInWorkspace = useCallback(
+    (path: string, line?: number, column?: number) => openFile(path, currentWorkspacePath, line, column),
+    [openFile, currentWorkspacePath],
+  )
+
   const openDiff = useCallback(
     (filePath?: string) => {
       if (!activeWorkspace) return
@@ -1713,7 +1723,7 @@ export function AppLayout() {
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
         onOpenDiff={openDiff}
-        onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
+        onOpenFile={openFileInWorkspace}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -1954,7 +1964,7 @@ export function AppLayout() {
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
-                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff}                       onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff}                       onOpenFile={openFileInWorkspace}
                         revealLine={currentActiveLeaf.revealLine}
                         revealColumn={currentActiveLeaf.revealColumn}
                     />
@@ -2097,7 +2107,7 @@ export function AppLayout() {
                             onSizesChange={handleSizesChange}
                             onGroupSizesChange={handleGroupSizesChange}
                             onOpenDiff={openDiff}
-                            onOpenFile={(path, line, column) => openFile(path, currentWorkspacePath, line, column)}
+                            onOpenFile={openFileInWorkspace}
                             onOpenSettings={() => setSettingsOpen(true)}
                             onToggleFolderSidebar={toggleFolderSidebar}
                           />
@@ -2173,7 +2183,7 @@ export function AppLayout() {
                     <FolderSidebar
                       workspacePath={currentWorkspacePath}
                       mainWorkspacePath={activeWorkspace.path || ''}
-                      onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                      onOpenFile={openFileInWorkspace}
                       gitStatuses={gitStatuses}
                       gitIgnored={gitIgnored}
                       onRefresh={fetchGitStatus}
