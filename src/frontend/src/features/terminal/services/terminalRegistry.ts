@@ -550,6 +550,9 @@ function wireInput(inst: TerminalInstance) {
 
   inst.term.onData((data) => {
     if (inst.ws?.readyState === WebSocket.OPEN) {
+      // The user is typing, so they want to see the result: resume auto-follow
+      // even if they had scrolled up to read older output.
+      inst.userScrolling = false
       let finalData = data
       if (stickyModifiers.ctrl && data.length === 1) {
         const code = data.charCodeAt(0)
