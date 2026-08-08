@@ -476,6 +476,47 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     }
   }, [terminalId])
 
+  // Desktop wheel/trackpad scroll: once the user scrolls up, keep the view
+  // pinned there — incoming output must not yank it back to the bottom. The
+  // flag is cleared (auto-follow resumes) only when the user scrolls back
+  // down to the bottom or sends input (see wireInput in terminalRegistry).
+  // We only observe the wheel event (passive, no preventDefault): xterm.js
+  // v6's own handler on .xterm-scrollable-element / .xterm-viewport does the
+  // actual scrolling, and safeScrollToBottom already respects userScrolling.
+  useEffect(() => {
+    const el = elRef.current
+    if (!el) return
+
+    const getScroller = (): HTMLElement | null =>
+      el.querySelector('.xterm-viewport') || el.querySelector('.xterm-scrollable-element')
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // Scrolling up: pin the view so new output can't push us to the bottom.
+        setTerminalUserScrolling(terminalId, true)
+        return
+      }
+      // Scrolling down: resume auto-follow only once the viewport reaches the
+      // bottom. Defer to the next frame so xterm.js has applied the wheel
+      // delta to the scroller before we measure it.
+      requestAnimationFrame(() => {
+        const vp = getScroller()
+        if (!vp) {
+          setTerminalUserScrolling(terminalId, true)
+          return
+        }
+        const atBottom = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 2
+        if (atBottom) setTerminalUserScrolling(terminalId, false)
+      })
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: true })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      setTerminalUserScrolling(terminalId, false)
+    }
+  }, [terminalId])
+
   useEffect(() => {
     if (!contextMenu) return
     const handleClose = (e: MouseEvent) => {
