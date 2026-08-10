@@ -113,6 +113,8 @@ export function AppLayout() {
   const [folderSidebarCollapsed, setFolderSidebarCollapsed] = useState(
     () => localStorage.getItem('caw:folderSidebarCollapsed') !== '0',
   )
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false)
+  const [searchPanelMode, setSearchPanelMode] = useState<'find' | 'replace'>('find')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
@@ -549,6 +551,17 @@ export function AppLayout() {
       localStorage.setItem('caw:folderSidebarCollapsed', next ? '1' : '0')
       return next
     })
+  }, [])
+
+  const openSearch = useCallback((mode: 'find' | 'replace') => {
+    setFolderSidebarCollapsed((v) => {
+      if (v) {
+        localStorage.setItem('caw:folderSidebarCollapsed', '0')
+      }
+      return false
+    })
+    setSearchPanelMode(mode)
+    setSearchPanelOpen(true)
   }, [])
 
   useEffect(() => {
@@ -1224,15 +1237,20 @@ export function AppLayout() {
   )
 
   const openFile = useCallback(
-    (filePath: string, cwd?: string) => {
+    (filePath: string, cwd?: string, line?: number, column?: number) => {
       if (!activeWorkspace) return
       const name = filePath.split(/[\\/]/).pop() || filePath
 
       const existing = activeWorkspace.layouts.find(
         (t) => t.layout.type === 'leaf' && t.layout.filePath === filePath,
       )
-      if (existing) {
+      if (existing && existing.layout.type === 'leaf') {
         switchTab(existing.id)
+        if (line) {
+          window.dispatchEvent(new CustomEvent('caw:reveal-line', {
+            detail: { paneId: existing.layout.id, line, column: column ?? 0 },
+          }))
+        }
         return
       }
 
@@ -1244,6 +1262,8 @@ export function AppLayout() {
           id: crypto.randomUUID(),
           cwd: cwd || activeWorkspace.path || '',
           filePath,
+          revealLine: line,
+          revealColumn: column ?? 0,
         },
       }
 
@@ -1262,6 +1282,16 @@ export function AppLayout() {
       })
     },
     [activeWorkspace, patchWorkspace, switchTab],
+  )
+
+  // Stable adapter so children (EditorPanel / FolderSidebar) receive a
+  // referentially stable onOpenFile even when currentWorkspacePath changes.
+  // Without this, every AppLayout re-render (e.g. a click focusing a pane, or
+  // a git-status WS refresh) hands MarkdownPreviewView a new onOpenFile,
+  // invalidating its components memo and remounting every Mermaid diagram.
+  const openFileInWorkspace = useCallback(
+    (path: string, line?: number, column?: number) => openFile(path, currentWorkspacePath, line, column),
+    [openFile, currentWorkspacePath],
   )
 
   const openDiff = useCallback(
@@ -1601,15 +1631,20 @@ export function AppLayout() {
     }))
   }, [activeWorkspace, patchWorkspace])
 
-  const toggleCopyToWorktree = useCallback(
-    (path: string) => {
-      if (!activeWorkspace) return
+  const toggleCopyToWorktrees = useCallback(
+    (paths: string[]) => {
+      if (!activeWorkspace || paths.length === 0) return
       patchWorkspace(activeWorkspace.id, (ws) => {
         const current = Array.isArray(ws.copyToWorktrees) ? ws.copyToWorktrees : []
-        const norm = normalizePath(path)
-        const next = current.some((p) => normalizePath(p) === norm)
-          ? current.filter((p) => normalizePath(p) !== norm)
-          : [...current, norm]
+        const normalized = paths.map((p) => normalizePath(p))
+        const allPresent = normalized.every((p) => current.some((c) => normalizePath(c) === p))
+        let next: string[]
+        if (allPresent) {
+          next = current.filter((c) => !normalized.some((p) => normalizePath(c) === p))
+        } else {
+          const toAdd = normalized.filter((p) => !current.some((c) => normalizePath(c) === p))
+          next = [...current, ...toAdd]
+        }
         return { ...ws, copyToWorktrees: next }
       })
     },
@@ -1659,6 +1694,8 @@ export function AppLayout() {
       if (agentBoardOpen) closeAgentBoard()
       else setAgentBoardOpen(true)
     },
+    [getHotkey('findInFiles')]: () => openSearch('find'),
+    [getHotkey('replaceInFiles')]: () => openSearch('replace'),
   })
 
   useEffect(() => {
@@ -1686,7 +1723,7 @@ export function AppLayout() {
         onSizesChange={handleSizesChange}
         gitStatuses={gitStatuses}
         onOpenDiff={openDiff}
-        onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+        onOpenFile={openFileInWorkspace}
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
@@ -1852,8 +1889,8 @@ export function AppLayout() {
               <FolderSidebar
                 workspacePath={currentWorkspacePath}
                 mainWorkspacePath={activeWorkspace?.path || ''}
-                onOpenFile={(path) => {
-                  openFile(path, currentWorkspacePath)
+                onOpenFile={(path, line, column) => {
+                  openFile(path, currentWorkspacePath, line, column)
                   setExplorerDrawerOpen(false)
                   setMobileView('terminals')
                 }}
@@ -1862,7 +1899,10 @@ export function AppLayout() {
                 onRefresh={fetchGitStatus}
                 onClose={() => setExplorerDrawerOpen(false)}
                 copyToWorktrees={activeWorkspace?.copyToWorktrees}
-                onToggleCopyToWorktree={toggleCopyToWorktree}
+                onToggleCopyToWorktrees={toggleCopyToWorktrees}
+                searchPanelOpen={searchPanelOpen}
+                searchPanelMode={searchPanelMode}
+                onCloseSearchPanel={() => setSearchPanelOpen(false)}
               />
             </div>
           </div>
@@ -1924,7 +1964,10 @@ export function AppLayout() {
                 <div className="flex-1 min-h-0 relative">
                   {currentActiveLeaf ? (
                     currentActiveLeaf.filePath || currentActiveLeaf.isDiff ? (
-                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff} onOpenFile={(path) => openFile(path, currentWorkspacePath)} />
+                      <EditorPanel filePath={currentActiveLeaf.filePath} isDiff={currentActiveLeaf.isDiff} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} gitStatuses={gitStatuses} onOpenDiff={openDiff}                       onOpenFile={openFileInWorkspace}
+                        revealLine={currentActiveLeaf.revealLine}
+                        revealColumn={currentActiveLeaf.revealColumn}
+                    />
                     ) : (
                       <TerminalPanel terminalId={currentActiveLeaf.id} cwd={currentActiveLeaf.cwd || activeWorkspace?.path || ''} cmd={currentActiveLeaf.cmd} env={currentActiveLeaf.env} isActive={true} />
                     )
@@ -2064,7 +2107,7 @@ export function AppLayout() {
                             onSizesChange={handleSizesChange}
                             onGroupSizesChange={handleGroupSizesChange}
                             onOpenDiff={openDiff}
-                            onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                            onOpenFile={openFileInWorkspace}
                             onOpenSettings={() => setSettingsOpen(true)}
                             onToggleFolderSidebar={toggleFolderSidebar}
                           />
@@ -2140,13 +2183,16 @@ export function AppLayout() {
                     <FolderSidebar
                       workspacePath={currentWorkspacePath}
                       mainWorkspacePath={activeWorkspace.path || ''}
-                      onOpenFile={(path) => openFile(path, currentWorkspacePath)}
+                      onOpenFile={openFileInWorkspace}
                       gitStatuses={gitStatuses}
                       gitIgnored={gitIgnored}
                       onRefresh={fetchGitStatus}
                       onClose={() => setFolderSidebarCollapsed(true)}
                       copyToWorktrees={activeWorkspace.copyToWorktrees}
-                      onToggleCopyToWorktree={toggleCopyToWorktree}
+                      onToggleCopyToWorktrees={toggleCopyToWorktrees}
+                      searchPanelOpen={searchPanelOpen}
+                      searchPanelMode={searchPanelMode}
+                      onCloseSearchPanel={() => setSearchPanelOpen(false)}
                     />
                   ) : null}
                 </div>

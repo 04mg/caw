@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	ptylib "github.com/aymanbagabas/go-pty"
@@ -61,12 +60,13 @@ type QuotaSummaryResponse struct {
 
 type AntigravityProvider struct{}
 
-// bgAgy holds the state of a persistent background agy PTY instance
-var bgAgy struct {
-	sync.Mutex
-	ptmx   ptylib.Pty
-	pid    int
-	active bool
+// bgAgy holds the state of a background agy PTY instance spawned on demand
+// to query the Antigravity quota. It is closed once the quota has been read
+// so it does not linger in the background consuming resources.
+type bgAgy struct {
+	ptmx ptylib.Pty
+	cmd  *ptylib.Cmd
+	pid  int
 }
 
 func init() {
@@ -85,8 +85,9 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 	}
 
-	// 2. No running agy found — ensure our background instance is started
-	if err := ensureBgAgy(); err != nil {
+	// 2. No running agy found — spawn a temporary background instance for this query
+	spawned, err := ensureBgAgy()
+	if err != nil {
 		// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
 		token := config["apiKey"]
 		if token != "" {
@@ -94,10 +95,14 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 		return nil, fmt.Errorf("agy is not running")
 	}
+	// Close the spawned instance once the quota has been queried so it does
+	// not linger in the background consuming resources. A user-opened agy
+	// pane is never touched.
+	defer closeBgAgy(spawned)
 
 	// Wait up to 15s for the background agy to bind a port
-	for i := 0; i < 75; i++ {
-		time.Sleep(200 * time.Millisecond)
+	for i := 0; i < 30; i++ {
+		time.Sleep(500 * time.Millisecond)
 		pids, err := findAgyPids()
 		if err == nil && len(pids) > 0 {
 			ports, err := findPortsForPids(pids)
@@ -117,38 +122,18 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	return nil, fmt.Errorf("agy is not running")
 }
 
-// ensureBgAgy starts a persistent background agy PTY instance if one isn't already running.
-func ensureBgAgy() error {
-	bgAgy.Lock()
-	defer bgAgy.Unlock()
-
-	// If our background instance is still alive, nothing to do
-	if bgAgy.active && bgAgy.pid > 0 {
-		// Verify the process is still alive
-		pids, err := findAgyPids()
-		if err == nil {
-			for _, pid := range pids {
-				if pid == bgAgy.pid {
-					return nil // still running
-				}
-			}
-		}
-		// Process died — reset state
-		bgAgy.active = false
-		if bgAgy.ptmx != nil {
-			bgAgy.ptmx.Close()
-			bgAgy.ptmx = nil
-		}
-	}
-
+// ensureBgAgy starts a temporary background agy PTY instance to query the
+// Antigravity quota. The returned handle must be closed with closeBgAgy once
+// the quota has been queried.
+func ensureBgAgy() (*bgAgy, error) {
 	agyPath, err := findAgyPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ptmx, err := ptylib.New()
 	if err != nil {
-		return fmt.Errorf("failed to create PTY: %w", err)
+		return nil, fmt.Errorf("failed to create PTY: %w", err)
 	}
 
 	ptyCmd := ptmx.Command(agyPath, "--dangerously-skip-permissions")
@@ -156,12 +141,10 @@ func ensureBgAgy() error {
 
 	if err := ptyCmd.Start(); err != nil {
 		ptmx.Close()
-		return fmt.Errorf("failed to start agy in PTY: %w", err)
+		return nil, fmt.Errorf("failed to start agy in PTY: %w", err)
 	}
 
-	bgAgy.ptmx = ptmx
-	bgAgy.pid = ptyCmd.Process.Pid
-	bgAgy.active = true
+	h := &bgAgy{ptmx: ptmx, cmd: ptyCmd, pid: ptyCmd.Process.Pid}
 
 	// Drain PTY output in background to prevent blocking
 	go func() {
@@ -177,15 +160,22 @@ func ensureBgAgy() error {
 	// Reap the process in background so it doesn't become a zombie
 	go func() {
 		ptyCmd.Wait()
-		bgAgy.Lock()
-		if bgAgy.pid == ptyCmd.Process.Pid {
-			bgAgy.active = false
-			bgAgy.pid = 0
-		}
-		bgAgy.Unlock()
 	}()
 
-	return nil
+	return h, nil
+}
+
+// closeBgAgy kills a background agy instance spawned by ensureBgAgy.
+func closeBgAgy(h *bgAgy) {
+	if h == nil {
+		return
+	}
+	if h.cmd != nil && h.cmd.Process != nil {
+		_ = h.cmd.Process.Kill()
+	}
+	if h.ptmx != nil {
+		_ = h.ptmx.Close()
+	}
 }
 
 func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
@@ -387,7 +377,7 @@ func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 	}
 	client := &http.Client{
 		Transport: tr,
-		Timeout:   2 * time.Second,
+		Timeout:   30 * time.Second,
 	}
 
 	var lastErr error

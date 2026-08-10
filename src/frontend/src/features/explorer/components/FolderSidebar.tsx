@@ -14,10 +14,11 @@ import { SmartContextMenu } from './SmartContextMenu'
 import { DeleteDialog } from './DeleteDialog'
 import { ConflictDialog, type ConflictTarget } from './ConflictDialog'
 import { LazyFileNode } from './LazyFileNode'
+import { SearchPanel, type SearchPanelMode } from './SearchPanel'
 
 interface FolderSidebarProps {
   workspacePath: string
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, line?: number, column?: number) => void
   gitStatuses: Record<string, string>
   gitIgnored?: Record<string, boolean>
   onRefresh: () => void
@@ -25,7 +26,10 @@ interface FolderSidebarProps {
   mainWorkspacePath?: string
   onClose?: () => void
   copyToWorktrees?: string[]
-  onToggleCopyToWorktree?: (path: string) => void
+  onToggleCopyToWorktrees?: (paths: string[]) => void
+  searchPanelOpen?: boolean
+  searchPanelMode?: SearchPanelMode
+  onCloseSearchPanel?: () => void
 }
 
 export function FolderSidebar({
@@ -38,7 +42,10 @@ export function FolderSidebar({
   mainWorkspacePath,
   onClose,
   copyToWorktrees,
-  onToggleCopyToWorktree,
+  onToggleCopyToWorktrees,
+  searchPanelOpen,
+  searchPanelMode = 'find',
+  onCloseSearchPanel,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
   const isWorktree = !!(mainWorkspacePath && workspacePath && workspacePath !== mainWorkspacePath)
@@ -46,14 +53,17 @@ export function FolderSidebar({
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; path: string; name: string; isDir: boolean; isRoot?: boolean
   } | null>(null)
-  const [clipboard, setClipboard] = useState<{ path: string } | null>(null)
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
+  const [anchorPath, setAnchorPath] = useState<string | null>(null)
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const [clipboard, setClipboard] = useState<{ paths: string[] } | null>(null)
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [createTarget, setCreateTarget] = useState<{
     parentPath: string; type: 'file' | 'dir'
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{
-    path: string; name: string; isDir: boolean
+    paths: string[]; name?: string; isDir: boolean
   } | null>(null)
   type ConflictState =
     | { operation: 'rename'; name: string; oldPath: string; newPath: string }
@@ -92,6 +102,118 @@ export function FolderSidebar({
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [hoveredPath, editingPath])
+
+  const clearSelection = useCallback(() => {
+    setSelectedPaths([])
+    setAnchorPath(null)
+  }, [])
+
+  const selectOne = useCallback((path: string) => {
+    setSelectedPaths([path])
+    setAnchorPath(path)
+  }, [])
+
+  const toggleSelect = useCallback((path: string) => {
+    const norm = normalizePath(path)
+    setSelectedPaths((prev) =>
+      prev.some((p) => normalizePath(p) === norm)
+        ? prev.filter((p) => normalizePath(p) !== norm)
+        : [...prev, path],
+    )
+    setAnchorPath(path)
+  }, [])
+
+  const getVisiblePaths = useCallback((): string[] => {
+    const container = sidebarRef.current
+    if (!container) return []
+    const paths: string[] = []
+    container.querySelectorAll('[data-path]').forEach((el) => {
+      const p = el.getAttribute('data-path')
+      if (p) paths.push(p)
+    })
+    return paths
+  }, [])
+
+  const selectRange = useCallback((path: string) => {
+    const visible = getVisiblePaths()
+    const anchor = anchorPath ?? path
+    const anchorIdx = visible.findIndex((p) => normalizePath(p) === normalizePath(anchor))
+    const targetIdx = visible.findIndex((p) => normalizePath(p) === normalizePath(path))
+    if (anchorIdx === -1 || targetIdx === -1) {
+      selectOne(path)
+      return
+    }
+    const start = Math.min(anchorIdx, targetIdx)
+    const end = Math.max(anchorIdx, targetIdx)
+    setSelectedPaths(visible.slice(start, end + 1))
+  }, [anchorPath, getVisiblePaths, selectOne])
+
+  const handleSelectClick = useCallback((path: string, e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      selectRange(path)
+    } else if (e.ctrlKey || e.metaKey) {
+      toggleSelect(path)
+    } else {
+      clearSelection()
+    }
+  }, [selectRange, toggleSelect, clearSelection])
+
+  const handleDownload = useCallback(async (paths: string[]) => {
+    setContextMenu(null)
+    if (paths.length === 1) {
+      const a = document.createElement('a')
+      a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(paths[0])
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      return
+    }
+    try {
+      const res = await fetch('/api/workspaces/files/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths }),
+      })
+      if (res.ok) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'selection.zip'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const getActionPaths = useCallback(
+    (path: string): string[] => {
+      const isInSelection = selectedPaths.some((p) => normalizePath(p) === normalizePath(path))
+      const raw = isInSelection ? selectedPaths : [path]
+      const filtered = raw.filter((p) => normalizePath(p) !== normalizePath(workspacePath))
+      return filtered.length > 0 ? filtered : raw
+    },
+    [selectedPaths, workspacePath],
+  )
+
+  useEffect(() => {
+    clearSelection()
+  }, [workspacePath, clearSelection])
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-path]')) return
+      if (contextMenuRef.current && contextMenuRef.current.contains(target)) return
+      if (target.closest('.explorer-sidebar')) {
+        clearSelection()
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [clearSelection])
 
   const triggerRefresh = useCallback(() => {
     setRefreshCounter((c) => c + 1)
@@ -178,47 +300,50 @@ export function FolderSidebar({
     setDeleteTarget(null)
     setBusy(true)
     try {
-      await fetch('/api/workspaces/files', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: target.path }),
-      })
+      await Promise.all(target.paths.map((path) =>
+        fetch('/api/workspaces/files', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        }),
+      ))
     } catch { /* ignore */ }
+    clearSelection()
     triggerRefresh()
     onRefresh()
     setBusy(false)
-  }, [deleteTarget, triggerRefresh, onRefresh])
+  }, [deleteTarget, clearSelection, triggerRefresh, onRefresh])
 
-  const handleCopy = useCallback((path: string) => {
-    setClipboard({ path })
+  const handleCopy = useCallback((paths: string[]) => {
+    setClipboard({ paths })
     setContextMenu(null)
   }, [])
 
   const handlePaste = useCallback(async (targetDir: string) => {
-    const src = clipboard?.path
-    if (!src) return
+    const srcs = clipboard?.paths
+    if (!srcs || srcs.length === 0) return
     setContextMenu(null)
-
-    const sep = src.includes('\\') ? '\\' : '/'
-    const srcName = src.substring(src.lastIndexOf(sep) + 1)
-    const destPath = targetDir + sep + srcName
 
     setBusy(true)
     try {
-      const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(destPath)}`)
-      if (checkRes.ok) {
-        setConflictState({ operation: 'paste', name: srcName, sourcePath: src, targetDir })
-        setBusy(false)
-        return
-      }
-    } catch { /* ignore */ }
+      for (const src of srcs) {
+        const sep = src.includes('\\') ? '\\' : '/'
+        const srcName = src.substring(src.lastIndexOf(sep) + 1)
+        const destPath = targetDir + sep + srcName
 
-    try {
-      await fetch('/api/workspaces/files', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: src, targetDir }),
-      })
+        const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(destPath)}`)
+        if (checkRes.ok) {
+          setConflictState({ operation: 'paste', name: srcName, sourcePath: src, targetDir })
+          setBusy(false)
+          return
+        }
+
+        await fetch('/api/workspaces/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourcePath: src, targetDir }),
+        })
+      }
     } catch { /* ignore */ }
     triggerRefresh()
     onRefresh()
@@ -301,7 +426,11 @@ export function FolderSidebar({
 
   const showContextMenu = useCallback((path: string, name: string, isDir: boolean, x: number, y: number) => {
     setContextMenu({ x, y, path, name, isDir })
-  }, [])
+    if (!selectedPaths.some((p) => normalizePath(p) === normalizePath(path))) {
+      setSelectedPaths([path])
+      setAnchorPath(path)
+    }
+  }, [selectedPaths])
 
   const isCopyToWorktreePath = useCallback(
     (path: string) => {
@@ -312,12 +441,12 @@ export function FolderSidebar({
     [copyToWorktrees],
   )
 
-  const handleToggleCopyToWorktree = useCallback(
-    (path: string) => {
+  const handleToggleCopyToWorktrees = useCallback(
+    (paths: string[]) => {
       setContextMenu(null)
-      onToggleCopyToWorktree?.(path)
+      onToggleCopyToWorktrees?.(paths)
     },
-    [onToggleCopyToWorktree],
+    [onToggleCopyToWorktrees],
   )
 
   // Debounce file tree re-fetch to avoid cascading refreshes
@@ -342,8 +471,13 @@ export function FolderSidebar({
     }
   }, [workspacePath, triggerRefresh, onRefresh])
 
+  const actionPaths = contextMenu ? getActionPaths(contextMenu.path) : []
+  const isMultiAction = actionPaths.length > 1
+  const allCopied = actionPaths.length > 0 && actionPaths.every((p) => isCopyToWorktreePath(p))
+  const copiedCount = actionPaths.filter((p) => isCopyToWorktreePath(p)).length
+
   return (
-    <div className="flex h-full flex-col bg-background select-none explorer-sidebar">
+    <div ref={sidebarRef} className="flex h-full flex-col bg-background select-none explorer-sidebar">
       {!noHeader && (
         <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
           <Button
@@ -369,6 +503,16 @@ export function FolderSidebar({
             <PanelRightClose className="h-3.5 w-3.5" />
           </Button>
         </div>
+      )}
+
+      {searchPanelOpen && workspacePath && (
+        <SearchPanel
+          workspacePath={workspacePath}
+          mode={searchPanelMode}
+          onOpenFile={onOpenFile}
+          onRefresh={handleRefresh}
+          onClose={() => onCloseSearchPanel?.()}
+        />
       )}
 
       <ScrollArea
@@ -423,6 +567,8 @@ export function FolderSidebar({
               onDragLeave={handleDragLeave}
               onDropFiles={handleDrop}
               copyToWorktrees={copyToWorktrees}
+              selectedPaths={selectedPaths}
+              onSelectClick={handleSelectClick}
             />
           ) : (
             <p className="text-xs text-muted-foreground italic text-center mt-4">
@@ -460,7 +606,7 @@ export function FolderSidebar({
               {!contextMenu.isRoot && <div className="border-b border-border my-1 mx-1" />}
             </>
           )}
-          {!contextMenu.isRoot && (
+          {!contextMenu.isRoot && !isMultiAction && (
             <>
               <button
                 onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
@@ -470,28 +616,31 @@ export function FolderSidebar({
                 Rename
               </button>
               <button
-                onClick={(e) => { e.stopPropagation(); handleCopy(contextMenu.path) }}
+                onClick={(e) => { e.stopPropagation(); handleCopy(actionPaths) }}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
               >
                 <Copy className="h-3.5 w-3.5" />
-                Copy
+                Copy{isMultiAction ? ` (${actionPaths.length})` : ''}
               </button>
             </>
           )}
           {!isWorktree && !contextMenu.isRoot && (
             <button
-              onClick={(e) => { e.stopPropagation(); handleToggleCopyToWorktree(contextMenu.path) }}
+              onClick={(e) => { e.stopPropagation(); handleToggleCopyToWorktrees(actionPaths) }}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
             >
-              {isCopyToWorktreePath(contextMenu.path) ? (
+              {allCopied ? (
                 <>
                   <CopyCheck className="h-3.5 w-3.5" />
-                  Stop copying
+                  Stop copying{isMultiAction ? ` (${actionPaths.length})` : ''}
                 </>
               ) : (
                 <>
                   <CopyPlus className="h-3.5 w-3.5" />
                   Copy to worktrees
+                  {isMultiAction
+                    ? ` (${actionPaths.length - copiedCount})`
+                    : (copiedCount > 0 ? ' (mixed)' : '')}
                 </>
               )}
             </button>
@@ -506,21 +655,21 @@ export function FolderSidebar({
             </button>
           )}
           <button
-            onClick={(e) => { e.stopPropagation(); setContextMenu(null); const a = document.createElement('a'); a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(contextMenu.path); a.download = contextMenu.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+            onClick={(e) => { e.stopPropagation(); handleDownload(actionPaths) }}
             className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
           >
             <Download className="h-3.5 w-3.5" />
-            Download
+            Download{isMultiAction ? ` (${actionPaths.length})` : ''}
           </button>
           {!contextMenu.isRoot && (
             <>
               <div className="border-t border-border my-0.5" />
               <button
-                onClick={() => { setContextMenu(null); setDeleteTarget({ path: contextMenu.path, name: contextMenu.name, isDir: contextMenu.isDir }) }}
+                onClick={() => { setContextMenu(null); setDeleteTarget({ paths: actionPaths, name: contextMenu.name, isDir: contextMenu.isDir }) }}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                Delete{isMultiAction ? ` (${actionPaths.length})` : ''}
               </button>
             </>
           )}

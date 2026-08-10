@@ -57,10 +57,12 @@ interface EditorPanelProps {
   onSaveSuccess?: () => void
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
-  onOpenFile?: (filePath: string) => void
+  onOpenFile?: (filePath: string, line?: number, column?: number) => void
+  revealLine?: number
+  revealColumn?: number
 }
 
-export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses, onOpenDiff, onOpenFile }: EditorPanelProps) {
+export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses, onOpenDiff, onOpenFile, revealLine, revealColumn }: EditorPanelProps) {
   const [content, setContent] = useState('')
   const [originalContent, setOriginalContent] = useState('')
   const [editedContent, setEditedContent] = useState('')
@@ -204,6 +206,26 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           setEditedContent(text)
           originalContentRef.current = text
           setIsBinaryRuntime(isBinaryContent(text))
+
+          // If a Monaco model already exists for this path (kept alive via
+          // keepCurrentModel), `defaultValue` is ignored on mount. When the
+          // file is NOT dirty (no unsaved user edits), sync the live model to
+          // the on-disk content so reopening a file reflects external changes.
+          // If the file IS dirty, leave the user's edits intact and surface a
+          // disk-conflict prompt instead of silently clobbering their work.
+          const model = getLiveModel()
+          if (model) {
+            const currentValue = model.getValue()
+            if (currentValue !== text) {
+              if (isFileDirty(filePath)) {
+                setDiskConflict(true)
+              } else {
+                const fullRange = model.getFullModelRange()
+                model.applyEdits([{ range: fullRange, text, forceMoveMarkers: true }])
+                try { model.pushStackElement() } catch { /* ignore */ }
+              }
+            }
+          }
         } else {
           const json = await res.json().catch(() => null)
           setError(json?.error?.message ?? `Failed to read file: ${res.statusText}`)
@@ -214,11 +236,38 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     } finally {
       setLoading(false)
     }
-  }, [filePath, isDiff, cwd, forceOpenBinary])
+  }, [filePath, isDiff, cwd, forceOpenBinary, getLiveModel])
 
   useEffect(() => {
     loadFile()
   }, [loadFile])
+
+  // Reveal a specific line/column when the editor mounts (from "Find in
+  // files") or when another pane requests a jump via the reveal-line event.
+  const revealAt = useCallback((line?: number, column?: number) => {
+    const editor = editorRef.current
+    if (!editor || !line) return
+    try {
+      editor.revealLineInCenter(line)
+      editor.setPosition({ lineNumber: line, column: (column ?? 0) + 1 })
+      editor.focus()
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (filePath && revealLine) revealAt(revealLine, revealColumn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, loading])
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ paneId: string; line: number; column?: number }>).detail
+      if (!detail) return
+      if (detail.line) revealAt(detail.line, detail.column)
+    }
+    window.addEventListener('caw:reveal-line', handler)
+    return () => window.removeEventListener('caw:reveal-line', handler)
+  }, [revealAt])
 
   const silentReload = useCallback(async () => {
     if (!filePath) return

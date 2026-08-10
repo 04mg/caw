@@ -48,6 +48,16 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDimsRef = useRef<string>('')
   const lastResizeAtRef = useRef<number>(0)
+  // True until the first flushResize that proceeds after attach. The
+  // terminalRegistry replay-end handler forces a full-viewport repaint once
+  // the scrollback replay drains, but on a fresh attach in a new tab —
+  // especially right after a workspace switch — that repaint can land before
+  // the freshly-mounted panel has been rasterized, so the canvas stays
+  // stale/black. flushResize's own short-circuit path (dims already match)
+  // never calls term.refresh, so nothing else re-paints until a real grid
+  // change (manual resize) or a visibility change. Forcing one repaint here
+  // once the layout has settled recovers that wasted early first-paint.
+  const firstPaintRef = useRef(true)
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
   const keyboardOpenRef = useRef(false)
@@ -71,6 +81,8 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     if (!el) return
     let cancelled = false
     let inst: TerminalInstance | null = null
+    // Each attach gets its own first-paint recovery pass.
+    firstPaintRef.current = true
 
     const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
 
@@ -86,6 +98,18 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       if (isTerminalReplaying(terminalId)) {
         fitTimerRef.current = setTimeout(flushResize, 100)
         return
+      }
+      // First-paint recovery: the registry's replay-end repaint is one-shot
+      // and can fire before this freshly-mounted panel is rasterized (new
+      // tab / workspace switch), leaving a stale frame that the unchanged-
+      // dims short-circuit below never re-paints. Force one full-viewport
+      // repaint on the first flushResize that proceeds after attach — after
+      // the double-rAF / staggered timers, so the layout has settled and
+      // the repaint hits a live, sized canvas. Idempotent with the
+      // replay-end refresh; a no-op when that refresh already landed.
+      if (firstPaintRef.current) {
+        firstPaintRef.current = false
+        try { inst.term.refresh(0, inst.term.rows - 1) } catch { /* ignore */ }
       }
       // A fresh fit supersedes any resize that was deferred while the
       // terminal was busy replaying; if the backend still wants a different
@@ -448,6 +472,53 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       el.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions)
       el.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions)
       el.removeEventListener('touchcancel', onTouchEnd, { capture: true } as EventListenerOptions)
+      setTerminalUserScrolling(terminalId, false)
+    }
+  }, [terminalId])
+
+  // Desktop wheel/trackpad scroll: once the user scrolls up, keep the view
+  // pinned there — incoming output must not yank it back to the bottom. The
+  // flag is cleared (auto-follow resumes) only when the user scrolls back
+  // down to the bottom or sends input (see wireInput in terminalRegistry).
+  // We only observe the wheel event (passive, no preventDefault): xterm.js
+  // v6's own handler on .xterm-scrollable-element does the actual scrolling,
+  // and safeScrollToBottom already respects userScrolling.
+  //
+  // The at-bottom check uses xterm's buffer API (ydisp === ybase) rather than
+  // DOM scroll measurements. In xterm.js v6 the .xterm-scrollable-element is
+  // the real scroller while .xterm-viewport is a legacy element whose
+  // scrollTop/scrollHeight don't reflect the actual scroll position, so
+  // measuring it would always report "at bottom" and prematurely clear the
+  // pin — causing the view to jump to the bottom on the second scroll-up.
+  useEffect(() => {
+    const el = elRef.current
+    if (!el) return
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // Scrolling up: pin the view so new output can't push us to the bottom.
+        setTerminalUserScrolling(terminalId, true)
+        return
+      }
+      // Scrolling down: resume auto-follow only once the buffer reaches the
+      // bottom. Defer to the next frame so xterm.js has applied the wheel
+      // delta to the buffer before we measure ydisp/ybase.
+      requestAnimationFrame(() => {
+        const inst = getTerminal(terminalId)
+        if (!inst) {
+          setTerminalUserScrolling(terminalId, true)
+          return
+        }
+        const buf = inst.term.buffer.active
+        if (buf.viewportY >= buf.baseY) {
+          setTerminalUserScrolling(terminalId, false)
+        }
+      })
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: true })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
       setTerminalUserScrolling(terminalId, false)
     }
   }, [terminalId])

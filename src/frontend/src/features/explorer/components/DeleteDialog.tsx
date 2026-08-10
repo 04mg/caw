@@ -2,8 +2,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/button'
 
 
+export type DeleteDialogTarget =
+  | { paths: string[]; name?: string; isDir: boolean }
+  | { path: string; name: string; isDir: boolean }
+
 interface DeleteDialogProps {
-  target: { path: string; name: string; isDir: boolean } | null
+  target: DeleteDialogTarget | null
   onConfirm: () => void
   onCancel: () => void
 }
@@ -13,14 +17,30 @@ export function DeleteDialog({
   onConfirm,
   onCancel,
 }: DeleteDialogProps) {
+  const paths = target ? ('paths' in target ? target.paths : [target.path]) : []
+  const count = paths.length
+  const isMulti = count > 1
+  const name = target ? ('name' in target ? target.name : undefined) : undefined
+  const isDir = target?.isDir ?? false
   return (
     <Dialog open={!!target} onOpenChange={(open) => { if (!open) onCancel() }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Delete {target?.isDir ? 'Folder' : 'File'}</DialogTitle>
+          <DialogTitle>
+            {isMulti ? `Delete ${count} items` : `Delete ${isDir ? 'Folder' : 'File'}`}
+          </DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete <span className="font-medium text-foreground">{target?.name}</span>?
-            {target?.isDir && <span className="block mt-1">All contents inside will be permanently removed.</span>}
+            {isMulti ? (
+              <>
+                Are you sure you want to delete the {count} selected items?
+                <span className="block mt-1">Folders and all their contents will be permanently removed.</span>
+              </>
+            ) : (
+              <>
+                Are you sure you want to delete <span className="font-medium text-foreground">{name}</span>?
+                {isDir && <span className="block mt-1">All contents inside will be permanently removed.</span>}
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-end gap-2">
