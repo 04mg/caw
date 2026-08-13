@@ -34,12 +34,15 @@ const finishedDebounce = 3 * time.Second
 
 // agentDisplayName maps internal agent IDs to human-readable names for push notifications.
 var agentDisplayName = map[string]string{
-	"claude":   "Claude",
-	"codex":    "Codex",
-	"copilot":  "Copilot",
-	"agy":      "Antigravity",
-	"opencode": "OpenCode",
-	"pi":       "Pi",
+	"claude":      "Claude",
+	"codex":       "Codex",
+	"copilot":     "Copilot",
+	"agy":         "Antigravity",
+	"opencode":    "OpenCode",
+	"pi":          "Pi",
+	"omp":         "Oh My Pi",
+	"hermes":      "Hermes",
+	"commandcode": "Command Code",
 }
 
 func agentName(agentID string) string {

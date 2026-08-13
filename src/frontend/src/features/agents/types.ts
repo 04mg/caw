@@ -25,7 +25,7 @@ export interface AgentStatus {
 }
 
 export interface AgentStatusEvent {
-  event: 'agent_started' | 'agent_stopped' | 'agent_status' | 'agent_crashed'
+  event: 'agent_started' | 'agent_stopped' | 'agent_status' | 'agent_crashed' | 'agent_snapshot'
   sessionId: string
   agentId: string
   cwd?: string
@@ -40,6 +40,8 @@ export interface AgentStatusEvent {
   exitCode?: number
   exitReason?: string
   lastColumn?: string
+  // Full authoritative snapshot, populated for "agent_snapshot" events.
+  sessions?: AgentStatus[]
 }
 
 export interface AgentType {

@@ -200,8 +200,8 @@ func fetchClaudeOAuthUsage(accessToken string) (*ClaudeOAuthUsageResponse, error
 	return &parsed, nil
 }
 
-func clampPercent(v float64) int {
-	n := int(v + 0.5)
+func clampPercent(v float64) float64 {
+	n := float64(int(v + 0.5))
 	if n < 0 {
 		return 0
 	}
