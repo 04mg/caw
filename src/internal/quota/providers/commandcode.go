@@ -75,8 +75,14 @@ func commandCodeResetTime(ms int64) string {
 
 // roundCredits rounds a fractional credit balance to a whole number for the
 // quota UI. Balances like 9.98 are displayed as 10.
-func roundCredits(v float64) int {
-	return int(math.Round(v))
+func roundCredits(v float64) float64 {
+	return math.Round(v)
+}
+
+// roundUsed rounds a fractional used value to two decimal places so small
+// usages like 0.0845681984 are displayed as 0.08 instead of truncating to 0.
+func roundUsed(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
@@ -120,16 +126,16 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 
 	if win := parsed.window("fiveHour"); win != nil {
 		res.FiveHour = quota.Quota{
-			Used:      int(win.Used),
-			Limit:     int(win.Cap),
+			Used:      roundUsed(win.Used),
+			Limit:     win.Cap,
 			Unit:      "count",
 			ResetTime: commandCodeResetTime(win.ResetAt),
 		}
 	}
 	if win := parsed.window("weekly"); win != nil {
 		res.Weekly = quota.Quota{
-			Used:      int(win.Used),
-			Limit:     int(win.Cap),
+			Used:      roundUsed(win.Used),
+			Limit:     win.Cap,
 			Unit:      "count",
 			ResetTime: commandCodeResetTime(win.ResetAt),
 		}

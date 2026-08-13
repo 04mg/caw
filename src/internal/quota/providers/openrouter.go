@@ -54,24 +54,24 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 
 	res := &quota.QuotaResponse{
 		FiveHour: quota.Quota{
-			Used:  int(key.UsageDaily + 0.5),
-			Limit: limit,
+			Used:  float64(int(key.UsageDaily + 0.5)),
+			Limit: float64(limit),
 			Unit:  "credits",
 		},
 		Weekly: quota.Quota{
-			Used:  int(key.UsageWeekly + 0.5),
-			Limit: limit,
+			Used:  float64(int(key.UsageWeekly + 0.5)),
+			Limit: float64(limit),
 			Unit:  "credits",
 		},
 		Monthly: quota.Quota{
-			Used:  int(key.UsageMonthly + 0.5),
-			Limit: limit,
+			Used:  float64(int(key.UsageMonthly + 0.5)),
+			Limit: float64(limit),
 			Unit:  "credits",
 		},
 	}
 
 	// Detailed breakdown as a group, mirroring the Antigravity approach.
-	totalUsed := int(key.Usage + 0.5)
+	totalUsed := float64(int(key.Usage + 0.5))
 	resetTime := ""
 	if key.LimitReset != nil {
 		resetTime = *key.LimitReset
@@ -82,7 +82,7 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 			Name:  "total",
 			Label: "Total Used",
 			Used:  totalUsed,
-			Limit: limit,
+			Limit: float64(limit),
 			Unit:  "credits",
 		},
 	}
