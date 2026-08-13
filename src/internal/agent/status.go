@@ -477,6 +477,8 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		agentID = "omp"
 	case "hermes":
 		agentID = "hermes"
+	case "command-code", "commandcode":
+		agentID = "commandcode"
 	default:
 		return
 	}
