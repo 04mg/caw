@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -80,6 +80,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
+  const [disabledProviders, setDisabledProviders] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
   const [shellPath, setShellPath] = useState('')
   const [parkedLimit, setParkedLimit] = useState(DEFAULT_PARKED_TERMINALS)
@@ -260,6 +261,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
       loadPrefs().then((p) => {
         setDisabledAgents(p.disabledAgents)
+        setDisabledProviders(p.disabledProviders)
         setDefaultNewAgent(p.defaultNewAgent)
         setShellPath(p.defaultShell)
         const v = p.parkedTerminals
@@ -536,6 +538,17 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
     setDisabledAgents(nextDisabled)
     void savePref(() => setPrefDisabledAgents(nextDisabled))
+  }
+
+  const toggleProvider = (providerId: string) => {
+    let nextDisabled: string[]
+    if (disabledProviders.includes(providerId)) {
+      nextDisabled = disabledProviders.filter((id) => id !== providerId)
+    } else {
+      nextDisabled = [...disabledProviders, providerId]
+    }
+    setDisabledProviders(nextDisabled)
+    void savePref(() => setPrefDisabledProviders(nextDisabled))
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -1357,7 +1370,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   { id: 'opencode', label: 'OpenCode Go', icon: OpenCode, show: true },
                   { id: 'ollama', label: 'Ollama', icon: Ollama, show: true },
                   { id: 'openrouter', label: 'OpenRouter', icon: OpenRouter, show: true },
-                ].filter(p => p.show).map((prov) => {
+                ].filter(p => p.show && !disabledProviders.includes(p.id)).map((prov) => {
                   const Icon = prov.icon
                   return (
                     <SettingsItem
@@ -1400,6 +1413,28 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   Error: {quotas[selectedLimitProvider].error}
                 </div>
               )}
+
+              <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enable Provider</label>
+                    <p className="text-[10px] text-muted-foreground">Show in status bar and limits viewer.</p>
+                  </div>
+                  <button
+                    onClick={() => toggleProvider(selectedLimitProvider)}
+                    data-testid={`provider-toggle-${selectedLimitProvider}`}
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer outline-none focus:ring-1 focus:ring-ring ${
+                      !disabledProviders.includes(selectedLimitProvider) ? 'bg-primary' : 'bg-muted-foreground/30'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                        !disabledProviders.includes(selectedLimitProvider) ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
 
               <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
