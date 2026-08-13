@@ -84,6 +84,21 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	var sessionTitle string
 	var lastActivity time.Time
 	var silentTicks int
+	// lastReportedStatus tracks the status most recently sent to the UI so
+	// the PTY-interrupt pass (below) can tell whether the turn is working.
+	var lastReportedStatus string
+	// PTY-interrupt detection. Command Code never persists an interrupted
+	// turn (an in-flight turn is dropped from the transcript), so
+	// transcript-only detection leaves the card showing the stale working
+	// state after a Ctrl+C. We therefore also watch for the interrupt byte
+	// the user sends into the Command Code PTY and report "interrupted"
+	// immediately while the turn is working. interruptApplied stays sticky
+	// until a genuinely NEW user prompt lands past interruptBoundarySize,
+	// because the transcript may keep showing the pre-interrupt working
+	// state until the next prompt is written.
+	var lastInterruptSeen time.Time
+	var interruptApplied bool
+	var interruptBoundarySize int64
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -114,10 +129,20 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		if info.Size() <= lastFileSize {
 			return false
 		}
+		// A new user prompt past the interrupt boundary clears the sticky
+		// interrupt: the user has started a new turn. Checked before parse so
+		// a fresh prompt resets the interrupted state.
+		if interruptApplied && hasNewCommandCodeUserPrompt(watchedFilePath, interruptBoundarySize) {
+			interruptApplied = false
+		}
 		wrappedCallback := func(status, tool, details, title string) {
 			if title != "" {
 				sessionTitle = title
 			}
+			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
+				status = "interrupted"
+			}
+			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
 		}
 		w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, wrappedCallback)
@@ -177,6 +202,22 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			if watchedFilePath != "" {
 				if !readWatched() {
 					silentTicks++
+				}
+
+				// PTY-interrupt detection (see the interruptApplied comment
+				// above): a fresh Ctrl+C while the turn is working
+				// immediately flips the card to "interrupted" instead of
+				// waiting for a transcript marker Command Code never writes
+				// for an interrupted turn.
+				last := agent.LastPtyInterrupt(sessionID)
+				if last.After(lastInterruptSeen) {
+					lastInterruptSeen = last
+					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+						interruptApplied = true
+						lastReportedStatus = "interrupted"
+						interruptBoundarySize = lastFileSize
+						callback("interrupted", "", "", sessionTitle)
+					}
 				}
 
 				// Mid-session re-bind for /new and /resume. Gated on PTY
@@ -351,19 +392,6 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 		status = "idle"
 	}
 
-	// Interrupted turns are never persisted: an in-flight turn is simply
-	// dropped from the transcript. If the user hit the interrupt key after
-	// the last committed entry but the transcript still reports working,
-	// surface it as interrupted so the card shows a red dot instead of
-	// staying stuck in Working.
-	if status == "thinking" || status == "executing" || status == "tool_failed" {
-		if lastInterrupt := agent.LastPtyInterrupt(sessionID); !lastInterrupt.IsZero() && time.Since(lastInterrupt) < 10*time.Second {
-			status = "interrupted"
-			tool = ""
-			details = ""
-		}
-	}
-
 	callback(status, tool, details, sessionTitle)
 }
 
@@ -418,4 +446,25 @@ func failedToolName(blocks []commandCodeBlock) string {
 // produced to keep the card Details safe to render.
 func failedToolError(blocks []commandCodeBlock) string {
 	return "tool call failed"
+}
+
+// hasNewCommandCodeUserPrompt reports whether the unread portion of the
+// transcript (bytes after offset) contains a real new user prompt. Used to
+// clear the sticky PTY interrupt once the user starts a new turn. Plain-text
+// user messages count; pure tool_result messages (tool output) do not.
+func hasNewCommandCodeUserPrompt(filePath string, offset int64) bool {
+	lines, err := ReadNewLines(filePath, offset)
+	if err != nil {
+		return false
+	}
+	for _, line := range lines {
+		var e commandCodeEntry
+		if json.Unmarshal([]byte(line), &e) != nil || e.Type != "message" || e.Message == nil || e.Message.Role != "user" {
+			continue
+		}
+		if commandCodeUserText(e.Message.Content) != "" {
+			return true
+		}
+	}
+	return false
 }
