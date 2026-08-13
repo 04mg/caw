@@ -129,10 +129,15 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		if info.Size() <= lastFileSize {
 			return false
 		}
-		// A new user prompt past the interrupt boundary clears the sticky
-		// interrupt: the user has started a new turn. Checked before parse so
-		// a fresh prompt resets the interrupted state.
-		if interruptApplied && hasNewCommandCodeUserPrompt(watchedFilePath, interruptBoundarySize) {
+		// New agent activity past the interrupt boundary clears the sticky
+		// interrupt. Command Code never persists an interrupted turn, so the
+		// transcript stops growing after a real interrupt until the user
+		// starts a new turn; conversely, new assistant work (tool_use/text)
+		// or a fresh plain-text prompt means the agent is running again and
+		// the card must reflect the real state instead of staying stuck on
+		// "interrupted". Checked before parse so the override below does not
+		// re-apply to the resumed turn.
+		if interruptApplied && hasNewCommandCodeWork(watchedFilePath, interruptBoundarySize) {
 			interruptApplied = false
 		}
 		wrappedCallback := func(status, tool, details, title string) {
@@ -448,22 +453,36 @@ func failedToolError(blocks []commandCodeBlock) string {
 	return "tool call failed"
 }
 
-// hasNewCommandCodeUserPrompt reports whether the unread portion of the
-// transcript (bytes after offset) contains a real new user prompt. Used to
-// clear the sticky PTY interrupt once the user starts a new turn. Plain-text
-// user messages count; pure tool_result messages (tool output) do not.
-func hasNewCommandCodeUserPrompt(filePath string, offset int64) bool {
+// hasNewCommandCodeWork reports whether the unread portion of the transcript
+// (bytes after offset) shows the agent resumed work: a fresh plain-text user
+// prompt, or a new assistant message carrying tool_use/text blocks. Used to
+// clear the sticky PTY interrupt. Command Code drops interrupted turns
+// entirely, so any continued assistant work or a new prompt beyond the
+// interrupt boundary means the interrupted state is stale.
+func hasNewCommandCodeWork(filePath string, offset int64) bool {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil {
 		return false
 	}
 	for _, line := range lines {
 		var e commandCodeEntry
-		if json.Unmarshal([]byte(line), &e) != nil || e.Type != "message" || e.Message == nil || e.Message.Role != "user" {
+		if json.Unmarshal([]byte(line), &e) != nil || e.Type != "message" || e.Message == nil {
 			continue
 		}
-		if commandCodeUserText(e.Message.Content) != "" {
-			return true
+		switch e.Message.Role {
+		case "user":
+			if commandCodeUserText(e.Message.Content) != "" {
+				return true
+			}
+		case "assistant":
+			for _, b := range e.Message.Content {
+				if b.Type == "tool_use" && b.Name != "" {
+					return true
+				}
+				if b.Type == "text" && b.Text != "" {
+					return true
+				}
+			}
 		}
 	}
 	return false

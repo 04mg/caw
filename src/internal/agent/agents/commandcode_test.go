@@ -80,20 +80,29 @@ func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testin
 
 	// User presses Ctrl+C → card flips to interrupted immediately, with NO
 	// transcript marker written yet (Command Code never persists interrupted
-	// turns).
+	// turns, so the transcript stops growing until the agent resumes or the
+	// user starts a new turn).
 	agent.SetPtyInterruptForTest(leafID, time.Now())
 	waitFor("interrupted", 8*time.Second)
 
-	// REGRESSION GUARD: more working transcript data (tool_result, still no
-	// new prompt) must not flip the card back to Working.
-	appendLine(`{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
-	appendLine(`{"type":"message","id":"a2","parentId":"u2","timestamp":"2026-08-13T16:41:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash"}]}}`)
-	time.Sleep(6 * time.Second)
+	// REGRESSION GUARD: with no further transcript activity the card must
+	// stay interrupted (a genuine interrupt writes nothing to the transcript).
+	time.Sleep(4 * time.Second)
 	if got := lastStatus(); got != "interrupted" {
-		t.Fatalf("card flipped back to %q after interrupt; want it to stay interrupted (statuses: %v)", got, statuses)
+		t.Fatalf("card drifted from %q to %q with no transcript activity (statuses: %v)", "interrupted", got, statuses)
 	}
 
-	// A genuinely new user prompt clears the sticky interrupt.
+	// REGRESSION GUARD: continued assistant work past the interrupt boundary
+	// means the agent kept running after a soft interrupt (Command Code drops
+	// interrupted turns, so a real interrupt never produces this traffic).
+	// The card must flip back to the real working state, not stay stuck on
+	// "interrupted".
+	appendLine(`{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
+	appendLine(`{"type":"message","id":"a2","parentId":"u2","timestamp":"2026-08-13T16:41:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash"}]}}`)
+	waitFor("executing", 8*time.Second)
+
+	// A genuinely new user prompt also clears the sticky interrupt and lands
+	// the card on thinking.
 	appendLine(`{"type":"message","id":"u3","parentId":"a2","timestamp":"2026-08-13T16:41:06.000Z","message":{"role":"user","content":[{"type":"text","text":"next step"}]}}`)
 	waitFor("thinking", 8*time.Second)
 
