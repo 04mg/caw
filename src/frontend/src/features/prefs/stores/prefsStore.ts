@@ -15,6 +15,7 @@ export interface PetsConfig {
 export interface PrefsState {
   defaultNewAgent: string
   disabledAgents: string[]
+  disabledProviders: string[]
   agentCmds: Record<string, string[]>
   defaultShell: string
   parkedTerminals: number
@@ -63,6 +64,7 @@ export const HOTKEY_LABELS: Record<string, string> = {
 let cache: PrefsState = {
   defaultNewAgent: 'none',
   disabledAgents: [],
+  disabledProviders: [],
   agentCmds: {},
   defaultShell: '',
   parkedTerminals: DEFAULT_PARKED_TERMINALS,
@@ -126,6 +128,10 @@ export function getDisabledAgents(): string[] {
   return cache.disabledAgents
 }
 
+export function getDisabledProviders(): string[] {
+  return cache.disabledProviders
+}
+
 export function getAgentCmdOverrides(): Record<string, string[]> {
   return cache.agentCmds
 }
@@ -184,6 +190,17 @@ export async function toggleAgent(agentId: string): Promise<boolean> {
     ? cache.disabledAgents.filter((id) => id !== agentId)
     : [...cache.disabledAgents, agentId]
   return setDisabledAgents(list)
+}
+
+export async function setDisabledProviders(list: string[]): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, disabledProviders: list })
+}
+
+export async function toggleProvider(providerId: string): Promise<boolean> {
+  const list = cache.disabledProviders.includes(providerId)
+    ? cache.disabledProviders.filter((id) => id !== providerId)
+    : [...cache.disabledProviders, providerId]
+  return setDisabledProviders(list)
 }
 
 export async function setAgentCmdOverride(agentId: string, cmd: string[] | null): Promise<boolean> {
