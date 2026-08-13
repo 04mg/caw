@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -19,26 +20,63 @@ func init() {
 	quota.RegisterProvider("commandcode", &CommandCodeProvider{})
 }
 
-// commandCodeWindow mirrors a single usage window returned by the API.
+// commandCodeWindow mirrors a single usage window returned by the API. All
+// numeric fields are floats (used/cap come back with fractional parts) and
+// resetAt is a UNIX epoch in milliseconds.
 type commandCodeWindow struct {
-	Used     int    `json:"used"`
-	Cap      int    `json:"cap"`
-	ResetAt  string `json:"resetAt"`
-	Exceeded bool   `json:"exceeded"`
+	Used     float64 `json:"used"`
+	Cap      float64 `json:"cap"`
+	ResetAt  int64   `json:"resetAt"`
+	Exceeded bool    `json:"exceeded"`
 }
 
 // commandCodeCredits mirrors the credits payload returned by the API.
 type commandCodeCredits struct {
-	MonthlyCredits         int `json:"monthlyCredits"`
-	PurchasedCredits       int `json:"purchasedCredits"`
-	OpensourceMonthlyCredits int `json:"opensourceMonthlyCredits"`
+	MonthlyCredits           float64 `json:"monthlyCredits"`
+	PurchasedCredits         float64 `json:"purchasedCredits"`
+	OpensourceMonthlyCredits float64 `json:"opensourceMonthlyCredits"`
 }
 
 // commandCodeCreditsResponse mirrors the top-level response of
 // GET /internal/billing/credits.
+//
+// windowLimits values are window objects for active rate-limit windows but
+// may also be a bare boolean (e.g. false) or null for windows the account
+// does not track or that are unlimited, so each value is decoded
+// defensively via json.RawMessage.
 type commandCodeCreditsResponse struct {
-	Credits      commandCodeCredits                     `json:"credits"`
-	WindowLimits map[string]*commandCodeWindow          `json:"windowLimits"`
+	Credits      commandCodeCredits         `json:"credits"`
+	WindowLimits map[string]json.RawMessage `json:"windowLimits"`
+}
+
+func (r *commandCodeCreditsResponse) window(name string) *commandCodeWindow {
+	raw, ok := r.WindowLimits[name]
+	if !ok {
+		return nil
+	}
+	// Skip values that are booleans or nulls rather than window objects.
+	if string(raw) != "null" && string(raw) != "true" && string(raw) != "false" {
+		var win commandCodeWindow
+		if err := json.Unmarshal(raw, &win); err == nil {
+			return &win
+		}
+	}
+	return nil
+}
+
+// commandCodeResetTime converts the API's millisecond epoch to an RFC 3339
+// timestamp, or "" when resetAt is absent or zero.
+func commandCodeResetTime(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
+}
+
+// roundCredits rounds a fractional credit balance to a whole number for the
+// quota UI. Balances like 9.98 are displayed as 10.
+func roundCredits(v float64) int {
+	return int(math.Round(v))
 }
 
 func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
@@ -80,26 +118,30 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 
 	res := &quota.QuotaResponse{}
 
-	if win, ok := parsed.WindowLimits["fiveHour"]; ok && win != nil {
+	if win := parsed.window("fiveHour"); win != nil {
 		res.FiveHour = quota.Quota{
-			Used:      win.Used,
-			Limit:     win.Cap,
+			Used:      int(win.Used),
+			Limit:     int(win.Cap),
 			Unit:      "count",
-			ResetTime: win.ResetAt,
+			ResetTime: commandCodeResetTime(win.ResetAt),
 		}
 	}
-	if win, ok := parsed.WindowLimits["weekly"]; ok && win != nil {
+	if win := parsed.window("weekly"); win != nil {
 		res.Weekly = quota.Quota{
-			Used:      win.Used,
-			Limit:     win.Cap,
+			Used:      int(win.Used),
+			Limit:     int(win.Cap),
 			Unit:      "count",
-			ResetTime: win.ResetAt,
+			ResetTime: commandCodeResetTime(win.ResetAt),
 		}
 	}
 
+	monthly := roundCredits(parsed.Credits.MonthlyCredits)
+	purchased := roundCredits(parsed.Credits.PurchasedCredits)
+	opensource := roundCredits(parsed.Credits.OpensourceMonthlyCredits)
+
 	res.Monthly = quota.Quota{
 		Used:  0,
-		Limit: parsed.Credits.MonthlyCredits,
+		Limit: monthly,
 		Unit:  "credits",
 	}
 
@@ -112,21 +154,21 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 					Name:  "monthly",
 					Label: "Monthly Credits",
 					Used:  0,
-					Limit: parsed.Credits.MonthlyCredits,
+					Limit: monthly,
 					Unit:  "credits",
 				},
 				{
 					Name:  "purchased",
 					Label: "Purchased Credits",
 					Used:  0,
-					Limit: parsed.Credits.PurchasedCredits,
+					Limit: purchased,
 					Unit:  "credits",
 				},
 				{
 					Name:  "opensource",
 					Label: "Open Source Credits",
 					Used:  0,
-					Limit: parsed.Credits.OpensourceMonthlyCredits,
+					Limit: opensource,
 					Unit:  "credits",
 				},
 			},
