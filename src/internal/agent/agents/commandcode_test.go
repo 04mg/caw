@@ -1,68 +1,102 @@
 package agents
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/04mg/caw/internal/agent"
 )
 
-// TestCommandCodeMatchesCwdOnLargeTranscript guards against matchesCwd failing
-// on transcripts that have grown well past 4096 bytes: it must parse only the
-// header line and not the whole 4096-byte prefix, which would otherwise span
-// multiple JSON lines and fail to unmarshal.
-func TestCommandCodeMatchesCwdOnLargeTranscript(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "session.jsonl")
+func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
 
-	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"/root/caw"}`
-	big := make([]byte, 30000)
-	for i := range big {
-		big[i] = 'x'
-	}
-	second := `{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"text","text":"` + string(big) + `"}]}}`
-	content := header + "\n" + second + "\n"
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if fi, err := os.Stat(p); err != nil || fi.Size() < 4096 {
-		t.Fatalf("fixture too small to repro (size=%d err=%v)", fi.Size(), err)
-	}
-
-	head, err := ReadFirstLine(p)
-	if err != nil {
-		t.Fatalf("ReadFirstLine: %v", err)
-	}
-	var h commandCodeHeader
-	if json.Unmarshal([]byte(head), &h) != nil {
-		t.Fatalf("ReadFirstLine returned multi-line content: %q", head)
-	}
-	if h.Type != "session" || h.Cwd != "/root/caw" {
-		t.Fatalf("header parsed wrong: %+v", h)
+	appendLine := func(line string) {
+		t.Helper()
+		f, err := os.OpenFile(transcript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open transcript: %v", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append transcript: %v", err)
+		}
 	}
 
-	// Integration: the watcher must be able to bind to the large file and
-	// produce a status callback (it only binds via matchesCwd-equivalent logic).
-	w := &CommandCodeWatcher{}
-	if !w.matchesTranscriptCwd(p, "/root/caw") {
-		t.Fatal("matchesCwd rejected a large transcript")
-	}
-}
+	const leafID = "cc-int-pty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-// matchesTranscriptCwd mirrors the closure logic in Watch so the header-scan
-// behavior can be exercised without spinning up a full Watch loop.
-func (w *CommandCodeWatcher) matchesTranscriptCwd(path, wantCwd string) bool {
-	if wantCwd == "" {
-		return true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
 	}
-	head, err := ReadFirstLine(path)
-	if err != nil {
-		return false
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
 	}
-	var h commandCodeHeader
-	if json.Unmarshal([]byte(head), &h) != nil {
-		return false
+
+	// Session header with matching cwd so the watcher binds.
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendLine(header)
+	// A prompt + an assistant tool_use → the watcher binds and reports executing.
+	appendLine(`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"read x"}]}}`)
+	appendLine(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read"}]}}`)
+	waitFor("executing", 8*time.Second)
+
+	// User presses Ctrl+C → card flips to interrupted immediately, with NO
+	// transcript marker written yet (Command Code never persists interrupted
+	// turns).
+	agent.SetPtyInterruptForTest(leafID, time.Now())
+	waitFor("interrupted", 8*time.Second)
+
+	// REGRESSION GUARD: more working transcript data (tool_result, still no
+	// new prompt) must not flip the card back to Working.
+	appendLine(`{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
+	appendLine(`{"type":"message","id":"a2","parentId":"u2","timestamp":"2026-08-13T16:41:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash"}]}}`)
+	time.Sleep(6 * time.Second)
+	if got := lastStatus(); got != "interrupted" {
+		t.Fatalf("card flipped back to %q after interrupt; want it to stay interrupted (statuses: %v)", got, statuses)
 	}
-	return h.Type == "session" && h.Cwd == wantCwd
+
+	// A genuinely new user prompt clears the sticky interrupt.
+	appendLine(`{"type":"message","id":"u3","parentId":"a2","timestamp":"2026-08-13T16:41:06.000Z","message":{"role":"user","content":[{"type":"text","text":"next step"}]}}`)
+	waitFor("thinking", 8*time.Second)
+
+	cancel()
+	<-done
 }
