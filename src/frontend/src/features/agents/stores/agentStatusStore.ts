@@ -17,7 +17,24 @@ function ensureMux() {
   unsubMux = wsMux.subscribe('agents', (data) => {
     try {
       const ev = data as AgentStatusEvent
-      if (!ev || !ev.sessionId) return
+      if (!ev) return
+
+      if (ev.event === 'agent_snapshot') {
+        // The backend sends the full authoritative snapshot on (re)subscribe.
+        // Replace the store wholesale so stale cards — sessions the backend
+        // no longer tracks (e.g. after a server restart, where no
+        // agent_stopped fires for them) — are pruned instead of lingering.
+        const next: Record<string, AgentStatus> = {}
+        for (const s of ev.sessions ?? []) {
+          next[s.sessionId] = s
+        }
+        activeStatuses = next
+        hydrated = true
+        notify()
+        return
+      }
+
+      if (!ev.sessionId) return
 
       if (ev.event === 'agent_stopped') {
         // Clean exit or user-dismissed crashed card: remove from the board.

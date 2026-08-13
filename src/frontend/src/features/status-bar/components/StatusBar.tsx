@@ -16,7 +16,7 @@ import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
 interface Quota {
 	used:  number
 	limit: number
-	unit?: string // "" | "percentage" | "credits" | "count" | "info"
+	unit?: string // "" | "percentage" | "credits" | "count" | "currency" | "info"
 	resetTime?: string
 }
 
@@ -66,8 +66,12 @@ const formatQuotaValue = (used: number, limit: number, unit?: string): { text: s
 	if (unit === 'percentage' || !unit) {
 		return { text: `${used}%`, percentage: used }
 	}
-	// credits / count
 	const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
+	if (unit === 'currency') {
+		// Dollar-based quotas (Command Code, OpenRouter): show as "$".
+		return { text: `${used}$ / ${limit}$`, percentage: pct }
+	}
+	// credits / count
 	return { text: `${used}/${limit}`, percentage: pct }
 }
 
