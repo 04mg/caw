@@ -418,6 +418,34 @@ func ReadNewLines(filePath string, fromOffset int64) ([]string, error) {
 	return result, nil
 }
 
+// ReadFirstLine reads the first non-empty line of a file. Unlike ReadFileHead
+// it never truncates mid-line, so callers can json.Unmarshal the result
+// regardless of how large the file is.
+func ReadFirstLine(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	buf := make([]byte, 32*1024)
+	var line []byte
+	for {
+		n, err := f.Read(buf)
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				return strings.TrimSpace(string(line)), nil
+			}
+			line = append(line, buf[i])
+		}
+		if err != nil {
+			if len(line) > 0 {
+				return strings.TrimSpace(string(line)), nil
+			}
+			return "", err
+		}
+	}
+}
+
 // ReadFileHead reads the first maxBytes bytes of a file. Useful for
 // inspecting file headers / metadata without loading the entire file.
 func ReadFileHead(filePath string, maxBytes int64) (string, error) {

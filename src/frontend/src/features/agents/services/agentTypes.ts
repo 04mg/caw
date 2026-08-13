@@ -3,6 +3,7 @@ import { Terminal } from 'lucide-react'
 import { type AgentType } from '../types'
 import { PiIcon } from '../components/PiIcon'
 import { OmpIcon } from '../components/OmpIcon'
+import { CommandCodeIcon } from '../components/CommandCodeIcon'
 
 export const agentTypes: Record<string, AgentType> = {
   terminal: {
@@ -60,5 +61,11 @@ export const agentTypes: Record<string, AgentType> = {
     cmd: ['hermes', '--yolo'],
     env: [['HERMES_TUI_BACKGROUND', '#000000']],
     icon: NousResearch,
+  },
+  commandcode: {
+    id: 'commandcode',
+    label: 'Command Code',
+    cmd: ['command-code', '--yolo'],
+    icon: CommandCodeIcon,
   },
 }

@@ -90,13 +90,13 @@ func (p *OllamaProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 
 	return &quota.QuotaResponse{
 		FiveHour: quota.Quota{
-			Used:      sessionUsed,
+			Used:      float64(sessionUsed),
 			Limit:     100,
 			Unit:      "percentage",
 			ResetTime: sessionReset,
 		},
 		Weekly: quota.Quota{
-			Used:      weeklyUsed,
+			Used:      float64(weeklyUsed),
 			Limit:     100,
 			Unit:      "percentage",
 			ResetTime: weeklyReset,
