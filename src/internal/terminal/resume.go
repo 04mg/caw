@@ -81,6 +81,11 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 			return append(cmd, externalID)
 		}
 		return appendNonFlag(cmd, "--continue")
+	case "command-code", "commandcode":
+		// Command Code: --continue / -c resumes the most recent session in
+		// the current directory. The CLI does not expose an exact-session-id
+		// resume flag for arbitrary external ids, so fall back to it.
+		return appendNonFlag(cmd, "--continue")
 	default:
 		return cmd
 	}
@@ -102,7 +107,7 @@ func agentBaseName(name string) string {
 // don't receive a spurious --continue flag on reopen.
 func isKnownAgent(b string) bool {
 	switch b {
-	case "claude", "codex", "copilot", "agy", "opencode", "pi", "omp", "hermes":
+	case "claude", "codex", "copilot", "agy", "opencode", "pi", "omp", "hermes", "command-code", "commandcode":
 		return true
 	}
 	return false
