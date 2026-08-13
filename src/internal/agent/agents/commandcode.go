@@ -133,7 +133,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		if wantCwd == "" {
 			return true
 		}
-		head, err := ReadFileHead(path, 4096)
+		head, err := ReadFirstLine(path)
 		if err != nil {
 			return false
 		}
