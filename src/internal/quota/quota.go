@@ -1,20 +1,20 @@
 package quota
 
 type Quota struct {
-	Used      int    `json:"used"`
-	Limit     int    `json:"limit"`
-	Unit      string `json:"unit,omitempty"`       // "" | "percentage" | "credits" | "count"
-	ResetTime string `json:"resetTime,omitempty"`  // ISO 8601 timestamp
+	Used      float64 `json:"used"`
+	Limit     float64 `json:"limit"`
+	Unit      string  `json:"unit,omitempty"`      // "" | "percentage" | "credits" | "count"
+	ResetTime string  `json:"resetTime,omitempty"` // ISO 8601 timestamp
 }
 
 type QuotaItem struct {
-	Name        string `json:"name"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Used        int    `json:"used"`
-	Limit       int    `json:"limit"`
-	Unit        string `json:"unit,omitempty"`
-	ResetTime   string `json:"resetTime,omitempty"`
+	Name        string  `json:"name"`
+	Label       string  `json:"label"`
+	Description string  `json:"description"`
+	Used        float64 `json:"used"`
+	Limit       float64 `json:"limit"`
+	Unit        string  `json:"unit,omitempty"`
+	ResetTime   string  `json:"resetTime,omitempty"`
 }
 
 type QuotaGroup struct {

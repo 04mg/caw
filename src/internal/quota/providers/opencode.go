@@ -136,7 +136,7 @@ func (p *OpenCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResp
 	}
 	if rolling != nil {
 		res.FiveHour = quota.Quota{
-			Used:      rolling.usagePercent,
+			Used:      float64(rolling.usagePercent),
 			Limit:     100,
 			Unit:      "percentage",
 			ResetTime: resetTimeFromSec(rolling.resetInSec),
@@ -144,7 +144,7 @@ func (p *OpenCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResp
 	}
 	if weekly != nil {
 		res.Weekly = quota.Quota{
-			Used:      weekly.usagePercent,
+			Used:      float64(weekly.usagePercent),
 			Limit:     100,
 			Unit:      "percentage",
 			ResetTime: resetTimeFromSec(weekly.resetInSec),
@@ -152,7 +152,7 @@ func (p *OpenCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaResp
 	}
 	if monthly != nil {
 		res.Monthly = quota.Quota{
-			Used:      monthly.usagePercent,
+			Used:      float64(monthly.usagePercent),
 			Limit:     100,
 			Unit:      "percentage",
 			ResetTime: resetTimeFromSec(monthly.resetInSec),
