@@ -128,7 +128,7 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		res.FiveHour = quota.Quota{
 			Used:      roundUsed(win.Used),
 			Limit:     win.Cap,
-			Unit:      "count",
+			Unit:      "currency",
 			ResetTime: commandCodeResetTime(win.ResetAt),
 		}
 	}
@@ -136,7 +136,7 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		res.Weekly = quota.Quota{
 			Used:      roundUsed(win.Used),
 			Limit:     win.Cap,
-			Unit:      "count",
+			Unit:      "currency",
 			ResetTime: commandCodeResetTime(win.ResetAt),
 		}
 	}
@@ -148,7 +148,7 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	res.Monthly = quota.Quota{
 		Used:  0,
 		Limit: monthly,
-		Unit:  "credits",
+		Unit:  "currency",
 	}
 
 	res.Groups = []quota.QuotaGroup{
@@ -161,21 +161,21 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 					Label: "Monthly Credits",
 					Used:  0,
 					Limit: monthly,
-					Unit:  "credits",
+					Unit:  "currency",
 				},
 				{
 					Name:  "purchased",
 					Label: "Purchased Credits",
 					Used:  0,
 					Limit: purchased,
-					Unit:  "credits",
+					Unit:  "currency",
 				},
 				{
 					Name:  "opensource",
 					Label: "Open Source Credits",
 					Used:  0,
 					Limit: opensource,
-					Unit:  "credits",
+					Unit:  "currency",
 				},
 			},
 		},

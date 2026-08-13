@@ -56,17 +56,17 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 		FiveHour: quota.Quota{
 			Used:  float64(int(key.UsageDaily + 0.5)),
 			Limit: float64(limit),
-			Unit:  "credits",
+			Unit:  "currency",
 		},
 		Weekly: quota.Quota{
 			Used:  float64(int(key.UsageWeekly + 0.5)),
 			Limit: float64(limit),
-			Unit:  "credits",
+			Unit:  "currency",
 		},
 		Monthly: quota.Quota{
 			Used:  float64(int(key.UsageMonthly + 0.5)),
 			Limit: float64(limit),
-			Unit:  "credits",
+			Unit:  "currency",
 		},
 	}
 
@@ -83,7 +83,7 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 			Label: "Total Used",
 			Used:  totalUsed,
 			Limit: float64(limit),
-			Unit:  "credits",
+			Unit:  "currency",
 		},
 	}
 	if resetTime != "" {
