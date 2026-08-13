@@ -2,10 +2,12 @@ package quota
 
 import (
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/04mg/caw/internal/httpx"
+	"github.com/04mg/caw/internal/prefs"
 	"github.com/04mg/caw/internal/state"
 )
 
@@ -29,6 +31,7 @@ func (s *Service) Quotas() (map[string]ProviderResponse, error) {
 		return nil, err
 	}
 
+	disabled := prefs.GetPrefs(s.store).DisabledProviders
 	res := make(map[string]ProviderResponse)
 	type result struct {
 		name string
@@ -39,6 +42,9 @@ func (s *Service) Quotas() (map[string]ProviderResponse, error) {
 	results := make(chan result, len(registry))
 
 	for name, provider := range registry {
+		if slices.Contains(disabled, name) {
+			continue
+		}
 		if checker, ok := provider.(interface{ IsInstalled() bool }); ok {
 			if !checker.IsInstalled() {
 				continue

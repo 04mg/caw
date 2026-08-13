@@ -11,6 +11,7 @@ import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
+import { getDisabledProviders, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 interface Quota {
 	used:  number
@@ -96,6 +97,7 @@ interface StatusBarProps {
 export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
 	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
+	const [disabledProviders, setDisabledProviders] = useState<string[]>(getDisabledProviders())
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
@@ -155,6 +157,12 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		}
 	}, [refreshAll, fetchQuotas])
 
+	// Keep the disabled-provider list in sync with prefs (this tab and other
+	// devices) so toggling in Settings takes effect immediately.
+	useEffect(() => {
+		return subscribePrefs(() => setDisabledProviders(getDisabledProviders()))
+	}, [])
+
 	// Load / initialize selected view
 	useEffect(() => {
 		const saved = localStorage.getItem('caw:quota:selected_view')
@@ -193,13 +201,13 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		voice.reset()
 	}
 
-	const hasClaude = settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
-	const hasCodex = settings.codex?.installed !== 'false' && !(quotas && quotas.codex?.error)
-	const hasCopilot = !!settings.copilot?.token
-	const hasAntigravity = settings.antigravity?.installed !== 'false'
-	const hasOpenCode = !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
-	const hasOllama = !!settings.ollama?.cookie
-	const hasOpenRouter = !!settings.openrouter?.apiKey
+	const hasClaude = !disabledProviders.includes('claude') && settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
+	const hasCodex = !disabledProviders.includes('codex') && settings.codex?.installed !== 'false' && !(quotas && quotas.codex?.error)
+	const hasCopilot = !disabledProviders.includes('copilot') && !!settings.copilot?.token
+	const hasAntigravity = !disabledProviders.includes('antigravity') && settings.antigravity?.installed !== 'false'
+	const hasOpenCode = !disabledProviders.includes('opencode') && !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
+	const hasOllama = !disabledProviders.includes('ollama') && !!settings.ollama?.cookie
+	const hasOpenRouter = !disabledProviders.includes('openrouter') && !!settings.openrouter?.apiKey
 	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter
 
 	const getQuotaDisplay = () => {
@@ -215,6 +223,9 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 		const parts = selectedView.split(':')
 		const provider = parts[0]
+		if (disabledProviders.includes(provider)) {
+			return { text: 'Select Limit', isError: false }
+		}
 		const providerData = quotas[provider as keyof AllQuotas]
 
 		const providerLabel =
