@@ -116,10 +116,10 @@ Caw launches any CLI coding agent that runs in a terminal. These are detected on
   <img src="assets/icons/claude.svg" width="18" alt="Claude Code" /> <b>Claude Code</b> &nbsp;&nbsp;
   <img src="assets/icons/codex.svg" width="18" alt="Codex CLI" /> <b>Codex CLI</b> &nbsp;&nbsp;
   <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
-  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
+  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> <br>
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
   <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
-  <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b> &nbsp;&nbsp;
+  <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b> <br>
   <img src="assets/icons/omp.svg" width="18" alt="Oh My Pi" /> <b>Oh My Pi</b> &nbsp;&nbsp;
   <img src="assets/icons/hermes.svg" width="18" alt="Hermes" /> <b>Hermes</b>
 </p>
@@ -132,9 +132,9 @@ Caw can show live usage limits and reset times for the following providers:
   <img src="assets/icons/claude.svg" width="18" alt="Claude" /> <b>Claude</b> &nbsp;&nbsp;
   <img src="assets/icons/codex.svg" width="18" alt="Codex" /> <b>Codex</b> &nbsp;&nbsp;
   <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
-  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
+  <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> <br>
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
-  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
+  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> <br>
   <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
   <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
 </p>
