@@ -15,6 +15,7 @@ src/internal/embed/frontend/dist/
 
 # Go build artifacts
 /caw
+caw.old
 src/caw
 src/caw.exe
 src/caw-*
@@ -35,6 +36,7 @@ Thumbs.db
 *.db-shm
 
 # Tools
+.commandcode/
 graphify-out/
 .agents/
 .opencode/
