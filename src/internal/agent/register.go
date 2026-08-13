@@ -99,24 +99,16 @@ func RegisterMuxChannel(mux *ws.Multiplexer) {
 			sort.Slice(states, func(i, j int) bool {
 				return states[i].Sequence < states[j].Sequence
 			})
-		for _, s := range states {
-			_ = c.Send("agents", Event{
-				Type:       "agent_status",
-				SessionID:  s.SessionID,
-				AgentID:    s.AgentID,
-				Cwd:        s.Cwd,
-				Status:     s.Status,
-				Tool:       s.Tool,
-				Details:    s.Details,
-				Title:      s.Title,
-				Timestamp:  s.Timestamp,
-				Sequence:   s.Sequence,
-				EndedAt:    s.EndedAt,
-				ExitCode:   s.ExitCode,
-				ExitReason: s.ExitReason,
-				LastColumn: s.LastColumn,
-			})
-		}
+			// Send the full current snapshot as a single authoritative event.
+			// The frontend replaces its store with this list, which prunes any
+			// stale cards (e.g. sessions the backend stopped tracking after a
+			// restart) that would otherwise linger because no agent_stopped
+			// event fires for them. Sending one message avoids the ordering
+			// race of a per-status dump interleaved with live broadcasts.
+			_ = c.Send("agents", struct {
+				Type     string        `json:"event"`
+				Sessions []AgentStatus `json:"sessions"`
+			}{Type: "agent_snapshot", Sessions: states})
 		},
 		nil,
 		nil,
