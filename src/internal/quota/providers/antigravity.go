@@ -470,7 +470,7 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 			Name:        bucket.BucketID,
 			Label:       bucket.DisplayName,
 			Description: bucket.ResetDescription,
-			Used:        used,
+			Used:        float64(used),
 			Limit:       100,
 			Unit:        "percentage",
 			ResetTime:   bucket.ResetTime,
@@ -507,13 +507,13 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 
 		if strings.Contains(groupName, "gemini") {
 			if is5h {
-				res.FiveHour = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			} else if isWeekly {
-				res.Monthly = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				res.Monthly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
 		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
 			if isWeekly {
-				res.Weekly = quota.Quota{Used: used, Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
 		}
 		}
@@ -612,7 +612,7 @@ func getModelQuota(modelsResponse *GoogleAvailableModelsResponse, keys ...string
 				resetTime = m.QuotaInfo.ResetTime
 			}
 			return quota.Quota{
-				Used:      used,
+				Used:      float64(used),
 				Limit:     100,
 				Unit:      "percentage",
 				ResetTime: resetTime,

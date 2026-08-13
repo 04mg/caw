@@ -27,7 +27,7 @@
 
 ### Run Agents in the Browser
 
-Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, Pi, Oh My Pi, or Hermes side-by-side — Caw auto-detects which agents are installed and spins up a terminal pane for each.
+Launch Claude Code, Codex CLI, GitHub Copilot, OpenCode, Antigravity, Command Code, Pi, Oh My Pi, or Hermes side-by-side — Caw auto-detects which agents are installed and spins up a terminal pane for each.
 
 </td>
 <td width="50%">
@@ -75,7 +75,7 @@ Walk away and stay in the loop. Get a push notification when an agent needs your
 
 ### Usage Quota Monitoring
 
-Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Ollama, and OpenRouter.
+Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Command Code, Ollama, and OpenRouter.
 
 </td>
 <td width="50%">
@@ -118,6 +118,7 @@ Caw launches any CLI coding agent that runs in a terminal. These are detected on
   <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
   <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
+  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
   <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b> &nbsp;&nbsp;
   <img src="assets/icons/omp.svg" width="18" alt="Oh My Pi" /> <b>Oh My Pi</b> &nbsp;&nbsp;
   <img src="assets/icons/hermes.svg" width="18" alt="Hermes" /> <b>Hermes</b>
@@ -133,6 +134,7 @@ Caw can show live usage limits and reset times for the following providers:
   <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
   <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> &nbsp;&nbsp;
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
+  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
   <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
   <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
 </p>
