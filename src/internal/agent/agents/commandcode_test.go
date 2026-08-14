@@ -109,3 +109,237 @@ func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testin
 	cancel()
 	<-done
 }
+
+func TestCommandCodeWatcherPendingTurnFrozenTranscriptShowsWorking(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+	checkpoints := filepath.Join(projectsDir, "session.checkpoints.jsonl")
+
+	appendTo := func(path, line string) {
+		t.Helper()
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append %s: %v", path, err)
+		}
+	}
+
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendTo(transcript, header)
+	appendTo(transcript, `{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"read x"}]}}`)
+	// Last committed message is a plain assistant text → the transcript would
+	// otherwise report idle.
+	appendTo(transcript, `{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
+	// Command Code appends a checkpoint the moment a new turn is submitted;
+	// messageCount equals the committed transcript (2), so the prompt has not
+	// been flushed yet and a turn is pending on disk.
+	appendTo(checkpoints, `{"id":"c1","messageId":"c1","turnNumber":2,"createdAt":"2026-08-13T16:41:04.000Z","prompt":"next","messageCount":2,"files":[]}`)
+
+	const leafID = "cc-pend-pty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
+	}
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
+	}
+
+	// Pending turn + a live PTY → the frozen transcript must not leave the
+	// card stale on idle; it reports working until the prompt is committed.
+	agent.SetPtyActivityForTest(leafID, time.Now())
+	waitFor("thinking", 8*time.Second)
+
+	cancel()
+	<-done
+}
+
+func TestCommandCodeWatcherFrozenTurnQuietPTYShowsWaitingInput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+
+	appendTo := func(path, line string) {
+		t.Helper()
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append %s: %v", path, err)
+		}
+	}
+
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendTo(transcript, header)
+	appendTo(transcript, `{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"read x"}]}}`)
+	// A committed iteration pair: the transcript reports thinking, but the
+	// next tool is blocked (ask_user_question) with nothing persisted yet.
+	appendTo(transcript, `{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read"}]}}`)
+	appendTo(transcript, `{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
+
+	const leafID = "cc-quiet-pty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
+	}
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
+	}
+
+	// Active turn with a PTY that has gone quiet past the wait threshold →
+	// the card must report waiting_input instead of staying on thinking.
+	agent.SetPtyActivityForTest(leafID, time.Now().Add(-(inputWaitThreshold + 2*time.Second)))
+	waitFor("waiting_input", 8*time.Second)
+
+	cancel()
+	<-done
+}
+
+func TestCommandCodeWatcherPendingTurnWithoutPTYSignalStaysIdle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+	checkpoints := filepath.Join(projectsDir, "session.checkpoints.jsonl")
+
+	appendTo := func(path, line string) {
+		t.Helper()
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append %s: %v", path, err)
+		}
+	}
+
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendTo(transcript, header)
+	appendTo(transcript, `{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"read x"}]}}`)
+	appendTo(transcript, `{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
+	appendTo(checkpoints, `{"id":"c1","messageId":"c1","turnNumber":2,"createdAt":"2026-08-13T16:41:04.000Z","prompt":"next","messageCount":2,"files":[]}`)
+
+	const leafID = "cc-nopty"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	lastStatus := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(statuses) == 0 {
+			return ""
+		}
+		return statuses[len(statuses)-1]
+	}
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if lastStatus() == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for status %q; last=%q full=%v", want, lastStatus(), statuses)
+	}
+
+	// No PTY signal recorded at all (a pane Caw cannot observe): the override
+	// must not invent a working state — the card stays on the committed idle.
+	waitFor("idle", 8*time.Second)
+	time.Sleep(3 * time.Second)
+	if got := lastStatus(); got != "idle" {
+		t.Fatalf("card drifted from %q to %q without a PTY signal (statuses: %v)", "idle", got, statuses)
+	}
+
+	cancel()
+	<-done
+}
