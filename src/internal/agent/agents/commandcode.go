@@ -59,6 +59,24 @@ type commandCodeBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 }
 
+// Command Code persists each model iteration to the transcript only when the
+// iteration completes: the assistant tool_use message and its tool_result are
+// written together, and nothing is appended while a tool is still running (a
+// long-running tool freezes the transcript for minutes). The pane's PTY and
+// the sidecar checkpoints file are the only live signals while the transcript
+// is frozen: Command Code repaints its status line continuously while a turn
+// is in flight, goes static when it blocks on the user (ask_user_question /
+// exit_plan_mode), and appends a checkpoint when a new turn is submitted.
+//
+// ptyWorkingWindow: how recently the PTY must have produced output for the
+// agent to count as actively working.
+// inputWaitThreshold: how long the PTY must have been quiet mid-turn before we
+// conclude Command Code is blocked awaiting a user answer.
+const (
+	ptyWorkingWindow   = 5 * time.Second
+	inputWaitThreshold = 10 * time.Second
+)
+
 func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -80,6 +98,12 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	}
 	lastCheck := time.Now().Add(-lookback)
 	var lastFileSize int64 = 0
+	// transcriptMessageCount tracks how many message entries have been
+	// committed to the transcript so far. Command Code appends a checkpoint to
+	// the sidecar the moment a turn is submitted but only commits the user's
+	// prompt to the transcript when the turn's first iteration completes, so a
+	// checkpoint messageCount at or above this count signals a pending turn.
+	var transcriptMessageCount int64
 	var watchedFilePath string
 	var sessionTitle string
 	var lastActivity time.Time
@@ -150,7 +174,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
 		}
-		w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, wrappedCallback)
+		transcriptMessageCount += int64(w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, wrappedCallback))
 		lastFileSize = info.Size()
 		lastActivity = info.ModTime()
 		silentTicks = 0
@@ -194,6 +218,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 					if ClaimSession(agentID, claimCwd, c.Path) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
+						transcriptMessageCount = 0
 						lastCheck = time.Now()
 						lastActivity = c.ModTime
 						silentTicks = 0
@@ -205,7 +230,8 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				}
 			}
 			if watchedFilePath != "" {
-				if !readWatched() {
+				advanced := readWatched()
+				if !advanced {
 					silentTicks++
 				}
 
@@ -222,6 +248,41 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						lastReportedStatus = "interrupted"
 						interruptBoundarySize = lastFileSize
 						callback("interrupted", "", "", sessionTitle)
+					}
+				}
+
+				// Live-state override for frozen transcripts (see the
+				// persistence note near the constants above). Command Code
+				// commits a user prompt to the transcript only when the turn's
+				// first iteration completes, and it persists ask/plan tool
+				// calls together with their result only once answered, so a
+				// blocked or freshly submitted turn leaves the transcript
+				// frozen at the previous state (e.g. "idle" while a long tool
+				// is actually running). While frozen, the PTY is the only live
+				// signal: repaints mean the agent is working; sustained
+				// silence while a turn is active means it is blocked awaiting
+				// the user (ask_user_question / exit_plan_mode).
+				if !advanced {
+					lastPty := agent.LastPtyActivity(sessionID)
+					if !lastPty.IsZero() {
+						pendingTurn := commandCodeCheckpointCount(watchedFilePath) >= transcriptMessageCount
+						active := pendingTurn
+						switch lastReportedStatus {
+						case "thinking", "executing", "tool_failed", "waiting_input":
+							active = true
+						}
+						if active && lastReportedStatus != "interrupted" {
+							if time.Since(lastPty) >= inputWaitThreshold {
+								if lastReportedStatus != "waiting_input" {
+									lastReportedStatus = "waiting_input"
+									callback("waiting_input", "ask_user_question", "", sessionTitle)
+								}
+							} else if time.Since(lastPty) < ptyWorkingWindow &&
+								(lastReportedStatus == "idle" || lastReportedStatus == "" || lastReportedStatus == "waiting_input") {
+								lastReportedStatus = "thinking"
+								callback("thinking", "", "", sessionTitle)
+							}
+						}
 					}
 				}
 
@@ -247,6 +308,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 								UnclaimSession(agentID, claimCwd, watchedFilePath)
 								watchedFilePath = newKey
 								lastFileSize = 0
+								transcriptMessageCount = 0
 								lastCheck = time.Now()
 								silentTicks = 0
 								if notifyCh != nil {
@@ -288,10 +350,14 @@ func commandCodeTitleFromMeta(path string) string {
 	return meta.Title
 }
 
-func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, cwd, sessionID string, callback func(status, tool, details, title string)) {
+// parseCommandCodeLog reads the transcript bytes appended since offset and
+// reports the derived status. It returns the number of message entries parsed,
+// which the watcher accumulates to track how many messages have been committed
+// to the transcript (used to detect turns that are pending their first commit).
+func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, cwd, sessionID string, callback func(status, tool, details, title string)) int {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
-		return
+		return 0
 	}
 
 	// Prefer the persisted title from the sidecar meta file; fall back to the
@@ -398,6 +464,35 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 	}
 
 	callback(status, tool, details, sessionTitle)
+	return len(entries)
+}
+
+// commandCodeCheckpointCount returns the highest messageCount recorded in the
+// session's sidecar checkpoints file (<id>.checkpoints.jsonl), or -1 when the
+// sidecar is missing. Command Code appends a checkpoint the instant a turn is
+// submitted; its messageCount reflects the messages committed up to that
+// moment, so a count at or above the committed transcript means a turn whose
+// prompt has not yet been flushed to the transcript (see the persistence note
+// near the Watch constants above).
+func commandCodeCheckpointCount(filePath string) int64 {
+	ckptPath := strings.TrimSuffix(filePath, ".jsonl") + ".checkpoints.jsonl"
+	lines, err := ReadNewLines(ckptPath, 0)
+	if err != nil {
+		return -1
+	}
+	var maxCount int64 = -1
+	for _, line := range lines {
+		var c struct {
+			MessageCount int64 `json:"messageCount"`
+		}
+		if json.Unmarshal([]byte(line), &c) != nil {
+			continue
+		}
+		if c.MessageCount > maxCount {
+			maxCount = c.MessageCount
+		}
+	}
+	return maxCount
 }
 
 // commandCodeUserText extracts the plain text of a user message, ignoring
