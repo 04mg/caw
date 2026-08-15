@@ -49,6 +49,29 @@ type commandCodeCreditsResponse struct {
 	WindowLimits map[string]json.RawMessage `json:"windowLimits"`
 }
 
+// commandCodeInvoice mirrors a single billing invoice returned by
+// GET /internal/billing/customers/invoices. The "credits" field carries the
+// number of credits granted by the subscription (e.g. 10 for a paid plan).
+type commandCodeInvoice struct {
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	AmountPaid  float64 `json:"amountPaid"`
+	Credits     float64 `json:"credits"`
+	InvoiceType string  `json:"invoiceType"`
+	HasStripe   bool    `json:"hasStripeInvoice"`
+	AutoCharged bool    `json:"autoCharged"`
+}
+
+// commandCodeInvoicesResponse mirrors the top-level response of
+// GET /internal/billing/customers/invoices?limit=10.
+type commandCodeInvoicesResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Invoices []commandCodeInvoice `json:"invoices"`
+		HasMore  bool                 `json:"hasMore"`
+	} `json:"data"`
+}
+
 func (r *commandCodeCreditsResponse) window(name string) *commandCodeWindow {
 	raw, ok := r.WindowLimits[name]
 	if !ok {
@@ -73,15 +96,16 @@ func commandCodeResetTime(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
 }
 
-// roundCredits rounds a fractional credit balance to a whole number for the
-// quota UI. Balances like 9.98 are displayed as 10.
-func roundCredits(v float64) float64 {
-	return math.Round(v)
-}
-
 // roundUsed rounds a fractional used value to two decimal places so small
 // usages like 0.0845681984 are displayed as 0.08 instead of truncating to 0.
 func roundUsed(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// roundCredits rounds a fractional credit balance to two decimal places so a
+// remaining balance like 8.6855948068 is displayed as 8.69 instead of being
+// rounded up to a misleading whole 9.
+func roundCredits(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
@@ -141,13 +165,23 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 	}
 
+	// The /credits endpoint reports remaining balances. The intended display is
+	// "remaining / total" (e.g. 8.72$ / 10$), so the full credit allowance must
+	// come from the billing invoices, which carry the subscription's credits
+	// (e.g. 10 for a paid plan).
+	totalMonthly := parsed.Credits.MonthlyCredits
+	if sub := fetchCommandCodeSubscriptionCredits(cookie); sub > 0 {
+		totalMonthly = sub
+	}
+
 	monthly := roundCredits(parsed.Credits.MonthlyCredits)
 	purchased := roundCredits(parsed.Credits.PurchasedCredits)
 	opensource := roundCredits(parsed.Credits.OpensourceMonthlyCredits)
+	total := roundCredits(totalMonthly)
 
 	res.Monthly = quota.Quota{
-		Used:  0,
-		Limit: monthly,
+		Used:  monthly,
+		Limit: total,
 		Unit:  "currency",
 	}
 
@@ -159,21 +193,21 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 				{
 					Name:  "monthly",
 					Label: "Monthly Credits",
-					Used:  0,
-					Limit: monthly,
+					Used:  monthly,
+					Limit: total,
 					Unit:  "currency",
 				},
 				{
 					Name:  "purchased",
 					Label: "Purchased Credits",
-					Used:  0,
+					Used:  purchased,
 					Limit: purchased,
 					Unit:  "currency",
 				},
 				{
 					Name:  "opensource",
 					Label: "Open Source Credits",
-					Used:  0,
+					Used:  opensource,
 					Limit: opensource,
 					Unit:  "currency",
 				},
@@ -182,4 +216,44 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	}
 
 	return res, nil
+}
+
+// fetchCommandCodeSubscriptionCredits returns the number of credits granted by
+// the active subscription by querying the customer's billing invoices. It
+// returns 0 when no paid subscription invoice is found or the request fails.
+func fetchCommandCodeSubscriptionCredits(cookie string) float64 {
+	const endpoint = "https://api.commandcode.ai/internal/billing/customers/invoices?limit=10"
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Cookie", "__Secure-commandcode_prod_.session_token="+cookie)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Origin", "https://commandcode.ai")
+	req.Header.Set("Referer", "https://commandcode.ai/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	body, _ := io.ReadAll(resp.Body)
+
+	var parsed commandCodeInvoicesResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return 0
+	}
+
+	var total float64
+	for _, inv := range parsed.Data.Invoices {
+		if inv.Status == "paid" && inv.InvoiceType == "subscription_credits" && inv.Credits > 0 {
+			total += inv.Credits
+		}
+	}
+	return total
 }
