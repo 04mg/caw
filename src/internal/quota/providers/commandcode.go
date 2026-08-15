@@ -166,22 +166,20 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	}
 
 	// The /credits endpoint reports remaining balances. The intended display is
-	// "remaining / total" (e.g. 8.72$ / 10$), so the full credit allowance must
-	// come from the billing invoices, which carry the subscription's credits
-	// (e.g. 10 for a paid plan).
-	totalMonthly := parsed.Credits.MonthlyCredits
-	if sub := fetchCommandCodeSubscriptionCredits(cookie); sub > 0 {
-		totalMonthly = sub
+	// "consumed / total" (e.g. 1.55$ / 10$), i.e. how much has been used out of
+	// the full allowance. The full credit allowance comes from the billing
+	// invoices, which carry the subscription's credits (e.g. 10 for a paid plan).
+	subTotal, purchasedTotal := fetchCommandCodeInvoiceCredits(cookie)
+	total := subTotal
+	if total <= 0 {
+		// Fall back to the remaining balance when no invoice is available so the
+		// limit stays meaningful instead of 0.
+		total = parsed.Credits.MonthlyCredits
 	}
 
-	monthly := roundCredits(parsed.Credits.MonthlyCredits)
-	purchased := roundCredits(parsed.Credits.PurchasedCredits)
-	opensource := roundCredits(parsed.Credits.OpensourceMonthlyCredits)
-	total := roundCredits(totalMonthly)
-
 	res.Monthly = quota.Quota{
-		Used:  monthly,
-		Limit: total,
+		Used:  consumedFrom(parsed.Credits.MonthlyCredits, total),
+		Limit: roundCredits(total),
 		Unit:  "currency",
 	}
 
@@ -193,22 +191,22 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 				{
 					Name:  "monthly",
 					Label: "Monthly Credits",
-					Used:  monthly,
-					Limit: total,
+					Used:  consumedFrom(parsed.Credits.MonthlyCredits, total),
+					Limit: roundCredits(total),
 					Unit:  "currency",
 				},
 				{
 					Name:  "purchased",
 					Label: "Purchased Credits",
-					Used:  purchased,
-					Limit: purchased,
+					Used:  consumedFrom(parsed.Credits.PurchasedCredits, purchasedTotal),
+					Limit: roundCredits(purchasedTotal),
 					Unit:  "currency",
 				},
 				{
 					Name:  "opensource",
 					Label: "Open Source Credits",
-					Used:  opensource,
-					Limit: opensource,
+					Used:  consumedFrom(parsed.Credits.OpensourceMonthlyCredits, total),
+					Limit: roundCredits(total),
 					Unit:  "currency",
 				},
 			},
@@ -218,14 +216,25 @@ func (p *CommandCodeProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	return res, nil
 }
 
-// fetchCommandCodeSubscriptionCredits returns the number of credits granted by
-// the active subscription by querying the customer's billing invoices. It
-// returns 0 when no paid subscription invoice is found or the request fails.
-func fetchCommandCodeSubscriptionCredits(cookie string) float64 {
+// consumedFrom returns the amount consumed out of a per-pool total given the
+// pool's remaining balance, clamped to >= 0.
+func consumedFrom(remaining, poolTotal float64) float64 {
+	used := poolTotal - remaining
+	if used < 0 {
+		used = 0
+	}
+	return roundCredits(used)
+}
+
+// fetchCommandCodeInvoiceCredits returns the credits granted by the active
+// subscription and purchased add-ons by querying the customer's billing
+// invoices. It returns (0, 0) when no matching paid invoice is found or the
+// request fails.
+func fetchCommandCodeInvoiceCredits(cookie string) (subscription, purchased float64) {
 	const endpoint = "https://api.commandcode.ai/internal/billing/customers/invoices?limit=10"
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	req.Header.Set("Cookie", "__Secure-commandcode_prod_.session_token="+cookie)
 	req.Header.Set("Accept", "application/json")
@@ -236,24 +245,28 @@ func fetchCommandCodeSubscriptionCredits(cookie string) float64 {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0
+		return 0, 0
 	}
 	body, _ := io.ReadAll(resp.Body)
 
 	var parsed commandCodeInvoicesResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return 0
+		return 0, 0
 	}
 
-	var total float64
 	for _, inv := range parsed.Data.Invoices {
-		if inv.Status == "paid" && inv.InvoiceType == "subscription_credits" && inv.Credits > 0 {
-			total += inv.Credits
+		if inv.Status != "paid" || inv.Credits <= 0 {
+			continue
+		}
+		if inv.InvoiceType == "subscription_credits" {
+			subscription += inv.Credits
+		} else if inv.AutoCharged || inv.InvoiceType != "" {
+			purchased += inv.Credits
 		}
 	}
-	return total
+	return subscription, purchased
 }
