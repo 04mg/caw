@@ -11,10 +11,10 @@ import { pathsEqual } from '@/features/shared/utils/path'
 import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
 import { useFileDirty } from '../hooks/useFileDirty'
 import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
-import { monacoTheme } from '@/features/customization/theme'
+import { monacoTheme, type CustomizationState } from '@/features/customization/theme'
 
 
-function defineCawTheme(monaco: Monaco) {
+function defineCawTheme(monaco: Monaco, customization = getCustomization()) {
   monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
     noSemanticValidation: true,
     noSyntaxValidation: true,
@@ -23,7 +23,7 @@ function defineCawTheme(monaco: Monaco) {
     noSemanticValidation: true,
     noSyntaxValidation: true,
   })
-  monaco.editor.defineTheme('caw-custom', monacoTheme(getCustomization()))
+  monaco.editor.defineTheme('caw-custom', monacoTheme(customization))
 }
 
 interface EditorPanelProps {
@@ -71,13 +71,25 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const lastSavedAtRef = useRef(0)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => subscribePrefs(() => {
+  useEffect(() => {
+    const updateTheme = (customization = getCustomization()) => {
     if (monacoRef.current) {
-      defineCawTheme(monacoRef.current)
+      defineCawTheme(monacoRef.current, customization)
       monacoRef.current.editor.setTheme('caw-custom')
     }
     setCustomizationVersion((version) => version + 1)
-  }), [])
+    }
+    const unsubscribe = subscribePrefs(updateTheme)
+    const onCustomizationUpdated = (event: Event) => {
+    const customization = (event as CustomEvent<CustomizationState>).detail
+    if (customization) updateTheme(customization)
+    }
+    window.addEventListener('caw:customization-updated', onCustomizationUpdated)
+    return () => {
+    unsubscribe()
+    window.removeEventListener('caw:customization-updated', onCustomizationUpdated)
+    }
+  }, [])
 
   // Helper: get the live Monaco model for this filePath (if any).
   const getLiveModel = useCallback(() => {

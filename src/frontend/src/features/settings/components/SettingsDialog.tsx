@@ -10,7 +10,7 @@ import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { applyCustomization, DEFAULT_CUSTOMIZATION, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
-import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
+import { applyTerminalCustomization, setAllTerminalFontSizes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import {
 	getVoiceMode,
@@ -520,6 +520,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     setThemeJson(JSON.stringify(next, null, 2))
     setThemeJsonError('')
     applyCustomization(next)
+    applyTerminalCustomization(next)
     void savePref(() => setCustomization(next))
   }
 
@@ -721,7 +722,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     <button
                       onClick={() => {
                         setTerminalTheme('dark')
-                        setAllTerminalThemes('dark')
+                        saveCustomization(normalizeCustomization({
+                          ...customization,
+                          terminal: { ...customization.terminal, theme: 'dark' },
+                        }))
                       }}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
                         terminalTheme === 'dark'
@@ -735,7 +739,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     <button
                       onClick={() => {
                         setTerminalTheme('light')
-                        setAllTerminalThemes('light')
+                        saveCustomization(normalizeCustomization({
+                          ...customization,
+                          terminal: { ...customization.terminal, theme: 'light' },
+                        }))
                       }}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
                         terminalTheme === 'light'
@@ -751,7 +758,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <div className="flex flex-col gap-3">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs font-medium">Customization JSON</label>
-                      <p className="text-[10px] text-muted-foreground">Edit colors.dark and colors.light separately, plus Monaco and editor.tokenColors syntax colors, then apply the JSON.</p>
+                      <p className="text-[10px] text-muted-foreground">Edit colors.dark and colors.light separately. Monaco uses editor.* and editor.tokenColors; terminal.* overrides terminal colors.</p>
                     </div>
                     <textarea
                       value={themeJson}
