@@ -343,3 +343,59 @@ func TestCommandCodeWatcherPendingTurnWithoutPTYSignalStaysIdle(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestCommandCodeWatcherReopenedSessionIgnoresHistoricalWorkAndInterrupt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+	content := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}` + "\n" +
+		`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"old prompt"}]}}` + "\n"
+	if err := os.WriteFile(transcript, []byte(content), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	const leafID = "cc-reopened-idle"
+	agent.SetPtyInterruptForTest(leafID, time.Now().Add(-time.Second))
+	defer agent.SetPtyInterruptForTest(leafID, time.Time{})
+
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, true, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := ""
+		if len(statuses) != 0 {
+			got = statuses[len(statuses)-1]
+		}
+		mu.Unlock()
+		if got == "idle" {
+			cancel()
+			<-done
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	t.Fatalf("timed out waiting for idle; statuses: %v", statuses)
+}

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -97,6 +98,49 @@ func TestCopilotToolResultSuccessReportsThinking(t *testing.T) {
 	})
 	if status != "thinking" {
 		t.Fatalf("tool.result success status = %q, want thinking", status)
+	}
+}
+
+func TestCopilotTurnEndRetainsFinalAssistantResponse(t *testing.T) {
+	events := []copilotEvent{
+		{Type: "assistant.message", Data: rawJSON(t, copilotAssistantMsg{Content: "Completed the requested change."})},
+		{Type: "assistant.turn_end"},
+	}
+	p := writeCopilotEvents(t, events)
+	var status, details string
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, _, d, _ string) {
+		status, details = s, d
+	})
+	if status != "idle" {
+		t.Fatalf("turn_end status = %q, want idle", status)
+	}
+	if details != "Completed the requested change." {
+		t.Fatalf("turn_end details = %q, want final assistant response", details)
+	}
+}
+
+func TestCopilotSessionTitleUsesGeneratedSummary(t *testing.T) {
+	dir := t.TempDir()
+	sessionStorePath := filepath.Join(dir, "session-store.db")
+	db, err := sql.Open("sqlite", sessionStorePath)
+	if err != nil {
+		t.Fatalf("open session store: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE sessions (id TEXT PRIMARY KEY, summary TEXT);
+		INSERT INTO sessions (id, summary) VALUES ('session-1', 'Generated session title');
+	`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("seed session store: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close session store: %v", err)
+	}
+
+	eventsPath := filepath.Join(dir, "session-1", "events.jsonl")
+	if got := copilotSessionTitle(sessionStorePath, eventsPath); got != "Generated session title" {
+		t.Fatalf("session title = %q, want generated title", got)
 	}
 }
 
