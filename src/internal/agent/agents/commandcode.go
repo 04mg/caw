@@ -420,6 +420,25 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 	}
 
 	// Walk entries backwards to find the last meaningful message.
+	//
+	// Command Code persists each iteration's tool call together with its
+	// result once the tool finishes, so an assistant tool_use whose id has no
+	// matching tool_result anywhere is a tool that has NOT run yet: the agent
+	// is paused waiting for the user to approve/answer the request. Build the
+	// set of answered tool_use ids first so that check has full transcript
+	// visibility regardless of scan order.
+	answered := make(map[string]bool)
+	for _, e := range entries {
+		if e.Message == nil {
+			continue
+		}
+		for _, b := range e.Message.Content {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				answered[b.ToolUseID] = true
+			}
+		}
+	}
+
 	var status, tool, details string
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
@@ -430,12 +449,14 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 		switch msg.Role {
 		case "assistant":
 			var lastTool string
+			var lastToolID string
 			var hasText bool
 			var failedErr string
 			for _, b := range msg.Content {
 				switch b.Type {
 				case "tool_use":
 					lastTool = b.Name
+					lastToolID = b.ID
 					if lastTool == "" {
 						lastTool = "exec"
 					}
@@ -451,6 +472,12 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 			}
 			if lastTool != "" {
 				if isUserInputTool(strings.ToLower(lastTool)) {
+					status, tool, details = "waiting_input", lastTool, ""
+				} else if lastToolID != "" && !answered[lastToolID] {
+					// The tool request was persisted but never produced a
+					// result: Command Code is blocked on user approval
+					// (e.g. Execute Shell Command). Report need-input, not
+					// executing.
 					status, tool, details = "waiting_input", lastTool, ""
 				} else if failedErr != "" {
 					status, tool, details = "tool_failed", lastTool, failedErr
