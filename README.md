@@ -75,7 +75,7 @@ Walk away and stay in the loop. Get a push notification when an agent needs your
 
 ### Usage Quota Monitoring
 
-Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Command Code, Ollama, and OpenRouter.
+Keep an eye on your spend. Caw shows live usage limits and reset times for Claude, Codex, Copilot, Antigravity, OpenCode, Command Code, Ollama, OpenRouter, and Zed.
 
 </td>
 <td width="50%">
@@ -134,9 +134,10 @@ Caw can show live usage limits and reset times for the following providers:
   <img src="assets/icons/copilot.svg" width="18" alt="GitHub Copilot" /> <b>GitHub Copilot</b> &nbsp;&nbsp;
   <img src="assets/icons/antigravity.svg" width="18" alt="Antigravity" /> <b>Antigravity</b> <br>
   <img src="assets/icons/opencode.svg" width="18" alt="OpenCode" /> <b>OpenCode</b> &nbsp;&nbsp;
-  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> <br>
-  <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> &nbsp;&nbsp;
-  <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b>
+  <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
+  <img src="assets/icons/ollama.svg" width="18" alt="Ollama" /> <b>Ollama</b> <br>
+  <img src="assets/icons/openrouter.svg" width="18" alt="OpenRouter" /> <b>OpenRouter</b> &nbsp;&nbsp;
+  <img src="assets/icons/zed.svg" width="18" alt="Zed" /> <b>Zed</b>
 </p>
 
 ## Supported commands
