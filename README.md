@@ -108,12 +108,6 @@ Petdex pets wander along the bottom of your terminal areas and react to what you
 </tr>
 </table>
 
-## Customization
-
-Appearance settings are synchronized between Caw clients. Choose light, dark, or system UI mode, override semantic color tokens, select a terminal palette, swap the Workspace and File Explorer sidebars, and upload local image or video backgrounds for terminals. Terminal media remains local to the Caw server and can be removed from Appearance settings at any time.
-
-Themes use Caw's versioned semantic customization state rather than the VS Code extension format. This keeps UI, Monaco, and terminal colors aligned while preserving safe fallbacks for newly introduced tokens.
-
 ## Supported agents
 
 Caw launches any CLI coding agent that runs in a terminal. These are detected on your machine and supported out of the box:
