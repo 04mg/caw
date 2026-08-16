@@ -110,6 +110,91 @@ func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testin
 	<-done
 }
 
+func TestCommandCodeWatcherIgnoresInterruptBeforeNewTurn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+
+	appendLine := func(line string) {
+		t.Helper()
+		f, err := os.OpenFile(transcript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open transcript: %v", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append transcript: %v", err)
+		}
+	}
+
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendLine(header)
+	appendLine(`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"old prompt"}]}}`)
+	appendLine(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
+
+	const leafID = "cc-idle-interrupt"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			got := ""
+			if len(statuses) > 0 {
+				got = statuses[len(statuses)-1]
+			}
+			mu.Unlock()
+			if got == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("timed out waiting for status %q; statuses: %v", want, statuses)
+	}
+
+	waitFor("idle", 8*time.Second)
+
+	// This input happened while the prior turn was idle. The watcher can
+	// observe it only after the next prompt is committed, but it must not
+	// interrupt that new turn.
+	agent.SetPtyInterruptForTest(leafID, time.Now())
+	appendLine(`{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"text","text":"/plan make a plan"}]}}`)
+	waitFor("thinking", 8*time.Second)
+
+	time.Sleep(3 * time.Second)
+	mu.Lock()
+	gotStatuses := append([]string(nil), statuses...)
+	mu.Unlock()
+	for _, status := range gotStatuses {
+		if status == "interrupted" {
+			t.Fatalf("idle interrupt incorrectly cancelled new turn: %v", gotStatuses)
+		}
+	}
+
+	cancel()
+	<-done
+}
+
 func TestCommandCodeWatcherPendingTurnFrozenTranscriptShowsWorking(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
