@@ -49,7 +49,7 @@ export function TerminalGrid({
     const isEditor = !!node.filePath || node.isDiff
     return (
       <div
-        className={`relative h-full overflow-hidden ${isActive ? 'border border-border' : ''}`}
+        className="relative h-full overflow-hidden"
         onClick={() => onFocus(node.id)}
         onPointerDown={() => onFocus(node.id)}
         data-pane-id={node.id}
