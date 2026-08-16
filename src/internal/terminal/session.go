@@ -191,7 +191,7 @@ type exitInfo struct {
 // Each viewer maintains its own dimensions; the PTY is re-driven to the
 // current min whenever the set of viewers or their sizes changes.
 // Must be called with s.mu held.
-func (s *Session) resizePTY(cols, rows int, source *connWriter) {
+func (s *Session) resizePTY(cols, rows int, source *connWriter, force bool) {
 	if cols <= 0 || rows <= 0 {
 		return
 	}
@@ -235,7 +235,7 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 	// multi-viewer path, we do NOT broadcastResize here.
 	totalViewers := len(s.conns) + s.pendingResizes
 	if totalViewers <= 1 {
-		if !firstResize && s.cols == cols && s.rows == rows {
+		if !force && !firstResize && s.cols == cols && s.rows == rows {
 			return
 		}
 		s.cols = cols
@@ -260,7 +260,7 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter) {
 		// No fully-sized viewer yet; keep the PTY as-is.
 		return
 	}
-	if s.cols != minCols || s.rows != minRows || firstResize {
+	if s.cols != minCols || s.rows != minRows || firstResize || force {
 		s.cols = minCols
 		s.rows = minRows
 		_ = s.Pty.ptmx.Resize(minCols, minRows)
