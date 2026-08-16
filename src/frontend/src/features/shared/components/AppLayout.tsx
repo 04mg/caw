@@ -184,20 +184,6 @@ export function AppLayout() {
   const [deleteBranchChecked, setDeleteBranchChecked] = useState(false)
 
   useEffect(() => {
-    const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
-    const root = window.document.documentElement
-    if (savedTheme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      if (systemTheme === 'light') root.classList.add('light')
-      else root.classList.remove('light')
-    } else if (savedTheme === 'light') {
-      root.classList.add('light')
-    } else {
-      root.classList.remove('light')
-    }
-  }, [])
-
-  useEffect(() => {
     let active = true
     loadPrefs().then(() => {
       if (active) applyCustomization(getCustomization())
