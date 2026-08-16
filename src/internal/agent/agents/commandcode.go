@@ -50,12 +50,12 @@ type commandCodeMsg struct {
 // {"type":"tool_use","id","name","input"}, or
 // {"type":"tool_result","tool_use_id","content","is_error"?}.
 type commandCodeBlock struct {
-	Type      string  `json:"type"`
-	Text      string  `json:"text,omitempty"`
-	ID        string  `json:"id,omitempty"`
-	Name      string  `json:"name,omitempty"`
-	ToolUseID string  `json:"tool_use_id,omitempty"`
-	IsError   bool    `json:"is_error,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 }
 
@@ -111,6 +111,12 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// lastReportedStatus tracks the status most recently sent to the UI so
 	// the PTY-interrupt pass (below) can tell whether the turn is working.
 	var lastReportedStatus string
+	// lastWorkingAt marks when the current working turn began. PTY input is
+	// handled independently from transcript polling, so an interrupt sent
+	// while the card was idle can otherwise be observed after a new prompt has
+	// already made the card working. Only interrupts sent during this turn can
+	// cancel it.
+	var lastWorkingAt time.Time
 	// PTY-interrupt detection. Command Code never persists an interrupted
 	// turn (an in-flight turn is dropped from the transcript), so
 	// transcript-only detection leaves the card showing the stale working
@@ -120,7 +126,10 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// until a genuinely NEW user prompt lands past interruptBoundarySize,
 	// because the transcript may keep showing the pre-interrupt working
 	// state until the next prompt is written.
-	var lastInterruptSeen time.Time
+	// Ignore an interrupt that predates this watcher. A reopened Command Code
+	// session can inherit its terminal leaf's previous Ctrl+C, but that says
+	// nothing about the restored conversation.
+	lastInterruptSeen := agent.LastPtyInterrupt(sessionID)
 	var interruptApplied bool
 	var interruptBoundarySize int64
 
@@ -153,6 +162,11 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		if info.Size() <= lastFileSize {
 			return false
 		}
+		// The first read consumes a pre-existing transcript when reopening a
+		// session. Its final user message is historical, not proof that the
+		// restored session is currently running. Subsequent appended messages
+		// still report their normal live status.
+		initialRead := lastFileSize == 0
 		// New agent activity past the interrupt boundary clears the sticky
 		// interrupt. Command Code never persists an interrupted turn, so the
 		// transcript stops growing after a real interrupt until the user
@@ -168,8 +182,18 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			if title != "" {
 				sessionTitle = title
 			}
+			if resume && initialRead {
+				switch status {
+				case "thinking", "executing", "tool_failed", "waiting_input":
+					status, tool, details = "idle", "", ""
+				}
+			}
 			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
 				status = "interrupted"
+			}
+			switch status {
+			case "thinking", "executing", "tool_failed":
+				lastWorkingAt = time.Now()
 			}
 			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
@@ -243,7 +267,8 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				last := agent.LastPtyInterrupt(sessionID)
 				if last.After(lastInterruptSeen) {
 					lastInterruptSeen = last
-					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+					if last.After(lastWorkingAt) &&
+						(lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed") {
 						interruptApplied = true
 						lastReportedStatus = "interrupted"
 						interruptBoundarySize = lastFileSize
