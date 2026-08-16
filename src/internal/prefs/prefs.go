@@ -22,7 +22,6 @@ type PetsConfig struct {
 
 type TerminalBackground struct {
 	AssetID     string  `json:"assetId"`
-	Opacity     float64 `json:"opacity"`
 	Overlay     float64 `json:"overlay"`
 	Blur        float64 `json:"blur"`
 	ApplyToPage bool    `json:"applyToPage"`
@@ -128,7 +127,7 @@ func defaultCustomization() CustomizationState {
 	c.Editor.Theme, c.Editor.FontSize, c.Editor.Minimap = "dark", 12, true
 	c.Editor.TokenColors = map[string]string{}
 	c.Terminal.Theme, c.Terminal.FontSize = "dark", 13
-	c.Terminal.Background.Opacity, c.Terminal.Background.Overlay = 1, 0.35
+	c.Terminal.Background.Overlay = 0.35
 	c.Layout.SidebarOrder = "workspace-explorer"
 	return c
 }

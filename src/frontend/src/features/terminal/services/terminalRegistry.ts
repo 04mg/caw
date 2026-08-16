@@ -279,7 +279,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
   const customization = getCustomization()
-  const currentTerminalTheme = terminalTheme(customization, Boolean(customization.terminal.background.assetId) || customization.terminal.background.opacity < 1)
+  const currentTerminalTheme = terminalTheme(customization, Boolean(customization.terminal.background.assetId))
   const term = new Terminal({
     allowTransparency: true,
     cursorBlink: true,
@@ -1116,7 +1116,7 @@ export function setAllTerminalFontSizes(size: number) {
 }
 
 export function applyTerminalCustomization(customization: CustomizationState) {
-  const theme = terminalTheme(customization, Boolean(customization.terminal.background.assetId) || customization.terminal.background.opacity < 1)
+  const theme = terminalTheme(customization, Boolean(customization.terminal.background.assetId))
   for (const inst of registry.values()) {
     inst.term.options.theme = theme
   }

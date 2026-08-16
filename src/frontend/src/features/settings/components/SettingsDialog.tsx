@@ -834,11 +834,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               />
             </label>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] text-muted-foreground">Opacity {Math.round(customization.terminal.background.opacity * 100)}%</label>
-              <Slider value={[customization.terminal.background.opacity * 100]} min={0} max={100} step={5} onValueChange={([opacity]) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, opacity: opacity / 100 } } })} />
-              {!customization.terminal.background.assetId && <p className="text-[10px] text-muted-foreground">Lower opacity lets your browser background show through when supported.</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
               <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
               <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } })} />
             </div>

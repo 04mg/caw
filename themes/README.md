@@ -26,7 +26,7 @@ The selected theme is applied immediately and persisted for every device connect
 ## Tuning
 
 - **Theme name**: `uiTheme` is the name displayed in the dropdown (for example, `"Dracula"`).
-- **Terminal and page background**: upload media in **Terminal background**, optionally apply it to the full page, and tune its opacity or darkness. Opacity also works without media when the browser permits transparent page backgrounds.
+- **Terminal and page background**: upload media in **Terminal background**, optionally apply it to the full page, and tune its darkness.
 - **Font size**: tweak `editor.fontSize` and `terminal.fontSize` in Custom JSON.
 - **Syntax colors**: the `editor.tokenColors` map controls code highlighting across every supported language (including JSON keys, values, numbers, keywords, and punctuation) and the terminal's ANSI palette.
 - **Terminal colors**: add hex `terminal.*` entries to `colors` (for example, `"terminal.background"`, `"terminal.foreground"`, or `"terminal.red"`) to override the terminal's derived colors.

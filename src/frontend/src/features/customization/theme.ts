@@ -4,7 +4,6 @@ export type SidebarOrder = 'workspace-explorer' | 'explorer-workspace'
 
 export interface TerminalBackground {
   assetId: string
-  opacity: number
   overlay: number
   blur: number
   applyToPage: boolean
@@ -172,7 +171,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   terminal: {
     theme: 'dark',
     fontSize: 13,
-    background: { assetId: '', opacity: 1, overlay: 0.35, blur: 0, applyToPage: false },
+    background: { assetId: '', overlay: 0.35, blur: 0, applyToPage: false },
   },
   layout: { sidebarOrder: 'workspace-explorer' },
 }
@@ -207,6 +206,8 @@ export function bundledTheme(name: 'Caw Dark' | 'Caw Light'): CustomizationState
 export function normalizeCustomization(value: Partial<CustomizationState> | undefined): CustomizationState {
   const v = value ?? {}
   const colors = normalizeColorSchemes(v.colors)
+  const legacyBackground = v.terminal?.background as TerminalBackground & { opacity?: number } | undefined
+  const { opacity: _legacyOpacity, ...background } = legacyBackground ?? {}
   const legacyThemeNames: Record<string, string> = {
     light: 'Caw Light',
     dark: 'Caw Dark',
@@ -225,7 +226,7 @@ export function normalizeCustomization(value: Partial<CustomizationState> | unde
     terminal: {
       ...DEFAULT_CUSTOMIZATION.terminal,
       ...v.terminal,
-      background: { ...DEFAULT_CUSTOMIZATION.terminal.background, ...v.terminal?.background },
+      background: { ...DEFAULT_CUSTOMIZATION.terminal.background, ...background },
     },
     layout: { ...DEFAULT_CUSTOMIZATION.layout, ...v.layout },
   }
@@ -255,7 +256,6 @@ export function applyCustomization(value: CustomizationState) {
   for (const [name, color] of Object.entries(colors)) {
     if (name in defaults) root.style.setProperty(`--${name}`, color)
   }
-  root.style.setProperty('--terminal-opacity', String(value.terminal.background.opacity))
   window.dispatchEvent(new CustomEvent('caw:customization-updated', { detail: value }))
 }
 
