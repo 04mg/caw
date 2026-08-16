@@ -564,6 +564,31 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   }
 
+  const removeTerminalBackground = async () => {
+    const assetId = customization.terminal.background.assetId
+    if (!assetId) return
+
+    setMediaUploadError('')
+    try {
+      const res = await fetch(`/api/terminal/background-assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error?.message || `Remove failed (${res.status})`)
+      }
+      setMediaAssets((assets) => assets.filter((asset) => asset.id !== assetId))
+      saveCustomization(normalizeCustomization({
+        ...customization,
+        terminal: {
+          ...customization.terminal,
+          background: { ...customization.terminal.background, assetId: '' },
+        },
+      }))
+    } catch (error) {
+      console.error('Failed to remove terminal background', error)
+      setMediaUploadError(error instanceof Error ? error.message : 'Remove failed')
+    }
+  }
+
   const applyThemeJson = () => {
     try {
       const parsed = JSON.parse(themeJson) as Partial<CustomizationState>
@@ -744,7 +769,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <div className="flex flex-col gap-3">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs font-medium">Customization JSON</label>
-                      <p className="text-[10px] text-muted-foreground">Edit every UI and Monaco color directly, then apply the JSON.</p>
+                      <p className="text-[10px] text-muted-foreground">Edit UI colors, Monaco colors, and editor.tokenColors syntax colors directly, then apply the JSON.</p>
                     </div>
                     <textarea
                       value={themeJson}
@@ -785,15 +810,26 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       {mediaUploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     </div>
                     {mediaUploadError && <p className="text-[11px] text-destructive">{mediaUploadError}</p>}
-                      {mediaAssets.length > 0 && (
+                    {mediaAssets.length > 0 && (
+                      <div className="flex gap-2">
                         <select
                           value={customization.terminal.background.assetId}
                           onChange={(e) => saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: e.target.value } } }))}
-                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs"
+                          className="min-w-0 flex-1 px-3 py-2 rounded-lg border border-input bg-background text-xs"
                         >
                           <option value="">No background media</option>
                           {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.filename}</option>)}
                         </select>
+                        <button
+                          type="button"
+                          disabled={!customization.terminal.background.assetId}
+                          onClick={() => void removeTerminalBackground()}
+                          className="flex h-8 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs text-muted-foreground hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </button>
+                      </div>
                       )}
                       <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
                       <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } }))} />

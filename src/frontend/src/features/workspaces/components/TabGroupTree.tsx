@@ -12,6 +12,7 @@ interface TabGroupTreeProps {
   activePaneId: string
   gitStatuses: Record<string, string>
   folderSidebarCollapsed?: boolean
+  folderSidebarOnRight?: boolean
 
   onSetActiveGroup: (groupId: string) => void
   onSwitchTab: (tabId: string, groupId: string) => void
@@ -48,6 +49,7 @@ export function TabGroupTree({
   activePaneId,
   gitStatuses,
   folderSidebarCollapsed = true,
+  folderSidebarOnRight = true,
   onSetActiveGroup,
   onSwitchTab,
   onCloseTab,
@@ -79,6 +81,7 @@ export function TabGroupTree({
         activePaneId={activePaneId}
         gitStatuses={gitStatuses}
         folderSidebarCollapsed={folderSidebarCollapsed}
+        folderSidebarOnRight={folderSidebarOnRight}
         onSetActiveGroup={onSetActiveGroup}
         onSwitchTab={onSwitchTab}
         onCloseTab={onCloseTab}
@@ -128,6 +131,7 @@ export function TabGroupTree({
             activePaneId={activePaneId}
             gitStatuses={gitStatuses}
             folderSidebarCollapsed={folderSidebarCollapsed}
+            folderSidebarOnRight={folderSidebarOnRight}
             onSetActiveGroup={onSetActiveGroup}
             onSwitchTab={onSwitchTab}
             onCloseTab={onCloseTab}

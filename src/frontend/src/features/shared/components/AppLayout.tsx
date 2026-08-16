@@ -2108,6 +2108,7 @@ export function AppLayout() {
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
                             folderSidebarCollapsed={folderSidebarCollapsed}
+                            folderSidebarOnRight={explorerSidebarOnRight}
                             onSetActiveGroup={handleSetActiveGroup}
                             onSwitchTab={switchTab}
                             onCloseTab={closeTab}

@@ -137,6 +137,7 @@ export function SplitLayout({
 
   const { onSeparatorPointerDown } = useSplitResize({
     orientation,
+    reverse,
     sizes: resolvedSizes,
     minSizes: resolvedMin,
     maxSizes: resolvedMax,

@@ -19,6 +19,7 @@ interface DragState {
 
 interface UseSplitResizeArgs {
   orientation: 'horizontal' | 'vertical'
+  reverse?: boolean
   sizes: SizeInput[]
   minSizes: SizeInput[]
   maxSizes: SizeInput[]
@@ -35,6 +36,7 @@ interface UseSplitResizeArgs {
 // sizes in state and feeds the new array back into the hook between frames.
 export function useSplitResize({
   orientation,
+  reverse = false,
   sizes,
   minSizes,
   maxSizes,
@@ -63,10 +65,11 @@ export function useSplitResize({
   const computeNext = useCallback(
     (drag: DragState, clientPos: number): number[] => {
       const deltaPx = drag.axis === 'x' ? clientPos - drag.startClient : clientPos - drag.startClient
-      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 : 0
+      const direction = drag.axis === 'x' && reverse ? -1 : 1
+      const deltaPct = drag.containerPx > 0 ? (deltaPx / drag.containerPx) * 100 * direction : 0
       return applyDrag(drag.startSizesPct, drag.startMinPct, drag.startMaxPct, drag.index, deltaPct)
     },
-    [],
+    [reverse],
   )
 
   const onPointerMove = useCallback(
@@ -129,7 +132,7 @@ export function useSplitResize({
       window.addEventListener('pointerup', onPointerUp)
       window.addEventListener('pointercancel', onPointerUp)
     },
-    [orientation, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
+    [orientation, reverse, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
   )
 
   return { onSeparatorPointerDown, dragRef }

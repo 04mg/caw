@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from 'react'
-import { Settings, Folder, PanelRight } from 'lucide-react'
+import { Settings, Folder, PanelLeft, PanelRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { DraggableTabBar } from './DraggableTabBar'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
@@ -17,6 +17,7 @@ interface TabGroupViewProps {
   activePaneId: string
   gitStatuses: Record<string, string>
   folderSidebarCollapsed?: boolean
+  folderSidebarOnRight?: boolean
   
   onSetActiveGroup: (groupId: string) => void
   onSwitchTab: (tabId: string, groupId: string) => void
@@ -52,6 +53,7 @@ export function TabGroupView({
   activePaneId,
   gitStatuses,
   folderSidebarCollapsed = true,
+  folderSidebarOnRight = true,
   onSetActiveGroup,
   onSwitchTab,
   onCloseTab,
@@ -153,7 +155,7 @@ export function TabGroupView({
     >
       {/* Group Tab Bar */}
       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
-        <div className="flex flex-1 overflow-x-auto h-full scrollbar-none">
+        <div className={`flex flex-1 overflow-x-auto h-full scrollbar-none ${folderSidebarOnRight ? '' : 'order-last'}`}>
           <DraggableTabBar
             tabs={groupTabs}
             activeIndex={group.activeTabIndex}
@@ -167,9 +169,9 @@ export function TabGroupView({
           />
         </div>
         {isTopRightGroup && (
-          <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
+          <div className={`flex items-center shrink-0 h-full bg-background ${folderSidebarOnRight ? 'border-l' : 'order-first border-r'}`}>
             {/* Settings Button */}
-            <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
+            <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? (folderSidebarOnRight ? 'border-r' : 'border-l') + ' border-border' : ''}`} style={{ width: 36 }}>
               <Button
                 variant="ghost"
                 size="icon"
@@ -192,7 +194,9 @@ export function TabGroupView({
                   title="Workspace Files"
                 >
                   <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                  <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                  {folderSidebarOnRight
+                    ? <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                    : <PanelLeft className="h-3.5 w-3.5 hidden group-hover:block" />}
                 </Button>
               </div>
             )}
