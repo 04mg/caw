@@ -252,8 +252,8 @@ func (s *Store) Set(as AppState) {
 	var preservedSettings [][2]string
 	for _, key := range []string{
 		"vapid_public_key", "vapid_private_key",
-		"pref_default_new_agent", "pref_disabled_agents", "pref_agent_cmds", "pref_default_shell", "pref_hotkeys",
-		"pref_pets",
+		"pref_default_new_agent", "pref_disabled_agents", "pref_disabled_providers", "pref_agent_cmds",
+		"pref_default_shell", "pref_parked_terminals", "pref_hotkeys", "pref_pets", "pref_customization",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
