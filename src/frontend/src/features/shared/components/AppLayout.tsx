@@ -1822,7 +1822,6 @@ export function AppLayout() {
   return (
     <div
       className="relative isolate flex h-full w-full flex-col bg-background select-none"
-      style={pageBackground.applyToPage ? { backgroundColor: `hsl(var(--background) / ${pageBackground.opacity})` } : undefined}
     >
       {pageBackground.applyToPage && (
         <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
@@ -1834,14 +1833,14 @@ export function AppLayout() {
               muted
               loop
               playsInline
-              style={{ opacity: pageBackground.opacity, filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+              style={{ filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
             />
           )}
           {pageBackground.assetId && (
             <img
               src={`/api/terminal/background-assets/${encodeURIComponent(pageBackground.assetId)}/content`}
               className="absolute inset-0 h-full w-full object-cover"
-              style={{ opacity: pageBackground.opacity, filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+              style={{ filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
             />
           )}
           {pageBackground.assetId && (
