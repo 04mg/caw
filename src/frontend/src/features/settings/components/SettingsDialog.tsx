@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/di
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
@@ -84,6 +84,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [customization, setCustomizationState] = useState<CustomizationState>(() => getCustomization())
   const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; filename: string; contentType: string; contentUrl: string }>>([])
   const [mediaUploading, setMediaUploading] = useState(false)
+  const [mediaUploadError, setMediaUploadError] = useState('')
+  const mediaInputRef = useRef<HTMLInputElement | null>(null)
+  const [themeJson, setThemeJson] = useState(() => JSON.stringify(getCustomization(), null, 2))
+  const [themeJsonError, setThemeJsonError] = useState('')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [disabledProviders, setDisabledProviders] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
@@ -274,6 +278,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         const v = p.parkedTerminals
         setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
         setCustomizationState(p.customization)
+        setThemeJson(JSON.stringify(p.customization, null, 2))
       })
       fetch('/api/terminal/background-assets').then((res) => res.ok ? res.json() : null).then((json) => {
         if (Array.isArray(json?.data)) setMediaAssets(json.data)
@@ -530,45 +535,43 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   const saveCustomization = (next: CustomizationState) => {
     setCustomizationState(next)
+    setThemeJson(JSON.stringify(next, null, 2))
+    setThemeJsonError('')
     applyCustomization(next)
     void savePref(() => setCustomization(next))
   }
 
   const uploadTerminalBackground = async (file: File) => {
     setMediaUploading(true)
+    setMediaUploadError('')
     try {
       const form = new FormData()
       form.set('file', file)
       const res = await fetch('/api/terminal/background-assets', { method: 'POST', body: form })
       const json = await res.json().catch(() => null)
-      if (!res.ok || !json?.data) throw new Error('Upload failed')
+      if (!res.ok || !json?.data) {
+        const message = json?.error?.message || `Upload failed (${res.status})`
+        throw new Error(message)
+      }
       setMediaAssets((assets) => [...assets, json.data])
       saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: json.data.id } } }))
     } catch (error) {
       console.error('Failed to upload terminal background', error)
+      setMediaUploadError(error instanceof Error ? error.message : 'Upload failed')
     } finally {
       setMediaUploading(false)
     }
 
   }
 
-  const exportCustomization = () => {
-    const blob = new Blob([JSON.stringify(customization, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'caw-theme.json'
-    link.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const importCustomization = async (file: File) => {
+  const applyThemeJson = () => {
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<CustomizationState>
+      const parsed = JSON.parse(themeJson) as Partial<CustomizationState>
       if (parsed.version !== 1) throw new Error('Unsupported theme version')
       saveCustomization(normalizeCustomization(parsed))
+      setThemeJsonError('')
     } catch (error) {
-      console.error('Failed to import Caw theme', error)
+      setThemeJsonError(error instanceof Error ? error.message : 'Invalid customization JSON')
     }
   }
 
@@ -699,11 +702,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </button>
               </div>
 
-              <div className="pt-4 mt-2">
-                <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-4">
                   <label className="text-xs font-medium">Terminal Theme</label>
                   <p className="text-[10px] text-muted-foreground">Match the terminal background with the rest of the UI.</p>
-                  <div className="flex gap-2 mt-1">
+                  <div className="flex gap-2">
                     <button
                       onClick={() => {
                         setTerminalTheme('dark')
@@ -734,33 +736,47 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     </button>
                   </div>
 
-                  <div className="pt-4 mt-2 flex flex-col gap-3">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium">Customization JSON</label>
+                      <p className="text-[10px] text-muted-foreground">Edit every UI and Monaco color directly, then apply the JSON.</p>
+                    </div>
+                    <textarea
+                      value={themeJson}
+                      onChange={(e) => setThemeJson(e.target.value)}
+                      spellCheck={false}
+                      className="min-h-56 w-full resize-y rounded-lg border border-input bg-background p-3 text-[11px] font-mono leading-relaxed"
+                      aria-label="Customization JSON"
+                    />
+                    {themeJsonError && <p className="text-[11px] text-destructive">{themeJsonError}</p>}
+                    <button onClick={applyThemeJson} className="self-start rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Apply JSON</button>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
                     <div>
-                      <label className="text-xs font-medium">Accent color token</label>
-                      <p className="text-[10px] text-muted-foreground">HSL values used by buttons, focus rings, and selected controls.</p>
+                      <label className="text-xs font-medium">Terminal background</label>
+                      <p className="text-[10px] text-muted-foreground">Use an uploaded image or video behind terminals.</p>
                     </div>
-
-                    <div className="pt-4 mt-2 flex items-center gap-2">
-                      <button onClick={exportCustomization} className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-accent/20">Export Caw theme</button>
-                      <label className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-accent/20 cursor-pointer">
-                        Import Caw theme
-                        <input type="file" accept="application/json,.json" className="hidden" onChange={(e) => {
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={mediaInputRef}
+                        type="file"
+                        accept="image/*,video/*"
+                        disabled={mediaUploading}
+                        className="hidden"
+                        onChange={(e) => {
                           const file = e.target.files?.[0]
-                          if (file) void importCustomization(file)
+                          if (file) void uploadTerminalBackground(file)
                           e.currentTarget.value = ''
-                        }} />
-                      </label>
+                        }}
+                      />
+                      <button type="button" disabled={mediaUploading} onClick={() => mediaInputRef.current?.click()} className="flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs text-muted-foreground hover:bg-accent/20">
+                        <ImagePlus className="h-3.5 w-3.5 shrink-0" />
+                        <span className="max-w-48 truncate">{mediaUploading ? 'Uploading…' : 'Choose image or video…'}</span>
+                      </button>
+                      {mediaUploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     </div>
-
-                    <div className="pt-4 mt-2 flex flex-col gap-3">
-                      <div>
-                        <label className="text-xs font-medium">Terminal background</label>
-                        <p className="text-[10px] text-muted-foreground">Use an uploaded image or video behind terminals.</p>
-                      </div>
-                      <input type="file" accept="image/*,video/*" disabled={mediaUploading} onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) void uploadTerminalBackground(file)
-                      }} className="text-xs" />
+                    {mediaUploadError && <p className="text-[11px] text-destructive">{mediaUploadError}</p>}
                       {mediaAssets.length > 0 && (
                         <select
                           value={customization.terminal.background.assetId}
@@ -771,15 +787,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.filename}</option>)}
                         </select>
                       )}
-                      <label className="text-[10px] text-muted-foreground">Overlay {Math.round(customization.terminal.background.overlay * 100)}%</label>
+                      <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
                       <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } }))} />
-                    </div>
-                    <input
-                      value={customization.colors.primary ?? ''}
-                      onChange={(e) => saveCustomization(normalizeCustomization({ ...customization, colors: { ...customization.colors, primary: e.target.value } }))}
-                      placeholder="e.g. 220 90% 60%"
-                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono"
-                    />
+                  </div>
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <label className="text-xs font-medium">Sidebar order</label>
@@ -791,8 +801,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       >
                         {customization.layout.sidebarOrder === 'workspace-explorer' ? 'Workspace left' : 'Explorer left'}
                       </button>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
