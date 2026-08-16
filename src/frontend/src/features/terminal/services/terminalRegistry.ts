@@ -332,6 +332,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
     ? { ...theme, background: 'transparent' }
     : theme
   const term = new Terminal({
+    allowTransparency: true,
     cursorBlink: true,
     fontSize,
     fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace",

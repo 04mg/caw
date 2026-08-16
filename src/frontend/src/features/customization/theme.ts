@@ -11,7 +11,12 @@ export interface CustomizationState {
   version: 1
   uiTheme: 'light' | 'dark' | 'system'
   colors: Record<string, string>
-  editor: { theme: 'dark' | 'light'; fontSize: number; minimap: boolean }
+  editor: {
+    theme: 'dark' | 'light'
+    fontSize: number
+    minimap: boolean
+    tokenColors: Record<string, string>
+  }
   terminal: { theme: 'dark' | 'light'; fontSize: number; background: TerminalBackground }
   layout: { sidebarOrder: SidebarOrder }
 }
@@ -92,11 +97,27 @@ const MONACO_COLORS: Record<string, string> = {
   'scrollbarSlider.activeBackground': '#BFBFBF66',
 }
 
+const MONACO_TOKEN_COLORS: Record<string, string> = {
+  comment: '#6A9955',
+  string: '#CE9178',
+  keyword: '#C586C0',
+  number: '#B5CEA8',
+  regexp: '#D16969',
+  type: '#4EC9B0',
+  class: '#4EC9B0',
+  function: '#DCDCAA',
+  variable: '#9CDCFE',
+  constant: '#4FC1FF',
+  delimiter: '#D4D4D4',
+  tag: '#569CD6',
+  attribute: '#9CDCFE',
+}
+
 export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   version: 1,
   uiTheme: 'system',
   colors: { ...DARK_COLORS, ...MONACO_COLORS },
-  editor: { theme: 'dark', fontSize: 12, minimap: true },
+  editor: { theme: 'dark', fontSize: 12, minimap: true, tokenColors: MONACO_TOKEN_COLORS },
   terminal: {
     theme: 'dark',
     fontSize: 13,
@@ -111,7 +132,11 @@ export function normalizeCustomization(value: Partial<CustomizationState> | unde
     ...DEFAULT_CUSTOMIZATION,
     ...v,
     colors: { ...DEFAULT_CUSTOMIZATION.colors, ...v.colors },
-    editor: { ...DEFAULT_CUSTOMIZATION.editor, ...v.editor },
+    editor: {
+      ...DEFAULT_CUSTOMIZATION.editor,
+      ...v.editor,
+      tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors, ...v.editor?.tokenColors },
+    },
     terminal: {
       ...DEFAULT_CUSTOMIZATION.terminal,
       ...v.terminal,
@@ -154,7 +179,10 @@ export function monacoTheme(value: CustomizationState) {
   return {
     base: dark ? 'vs-dark' : 'vs',
     inherit: true,
-    rules: [],
+    rules: Object.entries(value.editor.tokenColors).map(([token, foreground]) => ({
+      token,
+      foreground: foreground.replace(/^#/, ''),
+    })),
     colors: Object.fromEntries(Object.keys(fallback).map((key) => [key, colors[key] || fallback[key]])),
   }
 }
