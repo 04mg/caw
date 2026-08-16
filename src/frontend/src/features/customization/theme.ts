@@ -252,7 +252,11 @@ export function monacoTheme(value: CustomizationState) {
   }))
   return {
     base: dark ? 'vs-dark' : 'vs',
-    inherit: true,
+    // Built-in themes include language-specific token rules (for example,
+    // `keyword.go`) that override the user palette's generic `keyword` rule.
+    // Keep the base only for the editor's dark/light chrome; token colors must
+    // come exclusively from the customization so every language is themed.
+    inherit: false,
     rules: [...rules, ...jsonRules],
     colors: Object.fromEntries(Object.keys(fallback).map((key) => [key, colors[key] || fallback[key]])),
   }
