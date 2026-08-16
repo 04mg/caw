@@ -7,7 +7,8 @@ import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLe
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
+import { applyCustomization, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -80,6 +81,9 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
+  const [customization, setCustomizationState] = useState<CustomizationState>(() => getCustomization())
+  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; name: string; contentType: string }>>([])
+  const [mediaUploading, setMediaUploading] = useState(false)
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [disabledProviders, setDisabledProviders] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
@@ -269,7 +273,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setShellPath(p.defaultShell)
         const v = p.parkedTerminals
         setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
+        setCustomizationState(p.customization)
       })
+      fetch('/api/media').then((res) => res.ok ? res.json() : null).then((json) => {
+        if (Array.isArray(json?.data)) setMediaAssets(json.data)
+      }).catch(() => {})
 
       const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
@@ -514,6 +522,33 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       root.classList.remove('light')
     }
     localStorage.setItem('caw:theme', newTheme)
+    const next = normalizeCustomization({ ...customization, uiTheme: newTheme })
+    setCustomizationState(next)
+    applyCustomization(next)
+    void setCustomization(next)
+  }
+
+  const saveCustomization = (next: CustomizationState) => {
+    setCustomizationState(next)
+    applyCustomization(next)
+    void savePref(() => setCustomization(next))
+  }
+
+  const uploadTerminalBackground = async (file: File) => {
+    setMediaUploading(true)
+    try {
+      const form = new FormData()
+      form.set('file', file)
+      const res = await fetch('/api/media', { method: 'POST', body: form })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.data) throw new Error('Upload failed')
+      setMediaAssets((assets) => [...assets, json.data])
+      saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: json.data.id } } }))
+    } catch (error) {
+      console.error('Failed to upload terminal background', error)
+    } finally {
+      setMediaUploading(false)
+    }
   }
 
   // savePref persists a work-pref change and shows transient feedback
@@ -676,6 +711,54 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <Sun className="h-3.5 w-3.5 text-amber-500" />
                       Light
                     </button>
+                  </div>
+
+                  <div className="pt-4 mt-2 flex flex-col gap-3">
+                    <div>
+                      <label className="text-xs font-medium">Accent color token</label>
+                      <p className="text-[10px] text-muted-foreground">HSL values used by buttons, focus rings, and selected controls.</p>
+                    </div>
+
+                    <div className="pt-4 mt-2 flex flex-col gap-3">
+                      <div>
+                        <label className="text-xs font-medium">Terminal background</label>
+                        <p className="text-[10px] text-muted-foreground">Use an uploaded image or video behind terminals.</p>
+                      </div>
+                      <input type="file" accept="image/*,video/*" disabled={mediaUploading} onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) void uploadTerminalBackground(file)
+                      }} className="text-xs" />
+                      {mediaAssets.length > 0 && (
+                        <select
+                          value={customization.terminal.background.assetId}
+                          onChange={(e) => saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: e.target.value } } }))}
+                          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs"
+                        >
+                          <option value="">No background media</option>
+                          {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+                        </select>
+                      )}
+                      <label className="text-[10px] text-muted-foreground">Overlay {Math.round(customization.terminal.background.overlay * 100)}%</label>
+                      <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomization(normalizeCustomization({ ...customization, terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } }))} />
+                    </div>
+                    <input
+                      value={customization.colors.primary ?? ''}
+                      onChange={(e) => saveCustomization(normalizeCustomization({ ...customization, colors: { ...customization.colors, primary: e.target.value } }))}
+                      placeholder="e.g. 220 90% 60%"
+                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <label className="text-xs font-medium">Sidebar order</label>
+                        <p className="text-[10px] text-muted-foreground">Swap the Workspace and File Explorer sidebars.</p>
+                      </div>
+                      <button
+                        onClick={() => saveCustomization(normalizeCustomization({ ...customization, layout: { sidebarOrder: customization.layout.sidebarOrder === 'workspace-explorer' ? 'explorer-workspace' : 'workspace-explorer' } }))}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-accent/20"
+                      >
+                        {customization.layout.sidebarOrder === 'workspace-explorer' ? 'Workspace left' : 'Explorer left'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

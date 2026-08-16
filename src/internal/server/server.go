@@ -18,6 +18,7 @@ import (
 	_ "github.com/04mg/caw/internal/quota/providers"
 	"github.com/04mg/caw/internal/state"
 	"github.com/04mg/caw/internal/terminal"
+	"github.com/04mg/caw/internal/terminalmedia"
 	"github.com/04mg/caw/internal/version"
 	"github.com/04mg/caw/internal/workspace"
 	"github.com/04mg/caw/internal/ws"
@@ -81,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	prefs.RegisterHTTP(api, s.store, s.mux)
 	state.RegisterHTTP(api, s.store, s.mux)
 	pets.Register(api, s.store)
+	terminalmedia.Register(api, s.store)
 	terminal.Register(api, s.store, &ws.TerminalUpgrader)
 	agent.Register(api)
 	workspace.Register(api)

@@ -50,7 +50,8 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getDefaultNewAgent, getHotkey, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { getCustomization, getDefaultNewAgent, getHotkey, loadPrefs, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
@@ -194,6 +195,16 @@ export function AppLayout() {
     } else {
       root.classList.remove('light')
     }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    loadPrefs().then(() => {
+      if (active) applyCustomization(getCustomization())
+    })
+    return subscribePrefs(() => {
+      if (active) applyCustomization(getCustomization())
+    })
   }, [])
 
   useEffect(() => {
@@ -2045,6 +2056,7 @@ export function AppLayout() {
             <div className="flex h-full w-full">
               <SplitLayout
                 orientation="horizontal"
+                reverse={getCustomization().layout.sidebarOrder === 'explorer-workspace'}
                 className="flex-1 h-full w-full"
                 sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
