@@ -230,13 +230,30 @@ export function monacoTheme(value: CustomizationState) {
   const dark = value.editor.theme === 'dark'
   const colors = dark ? value.colors.dark : value.colors.light
   const fallback = dark ? MONACO_COLORS : LIGHT_MONACO_COLORS
+  const tokens = value.editor.tokenColors
+  const rules = Object.entries(tokens).map(([token, foreground]) => ({
+    token,
+    foreground: foreground.replace(/^#/, ''),
+  }))
+  const jsonRules = [
+    ['comment.block.json', 'comment'],
+    ['comment.line.json', 'comment'],
+    ['string.value.json', 'string'],
+    ['string.key.json', 'attribute'],
+    ['number.json', 'number'],
+    ['keyword.json', 'keyword'],
+    ['delimiter.bracket.json', 'delimiter'],
+    ['delimiter.array.json', 'delimiter'],
+    ['delimiter.colon.json', 'delimiter'],
+    ['delimiter.comma.json', 'delimiter'],
+  ].map(([token, color]) => ({
+    token,
+    foreground: (tokens[color] || MONACO_TOKEN_COLORS[color]).replace(/^#/, ''),
+  }))
   return {
     base: dark ? 'vs-dark' : 'vs',
     inherit: true,
-    rules: Object.entries(value.editor.tokenColors).map(([token, foreground]) => ({
-      token,
-      foreground: foreground.replace(/^#/, ''),
-    })),
+    rules: [...rules, ...jsonRules],
     colors: Object.fromEntries(Object.keys(fallback).map((key) => [key, colors[key] || fallback[key]])),
   }
 }

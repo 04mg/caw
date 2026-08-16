@@ -34,7 +34,7 @@ The theme is applied immediately and persisted for every device connected to Caw
 - **UI theme**: all presets set `uiTheme` to `"dark"`. The Light / Dark / System buttons above the JSON editor override this on top of the preset.
 - **Terminal background**: the presets disable the terminal background image (`assetId: ""`). To add one, upload it in **Terminal background** after applying a theme.
 - **Font size**: tweak `editor.fontSize` and `terminal.fontSize` in the JSON, or use the font size controls in the settings.
-- **Syntax colors**: the `editor.tokenColors` map controls code highlighting and the terminal's ANSI palette.
+- **Syntax colors**: the `editor.tokenColors` map controls code highlighting (including JSON keys, values, numbers, keywords, and punctuation) and the terminal's ANSI palette.
 - **Terminal colors**: add hex `terminal.*` entries to `colors` (for example, `"terminal.background"`, `"terminal.foreground"`, or `"terminal.red"`) to override the terminal's derived colors.
 
 ## Adding a theme
