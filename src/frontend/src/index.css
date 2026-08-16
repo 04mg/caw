@@ -136,6 +136,12 @@ html, body, #root {
   height: 100%;
   touch-action: none;
   border-bottom: none !important;
+  background: transparent !important;
+}
+
+.xterm-screen,
+.xterm-screen canvas {
+  background: transparent !important;
 }
 
 .xterm-keyboard-open .xterm,
