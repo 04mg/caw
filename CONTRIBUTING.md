@@ -19,9 +19,11 @@ The next version is computed from the **git tags** in the repo. The action scans
 
 | In commit message (or body)        | Bump  | From `v1.2.3` |
 |------------------------------------|-------|---------------|
-| `#major`, `major:`, `BREAKING CHANGE` | **major** | `v2.0.0` |
-| `#minor`, `minor:`, `feature:`, `feat:` | **minor** | `v1.3.0` |
-| `default` | **patch** | `v1.2.4` |
+| `#major`, `major:`                 | **major** | `v2.0.0` |
+| `#minor`, `minor:`                 | **minor** | `v1.3.0` |
+| `default`                          | **patch** | `v1.2.4` |
+
+> Note: only the explicit keywords above trigger a bump. Conventional commit types such as `feat:`/`feature:` do not bump minor, and `BREAKING CHANGE` does not bump major.
 
 ## Branches
 ```
