@@ -718,6 +718,11 @@ export function AppLayout() {
   // Ref that tracks the last known AgentStatus per sessionId so we can
   // detect meaningful transitions (e.g. thinking → waiting_input).
   const prevStatusesRef = useRef<Record<string, AgentStatus>>({})
+  // Subagent/background-task launcher tools. When the agent's last recorded
+  // action was spawning one of these, a subsequent working→idle transition
+  // means the sub-task just finished — not the whole session — so it must not
+  // fire a "finished" notification.
+  const subagentTool = (tool?: string) => tool === 'task' || tool === 'background_task'
   // Pending "finished" notifications: keyed by sessionId, each with a timer
   // that fires after a short delay. If the agent goes back to working before
   // the timer elapses, the notification is cancelled.
@@ -898,7 +903,8 @@ export function AppLayout() {
             triggerAgentNotification(next, 'needs_input')
           } else if (
             (nextS === 'idle' || nextS === 'stopped') &&
-            (prevS === 'thinking' || prevS === 'executing')
+            (prevS === 'thinking' || prevS === 'executing') &&
+            !subagentTool(prev.tool)
           ) {
             // Debounce the "finished" notification: wait 3s before firing.
             // If the agent resumes working within that window (e.g. a brief
