@@ -1821,7 +1821,7 @@ export function AppLayout() {
 
   return (
     <div
-      className="relative isolate flex h-full w-full flex-col bg-background select-none"
+      className={`relative isolate flex h-full w-full flex-col bg-background select-none${pageBackground.applyToPage ? ' page-background-active' : ''}`}
     >
       {pageBackground.applyToPage && (
         <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">

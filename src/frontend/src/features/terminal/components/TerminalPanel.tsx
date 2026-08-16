@@ -82,14 +82,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   useEffect(() => subscribePrefs(() => {
     const next = getCustomization().terminal.background
     setBackground(next)
-    setAllTerminalBackgroundTransparency(Boolean(next.assetId))
+    setAllTerminalBackgroundTransparency(Boolean(next.assetId) || next.applyToPage)
   }), [])
   useEffect(() => {
     const onCustomizationUpdated = (event: Event) => {
       const next = (event as CustomEvent<{ terminal?: { background?: typeof background } }>).detail?.terminal?.background
       if (!next) return
       setBackground(next)
-      setAllTerminalBackgroundTransparency(Boolean(next.assetId))
+      setAllTerminalBackgroundTransparency(Boolean(next.assetId) || next.applyToPage)
     }
     window.addEventListener('caw:customization-updated', onCustomizationUpdated)
     return () => window.removeEventListener('caw:customization-updated', onCustomizationUpdated)
@@ -615,14 +615,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
-      {background.assetId && (
+      {background.assetId && !background.applyToPage && (
         <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
           <video src={`/api/terminal/background-assets/${encodeURIComponent(background.assetId)}/content`} className="absolute inset-0 h-full w-full object-cover" autoPlay muted loop playsInline style={{ filter: `blur(${background.blur}px)`, transform: background.blur ? 'scale(1.04)' : undefined, willChange: 'filter' }} />
           <img src={`/api/terminal/background-assets/${encodeURIComponent(background.assetId)}/content`} className="absolute inset-0 h-full w-full object-cover" style={{ filter: `blur(${background.blur}px)`, transform: background.blur ? 'scale(1.04)' : undefined, willChange: 'filter' }} />
           <div className="absolute inset-0 bg-background" style={{ opacity: background.overlay }} />
         </div>
       )}
-      <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId ? 'transparent' : getTerminalBackground() }} />
+      <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId || background.applyToPage ? 'transparent' : getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button

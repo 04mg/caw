@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ElementType } from 'reac
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
+import { Checkbox } from '@/components/checkbox'
 
 import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
@@ -821,17 +822,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </button>
               </div>
             )}
-            <label className="flex items-center justify-between gap-3 text-xs">
-              <span>
-                <span className="font-medium">Apply to full page</span>
-                <span className="block text-[10px] text-muted-foreground">Show selected media behind the entire workspace.</span>
-              </span>
-              <input
-                type="checkbox"
+            <label className="flex cursor-pointer items-center gap-2.5 text-xs">
+              <Checkbox
                 checked={customization.terminal.background.applyToPage}
-                onChange={(e) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, applyToPage: e.target.checked } } })}
-                className="h-4 w-4 accent-primary"
+                onChange={() => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, applyToPage: !customization.terminal.background.applyToPage } } })}
               />
+              <span className="flex flex-col">
+                <span className="font-medium">Apply to full page</span>
+                <span className="text-[10px] text-muted-foreground">Show selected media behind the entire workspace.</span>
+              </span>
             </label>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
