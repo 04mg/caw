@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
+	_ "modernc.org/sqlite"
 )
 
 type CopilotWatcher struct{}
@@ -27,10 +29,10 @@ type copilotEvent struct {
 
 // copilotAssistantMsg is the data payload for "assistant.message" events.
 type copilotAssistantMsg struct {
-	MessageID     string             `json:"messageId"`
-	Content       string             `json:"content"`
-	ToolRequests  []copilotToolReq   `json:"toolRequests,omitempty"`
-	ReasoningText string             `json:"reasoningText,omitempty"`
+	MessageID     string           `json:"messageId"`
+	Content       string           `json:"content"`
+	ToolRequests  []copilotToolReq `json:"toolRequests,omitempty"`
+	ReasoningText string           `json:"reasoningText,omitempty"`
 }
 
 type copilotToolReq struct {
@@ -52,9 +54,9 @@ type copilotToolResult struct {
 // copilotSessionError is the data payload for "session.error" events: a
 // quota/transport/auth failure that ends the turn abnormally.
 type copilotSessionError struct {
-	ErrorType  string `json:"errorType"`
-	Message    string `json:"message"`
-	ErrorCode  string `json:"errorCode,omitempty"`
+	ErrorType string `json:"errorType"`
+	Message   string `json:"message"`
+	ErrorCode string `json:"errorCode,omitempty"`
 }
 
 // copilotTurnEnd is the data payload for "assistant.turn_end" events.
@@ -79,12 +81,15 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 
 	home, _ := os.UserHomeDir()
 	stateDir := filepath.Join(home, ".copilot", "session-state")
+	sessionStorePath := filepath.Join(home, ".copilot", "session-store.db")
 	const agentID = "copilot"
 
 	watcherStart := time.Now().Add(-10 * time.Second)
 	var lastFileSize int64 = 0
 	var watchedFilePath string
 	var sessionTitle string
+	var lastStatus, lastTool, lastDetails string
+	var lastAssistantDetails string
 	var lastActivity time.Time
 	var silentTicks int
 
@@ -118,9 +123,21 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			return false
 		}
 		wrappedCallback := func(status, tool, details, title string) {
-			if title != "" {
+			// The events file only contains user prompts. Copilot's generated
+			// session name is persisted separately in session-store.db and
+			// must take precedence over that prompt fallback.
+			if generatedTitle := copilotSessionTitle(sessionStorePath, watchedFilePath); generatedTitle != "" {
+				sessionTitle = generatedTitle
+			} else if sessionTitle == "" && title != "" {
 				sessionTitle = title
 			}
+			if status == "idle" && details == "" {
+				details = lastAssistantDetails
+			}
+			if status == "idle" && details != "" {
+				lastAssistantDetails = details
+			}
+			lastStatus, lastTool, lastDetails = status, tool, details
 			callback(status, tool, details, sessionTitle)
 		}
 		w.parseCopilotEvents(watchedFilePath, lastFileSize, wrappedCallback)
@@ -130,12 +147,25 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 		return true
 	}
 
+	refreshSessionTitle := func() {
+		if watchedFilePath == "" || lastStatus == "" {
+			return
+		}
+		title := copilotSessionTitle(sessionStorePath, watchedFilePath)
+		if title == "" || title == sessionTitle {
+			return
+		}
+		sessionTitle = title
+		callback(lastStatus, lastTool, lastDetails, sessionTitle)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-notifyCh:
 			readWatched()
+			refreshSessionTitle()
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
@@ -156,35 +186,57 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 				if !readWatched() {
 					silentTicks++
 				}
+				refreshSessionTitle()
 
-			// Mid-session re-bind for /new. Gated on PTY activity OR user
-			// focus: only the watcher whose PTY is producing output (or
-			// whose pane the user is currently driving) switches, so a
-			// sibling Copilot in the same cwd writing to its own events
-			// file can't make this idle, unfocused watcher steal its
-			// session. The focus exemption covers /new issued in the
-			// focused pane before the agent emits any PTY output.
-			if silentTicks >= rebindSilenceTicks {
-				focused := agent.IsPtyFocused(sessionID)
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				if time.Since(lastPtyOut) < 3*time.Second || focused {
-					newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
-					if newFile != "" && newFile != watchedFilePath {
-						if ClaimSession(agentID, cwd, newFile) {
-							UnclaimSession(agentID, cwd, watchedFilePath)
-							watchedFilePath = newFile
-							lastFileSize = 0
-							silentTicks = 0
-							if notifyCh != nil {
-								notifier.Watch(watchedFilePath)
+				// Mid-session re-bind for /new. Gated on PTY activity OR user
+				// focus: only the watcher whose PTY is producing output (or
+				// whose pane the user is currently driving) switches, so a
+				// sibling Copilot in the same cwd writing to its own events
+				// file can't make this idle, unfocused watcher steal its
+				// session. The focus exemption covers /new issued in the
+				// focused pane before the agent emits any PTY output.
+				if silentTicks >= rebindSilenceTicks {
+					focused := agent.IsPtyFocused(sessionID)
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second || focused {
+						newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
+						if newFile != "" && newFile != watchedFilePath {
+							if ClaimSession(agentID, cwd, newFile) {
+								UnclaimSession(agentID, cwd, watchedFilePath)
+								watchedFilePath = newFile
+								lastFileSize = 0
+								silentTicks = 0
+								if notifyCh != nil {
+									notifier.Watch(watchedFilePath)
+								}
 							}
 						}
 					}
 				}
 			}
-			}
 		}
 	}
+}
+
+// copilotSessionTitle reads the summary generated by Copilot CLI for the
+// session owning eventsPath. The events log contains only user prompts, so it
+// cannot provide this authoritative display title.
+func copilotSessionTitle(sessionStorePath, eventsPath string) string {
+	sessionID := filepath.Base(filepath.Dir(eventsPath))
+	if sessionID == "" || sessionID == "." {
+		return ""
+	}
+	db, err := sql.Open("sqlite", "file:"+sessionStorePath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	var title string
+	if err := db.QueryRow(`SELECT summary FROM sessions WHERE id = ?`, sessionID).Scan(&title); err != nil {
+		return ""
+	}
+	return CleanPrompt(title)
 }
 
 // findCopilotEventsFile searches ~/.copilot/session-state/*/events.jsonl for
@@ -276,8 +328,11 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 		return
 	}
 
-	// Forward pass: collect the first user prompt as the session title.
+	// Forward pass: collect the first user prompt as the session title
+	// fallback and retain the final visible assistant response. Copilot
+	// follows that response with assistant.turn_end, which carries no text.
 	var sessionTitle string
+	var lastAssistantText string
 	for _, line := range lines {
 		var ev copilotEvent
 		if json.Unmarshal([]byte(line), &ev) != nil {
@@ -295,6 +350,12 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 				}
 			}
 		}
+		if ev.Type == "assistant.message" {
+			var msg copilotAssistantMsg
+			if json.Unmarshal(ev.Data, &msg) == nil && msg.Content != "" {
+				lastAssistantText = msg.Content
+			}
+		}
 	}
 
 	// Reverse pass: determine status from the last meaningful event.
@@ -307,7 +368,7 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 		}
 		switch ev.Type {
 		case "assistant.turn_end":
-			callback("idle", "", "", sessionTitle)
+			callback("idle", "", lastAssistantText, sessionTitle)
 			return
 		case "abort":
 			// The user aborted the turn. Report "interrupted" (not idle) so
