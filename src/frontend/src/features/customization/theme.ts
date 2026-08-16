@@ -7,6 +7,7 @@ export interface TerminalBackground {
   opacity: number
   overlay: number
   blur: number
+  applyToPage: boolean
 }
 
 export interface ColorSchemes {
@@ -16,7 +17,7 @@ export interface ColorSchemes {
 
 export interface CustomizationState {
   version: 1
-  uiTheme: 'light' | 'dark' | 'system'
+  uiTheme: string
   colors: ColorSchemes
   editor: {
     theme: 'dark' | 'light'
@@ -165,23 +166,56 @@ const DEFAULT_COLOR_SCHEMES: ColorSchemes = {
 
 export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   version: 1,
-  uiTheme: 'system',
+  uiTheme: 'Caw Dark',
   colors: DEFAULT_COLOR_SCHEMES,
   editor: { theme: 'dark', fontSize: 12, minimap: true, tokenColors: MONACO_TOKEN_COLORS },
   terminal: {
     theme: 'dark',
     fontSize: 13,
-    background: { assetId: '', opacity: 1, overlay: 0.35, blur: 0 },
+    background: { assetId: '', opacity: 1, overlay: 0.35, blur: 0, applyToPage: false },
   },
   layout: { sidebarOrder: 'workspace-explorer' },
+}
+
+export function bundledTheme(name: 'Caw Dark' | 'Caw Light'): CustomizationState {
+  if (name === 'Caw Light') {
+    return {
+      ...DEFAULT_CUSTOMIZATION,
+      uiTheme: name,
+      colors: {
+        dark: { ...DEFAULT_CUSTOMIZATION.colors.dark },
+        light: { ...DEFAULT_CUSTOMIZATION.colors.light },
+      },
+      editor: { ...DEFAULT_CUSTOMIZATION.editor, theme: 'light', tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors } },
+      terminal: { ...DEFAULT_CUSTOMIZATION.terminal, theme: 'light', background: { ...DEFAULT_CUSTOMIZATION.terminal.background } },
+      layout: { ...DEFAULT_CUSTOMIZATION.layout },
+    }
+  }
+
+  return {
+    ...DEFAULT_CUSTOMIZATION,
+    colors: {
+      dark: { ...DEFAULT_CUSTOMIZATION.colors.dark },
+      light: { ...DEFAULT_CUSTOMIZATION.colors.light },
+    },
+    editor: { ...DEFAULT_CUSTOMIZATION.editor, tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors } },
+    terminal: { ...DEFAULT_CUSTOMIZATION.terminal, background: { ...DEFAULT_CUSTOMIZATION.terminal.background } },
+    layout: { ...DEFAULT_CUSTOMIZATION.layout },
+  }
 }
 
 export function normalizeCustomization(value: Partial<CustomizationState> | undefined): CustomizationState {
   const v = value ?? {}
   const colors = normalizeColorSchemes(v.colors)
+  const legacyThemeNames: Record<string, string> = {
+    light: 'Caw Light',
+    dark: 'Caw Dark',
+    system: 'Caw Dark',
+  }
   return {
     ...DEFAULT_CUSTOMIZATION,
     ...v,
+    uiTheme: legacyThemeNames[v.uiTheme || ''] || v.uiTheme || DEFAULT_CUSTOMIZATION.uiTheme,
     colors,
     editor: {
       ...DEFAULT_CUSTOMIZATION.editor,
@@ -214,8 +248,7 @@ function normalizeColorSchemes(value: ColorSchemes | Record<string, string> | un
 
 export function applyCustomization(value: CustomizationState) {
   const root = document.documentElement
-  const followsSystem = value.uiTheme === 'system'
-  const light = value.uiTheme === 'light' || (followsSystem && window.matchMedia('(prefers-color-scheme: light)').matches)
+  const light = value.editor.theme === 'light'
   root.classList.toggle('light', light)
   const colors = light ? value.colors.light : value.colors.dark
   const defaults = light ? LIGHT_COLORS : DARK_COLORS

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "uiTheme": "dark",
+  "uiTheme": "Dracula",
   "colors": {
     "background": "231 15% 18%",
     "foreground": "60 30% 96%",

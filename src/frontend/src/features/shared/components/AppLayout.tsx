@@ -1817,8 +1817,38 @@ export function AppLayout() {
     touchStartRef.current = null
   }
 
+  const pageBackground = getCustomization().terminal.background
+
   return (
-    <div className="flex flex-col h-full w-full bg-background select-none">
+    <div
+      className="relative isolate flex h-full w-full flex-col bg-background select-none"
+      style={pageBackground.applyToPage ? { backgroundColor: `hsl(var(--background) / ${pageBackground.opacity})` } : undefined}
+    >
+      {pageBackground.applyToPage && (
+        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+          {pageBackground.assetId && (
+            <video
+              src={`/api/terminal/background-assets/${encodeURIComponent(pageBackground.assetId)}/content`}
+              className="absolute inset-0 h-full w-full object-cover"
+              autoPlay
+              muted
+              loop
+              playsInline
+              style={{ opacity: pageBackground.opacity, filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+            />
+          )}
+          {pageBackground.assetId && (
+            <img
+              src={`/api/terminal/background-assets/${encodeURIComponent(pageBackground.assetId)}/content`}
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ opacity: pageBackground.opacity, filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+            />
+          )}
+          {pageBackground.assetId && (
+            <div className="absolute inset-0 bg-background" style={{ opacity: pageBackground.overlay }} />
+          )}
+        </div>
+      )}
       {isMobile ? (
         <div 
           className="flex flex-col h-full w-full overflow-hidden relative"
