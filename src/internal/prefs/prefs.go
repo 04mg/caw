@@ -21,10 +21,11 @@ type PetsConfig struct {
 }
 
 type TerminalBackground struct {
-	AssetID string  `json:"assetId"`
-	Opacity float64 `json:"opacity"`
-	Overlay float64 `json:"overlay"`
-	Blur    float64 `json:"blur"`
+	AssetID     string  `json:"assetId"`
+	Opacity     float64 `json:"opacity"`
+	Overlay     float64 `json:"overlay"`
+	Blur        float64 `json:"blur"`
+	ApplyToPage bool    `json:"applyToPage"`
 }
 
 type ColorSchemes struct {
@@ -122,7 +123,7 @@ func defaultHotkeys() map[string]string {
 func defaultCustomization() CustomizationState {
 	var c CustomizationState
 	c.Version = 1
-	c.UITheme = "system"
+	c.UITheme = "Caw Dark"
 	c.Colors = ColorSchemes{Dark: map[string]string{}, Light: map[string]string{}}
 	c.Editor.Theme, c.Editor.FontSize, c.Editor.Minimap = "dark", 12, true
 	c.Editor.TokenColors = map[string]string{}

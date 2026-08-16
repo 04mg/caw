@@ -622,7 +622,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
           <div className="absolute inset-0 bg-background" style={{ opacity: background.overlay }} />
         </div>
       )}
-      <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId ? 'transparent' : getTerminalBackground() }} />
+      <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId || background.opacity < 1 ? 'transparent' : getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button

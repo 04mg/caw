@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "uiTheme": "dark",
+  "uiTheme": "Monokai Pro",
   "colors": {
     "background": "285 5% 17%",
     "foreground": "60 25% 98%",
