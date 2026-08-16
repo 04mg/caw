@@ -322,7 +322,7 @@ export function WorkspacePanel({
                   onPointerDown={(e) => onPointerDown(e, i)}
                   onPointerMove={(e) => onPointerMove(e, i)}
                   onPointerUp={(e) => onPointerUp(e)}
-                  className={`group flex items-center gap-1.5 ${isRight ? 'flex-row-reverse pl-3 pr-2 text-right' : 'pl-2 pr-3'} py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
+                  className={`group flex items-center gap-1.5 pl-2 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
                     i === 0 ? 'border-t-0' : ''
                   } ${isDragOver ? 'border-t-2 border-t-primary' : ''} ${
                     isActive ? 'bg-accent/70 text-accent-foreground' : 'hover:bg-accent/40 text-muted-foreground'

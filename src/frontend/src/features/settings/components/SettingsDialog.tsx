@@ -8,7 +8,7 @@ import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
-import { applyCustomization, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
+import { applyCustomization, DEFAULT_CUSTOMIZATION, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
 import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -575,6 +575,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
   }
 
+  const resetThemeJson = () => {
+    const next = normalizeCustomization(DEFAULT_CUSTOMIZATION)
+    saveCustomization(next)
+  }
+
   // savePref persists a work-pref change and shows transient feedback
   // ("Saved" / "Save failed") that auto-hides shortly after.
   const savePref = async (fn: () => Promise<boolean>) => {
@@ -749,7 +754,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       aria-label="Customization JSON"
                     />
                     {themeJsonError && <p className="text-[11px] text-destructive">{themeJsonError}</p>}
-                    <button onClick={applyThemeJson} className="self-start rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Apply JSON</button>
+                    <div className="flex gap-2">
+                      <button onClick={applyThemeJson} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Apply JSON</button>
+                      <button onClick={resetThemeJson} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Reset to default</button>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-3">

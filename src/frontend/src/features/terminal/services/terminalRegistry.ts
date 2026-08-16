@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { RingBuffer } from './ringBuffer'
-import { getDefaultShell, getParkedTerminalLimit, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { getCustomization, getDefaultShell, getParkedTerminalLimit, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 export interface TerminalInstance {
   leafId: string
@@ -328,12 +328,15 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
   const theme = getTerminalTheme() === 'light' ? lightTerminalTheme : darkTerminalTheme
+  const terminalTheme = getCustomization().terminal.background.assetId
+    ? { ...theme, background: 'transparent' }
+    : theme
   const term = new Terminal({
     cursorBlink: true,
     fontSize,
     fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace",
     scrollback: 10000,
-    theme,
+    theme: terminalTheme,
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
@@ -1163,11 +1166,22 @@ export function setAllTerminalFontSizes(size: number) {
 }
 
 export function setAllTerminalThemes(theme: 'dark' | 'light') {
-  const t = theme === 'light' ? lightTerminalTheme : darkTerminalTheme
+  const base = theme === 'light' ? lightTerminalTheme : darkTerminalTheme
+  const t = getCustomization().terminal.background.assetId
+    ? { ...base, background: 'transparent' }
+    : base
   for (const inst of registry.values()) {
     inst.term.options.theme = t
   }
   localStorage.setItem('caw:terminalTheme', theme)
+}
+
+export function setAllTerminalBackgroundTransparency(enabled: boolean) {
+  const base = getTerminalTheme() === 'light' ? lightTerminalTheme : darkTerminalTheme
+  const next = enabled ? { ...base, background: 'transparent' } : base
+  for (const inst of registry.values()) {
+    inst.term.options.theme = next
+  }
 }
 
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {
