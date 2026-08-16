@@ -2135,7 +2135,7 @@ export function AppLayout() {
                     <div className="flex flex-col h-full bg-background">
                       {/* Empty workspace header top bar */}
                       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
-                        <div className="flex flex-1 h-full">
+                        <div className={`flex flex-1 h-full ${explorerSidebarOnRight ? '' : 'order-last'}`}>
                           <NewTabMenu
                             onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
@@ -2144,7 +2144,7 @@ export function AppLayout() {
                             align="start"
                           />
                         </div>
-                        <div className={`flex items-center shrink-0 h-full border-border bg-background ${explorerSidebarOnRight ? 'ml-auto border-l' : 'mr-auto border-r flex-row-reverse'}`}>
+                        <div className={`flex items-center shrink-0 h-full border-border bg-background ${explorerSidebarOnRight ? 'border-l' : 'order-first border-r'}`}>
                           {/* Settings Button */}
                           <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? (explorerSidebarOnRight ? 'border-r' : 'border-l') + ' border-border' : ''}`} style={{ width: 36 }}>
                             <Button

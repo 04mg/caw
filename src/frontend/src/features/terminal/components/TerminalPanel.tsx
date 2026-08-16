@@ -3,6 +3,7 @@ import { Copy, Clipboard } from 'lucide-react'
 import { attachTerminal, parkTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { setAllTerminalBackgroundTransparency } from '../services/terminalRegistry'
 
 interface TerminalPanelProps {
   terminalId: string
@@ -78,7 +79,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const [tuiClipboard, setTuiClipboard] = useState('')
   const [background, setBackground] = useState(() => getCustomization().terminal.background)
 
-  useEffect(() => subscribePrefs(() => setBackground(getCustomization().terminal.background)), [])
+  useEffect(() => subscribePrefs(() => {
+    const next = getCustomization().terminal.background
+    setBackground(next)
+    setAllTerminalBackgroundTransparency(Boolean(next.assetId))
+  }), [])
+  useEffect(() => {
+    const onCustomizationUpdated = (event: Event) => {
+      const next = (event as CustomEvent<{ terminal?: { background?: typeof background } }>).detail?.terminal?.background
+      if (!next) return
+      setBackground(next)
+      setAllTerminalBackgroundTransparency(Boolean(next.assetId))
+    }
+    window.addEventListener('caw:customization-updated', onCustomizationUpdated)
+    return () => window.removeEventListener('caw:customization-updated', onCustomizationUpdated)
+  }, [])
 
   useEffect(() => {
     const el = elRef.current
