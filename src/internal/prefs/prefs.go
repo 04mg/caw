@@ -20,6 +20,62 @@ type PetsConfig struct {
 	UniquePerAgent bool              `json:"uniquePerAgent"`
 }
 
+type TerminalBackground struct {
+	AssetID     string  `json:"assetId"`
+	Overlay     float64 `json:"overlay"`
+	Blur        float64 `json:"blur"`
+	ApplyToPage bool    `json:"applyToPage"`
+}
+
+type ColorSchemes struct {
+	Dark  map[string]string `json:"dark"`
+	Light map[string]string `json:"light"`
+}
+
+func (c *ColorSchemes) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["dark"]; ok {
+		type colorSchemes ColorSchemes
+		var schemes colorSchemes
+		if err := json.Unmarshal(data, &schemes); err != nil {
+			return err
+		}
+		*c = ColorSchemes(schemes)
+		return nil
+	}
+
+	var legacy map[string]string
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	c.Dark = legacy
+	c.Light = map[string]string{}
+	return nil
+}
+
+type CustomizationState struct {
+	Version int               `json:"version"`
+	UITheme string            `json:"uiTheme"`
+	Colors  ColorSchemes      `json:"colors"`
+	Editor  struct {
+		Theme       string            `json:"theme"`
+		FontSize    int               `json:"fontSize"`
+		Minimap     bool              `json:"minimap"`
+		TokenColors map[string]string `json:"tokenColors"`
+	} `json:"editor"`
+	Terminal struct {
+		Theme      string             `json:"theme"`
+		FontSize   int                `json:"fontSize"`
+		Background TerminalBackground `json:"background"`
+	} `json:"terminal"`
+	Layout struct {
+		SidebarOrder string `json:"sidebarOrder"`
+	} `json:"layout"`
+}
+
 // PrefsState holds the user's work preferences shared across all devices.
 type PrefsState struct {
 	DefaultNewAgent   string              `json:"defaultNewAgent"`
@@ -30,9 +86,10 @@ type PrefsState struct {
 	// ParkedTerminals is the number of recently-used terminal xterm.js
 	// instances the client keeps mounted in the background so switching back
 	// to them is instant (no scrollback replay / WS reconnect). Desktop only.
-	ParkedTerminals int               `json:"parkedTerminals"`
-	Hotkeys         map[string]string `json:"hotkeys"`
-	Pets            PetsConfig        `json:"pets"`
+	ParkedTerminals int                `json:"parkedTerminals"`
+	Hotkeys         map[string]string  `json:"hotkeys"`
+	Pets            PetsConfig         `json:"pets"`
+	Customization   CustomizationState `json:"customization"`
 }
 
 const (
@@ -44,6 +101,7 @@ const (
 	keyParkedTerminals     = "pref_parked_terminals"
 	keyHotkeys             = "pref_hotkeys"
 	keyPets                = "pref_pets"
+	keyCustomization       = "pref_customization"
 	defaultParkedTerminals = 6
 )
 
@@ -61,6 +119,19 @@ func defaultHotkeys() map[string]string {
 	}
 }
 
+func defaultCustomization() CustomizationState {
+	var c CustomizationState
+	c.Version = 1
+	c.UITheme = "Caw Dark"
+	c.Colors = ColorSchemes{Dark: map[string]string{}, Light: map[string]string{}}
+	c.Editor.Theme, c.Editor.FontSize, c.Editor.Minimap = "dark", 12, true
+	c.Editor.TokenColors = map[string]string{}
+	c.Terminal.Theme, c.Terminal.FontSize = "dark", 13
+	c.Terminal.Background.Overlay = 0.35
+	c.Layout.SidebarOrder = "workspace-explorer"
+	return c
+}
+
 func defaultPrefs() PrefsState {
 	return PrefsState{
 		DefaultNewAgent:   "none",
@@ -76,6 +147,7 @@ func defaultPrefs() PrefsState {
 			AgentPins:   map[string]string{},
 			Assignments: map[string]string{},
 		},
+		Customization: defaultCustomization(),
 	}
 }
 
@@ -127,6 +199,27 @@ func GetPrefs(store *state.Store) PrefsState {
 			p.Pets = pets
 		}
 	}
+	if v, err := store.GetSetting(keyCustomization); err == nil && v != "" {
+		var customization CustomizationState
+		if json.Unmarshal([]byte(v), &customization) == nil {
+			if customization.Version == 0 {
+				customization = defaultCustomization()
+			}
+			if customization.Colors.Dark == nil {
+				customization.Colors.Dark = map[string]string{}
+			}
+			if customization.Colors.Light == nil {
+				customization.Colors.Light = map[string]string{}
+			}
+			if customization.Editor.TokenColors == nil {
+				customization.Editor.TokenColors = map[string]string{}
+			}
+			if customization.Layout.SidebarOrder == "" {
+				customization.Layout.SidebarOrder = "workspace-explorer"
+			}
+			p.Customization = customization
+		}
+	}
 
 	return p
 }
@@ -160,6 +253,10 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 	}
 	petsJSON, _ := json.Marshal(p.Pets)
 	if err := store.SetSetting(keyPets, string(petsJSON)); err != nil {
+		return err
+	}
+	customizationJSON, _ := json.Marshal(p.Customization)
+	if err := store.SetSetting(keyCustomization, string(customizationJSON)); err != nil {
 		return err
 	}
 	return nil

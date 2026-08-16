@@ -37,6 +37,8 @@ export interface SplitLayoutProps {
   /** Whether the separators are interactive. Set to false to render a static
    * layout (e.g. when all panels are collapsed/pinned). */
   disabled?: boolean
+  /** Mirrors horizontal panel order while retaining each child's logical index. */
+  reverse?: boolean
   style?: CSSProperties
   children: ReactNode[]
 }
@@ -61,6 +63,7 @@ export function SplitLayout({
   separatorClassName,
   separatorHidden,
   disabled = false,
+  reverse = false,
   style,
   children,
 }: SplitLayoutProps) {
@@ -134,6 +137,7 @@ export function SplitLayout({
 
   const { onSeparatorPointerDown } = useSplitResize({
     orientation,
+    reverse,
     sizes: resolvedSizes,
     minSizes: resolvedMin,
     maxSizes: resolvedMax,
@@ -187,7 +191,7 @@ export function SplitLayout({
             touchAction: 'none',
             cursor: isHorizontal ? 'col-resize' : 'row-resize',
             ...(isHorizontal
-              ? { top: 0, bottom: 0, left: `${cumulativePct}%`, transform: 'translateX(-50%)', height: '100%' }
+              ? { top: 0, bottom: 0, left: `${reverse ? 100 - cumulativePct : cumulativePct}%`, transform: 'translateX(-50%)', height: '100%' }
               : { left: 0, right: 0, top: `${cumulativePct}%`, transform: 'translateY(-50%)', width: '100%' }),
           }}
         >
@@ -223,7 +227,7 @@ export function SplitLayout({
       style={{
         display: 'flex',
         position: 'relative',
-        flexDirection: isHorizontal ? 'row' : 'column',
+        flexDirection: isHorizontal ? (reverse ? 'row-reverse' : 'row') : 'column',
         ...style,
       }}
     >

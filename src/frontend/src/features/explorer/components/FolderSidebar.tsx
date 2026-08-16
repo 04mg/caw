@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   RefreshCw, FileCode, FolderPlus, Upload, Pencil, Copy, CopyPlus, CopyCheck,
-  ClipboardPaste, Download, Trash2, PanelRightClose, Loader2
+  ClipboardPaste, Download, Trash2, PanelLeftClose, PanelRightClose, Loader2
 } from 'lucide-react'
 import { ScrollArea } from '@/components/scroll-area'
 import { Button } from '@/components/button'
@@ -30,6 +30,7 @@ interface FolderSidebarProps {
   searchPanelOpen?: boolean
   searchPanelMode?: SearchPanelMode
   onCloseSearchPanel?: () => void
+  isRight?: boolean
 }
 
 export function FolderSidebar({
@@ -46,6 +47,7 @@ export function FolderSidebar({
   searchPanelOpen,
   searchPanelMode = 'find',
   onCloseSearchPanel,
+  isRight = false,
 }: FolderSidebarProps) {
   const [loading, setLoading] = useState(false)
   const isWorktree = !!(mainWorkspacePath && workspacePath && workspacePath !== mainWorkspacePath)
@@ -479,7 +481,7 @@ export function FolderSidebar({
   return (
     <div ref={sidebarRef} className="flex h-full flex-col bg-background select-none explorer-sidebar">
       {!noHeader && (
-        <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
+        <div className={`flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20 ${isRight ? '' : 'flex-row-reverse'}`}>
           <Button
             variant="ghost"
             size="icon"
@@ -500,7 +502,7 @@ export function FolderSidebar({
             onClick={onClose}
             title="Close Sidebar"
           >
-            <PanelRightClose className="h-3.5 w-3.5" />
+            {isRight ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
           </Button>
         </div>
       )}

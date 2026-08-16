@@ -4,8 +4,8 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
-import 'highlight.js/styles/github-dark.css'
 import { MermaidBlock } from './MermaidBlock'
+import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 interface MarkdownPreviewViewProps {
   content: string
@@ -38,22 +38,6 @@ const sanitizeSchema = {
   tagNames: [...(defaultSchema.tagNames ?? []), 'picture', 'source'],
 }
 
-// Detect dark theme the same way EditorPanel does.
-function useIsDark() {
-  const [dark, setDark] = useState(!window.document.documentElement.classList.contains('light'))
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(!window.document.documentElement.classList.contains('light'))
-    })
-    observer.observe(window.document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class'],
-    })
-    return () => observer.disconnect()
-  }, [])
-  return dark
-}
-
 // Resolve a relative path (as written in markdown) to an absolute workspace
 // path, using the directory of the markdown file as the base.
 function resolvePath(rel: string, baseDir: string): string {
@@ -80,7 +64,15 @@ function joinBase(dir: string, rel: string): string {
 }
 
 export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: MarkdownPreviewViewProps) {
-  const isDark = useIsDark()
+  const [, setThemeVersion] = useState(0)
+  const customization = getCustomization()
+  const isDark = customization.editor.theme === 'dark'
+  const colors = isDark ? customization.colors.dark : customization.colors.light
+  const tokens = customization.editor.tokenColors
+  const background = colors['editor.background'] || (isDark ? '#000000' : '#FFFFFF')
+  const foreground = colors['editor.foreground'] || (isDark ? '#F0F0F0' : '#111111')
+
+  useEffect(() => subscribePrefs(() => setThemeVersion((version) => version + 1)), [])
   // Directory of the markdown file, used to resolve relative links/images.
   const baseDir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : cwd
 
@@ -183,7 +175,7 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
           target={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? '_blank' : undefined}
           rel={href && /^(https?:|mailto:|tel:|ftp:)/.test(href) ? 'noreferrer noopener' : undefined}
           onClick={(e) => handleLinkClick(e, href)}
-          className="text-blue-500 underline underline-offset-2 hover:opacity-80 cursor-pointer"
+          className="underline underline-offset-2 hover:opacity-80 cursor-pointer"
           {...rest}
         >
           {children}
@@ -261,7 +253,8 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
             type="checkbox"
             checked={checked}
             disabled
-            className="mr-2 accent-blue-500"
+            className="mr-2"
+            style={{ accentColor: tokens.tag }}
             {...props}
           />
         )
@@ -276,28 +269,71 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
       },
       section: ({ children }) => <section className="my-2">{children}</section>,
     }),
-    [isDark, toInlineUrl, handleLinkClick],
+    [isDark, toInlineUrl, handleLinkClick, tokens.tag],
   )
 
   return (
     <div
       className="flex h-full w-full flex-col overflow-hidden"
-      style={{ background: isDark ? '#000' : '#fff' }}
+      style={{ background }}
     >
       <style>{`
+        .md-preview a { color: ${tokens.tag}; }
+        .md-preview .hljs {
+          display: block;
+          overflow-x: auto;
+          padding: 1em;
+          color: ${foreground};
+          background: ${colors['editorWidget.background'] || background};
+        }
+        .md-preview code.hljs { padding: 3px 5px; }
+        .md-preview .hljs-keyword,
+        .md-preview .hljs-meta .hljs-keyword,
+        .md-preview .hljs-template-tag,
+        .md-preview .hljs-template-variable,
+        .md-preview .hljs-type,
+        .md-preview .hljs-variable.language_ { color: ${tokens.keyword}; }
+        .md-preview .hljs-title,
+        .md-preview .hljs-title.class_,
+        .md-preview .hljs-title.class_.inherited__,
+        .md-preview .hljs-title.function_ { color: ${tokens.function}; }
+        .md-preview .hljs-attr,
+        .md-preview .hljs-attribute,
+        .md-preview .hljs-literal,
+        .md-preview .hljs-meta,
+        .md-preview .hljs-number,
+        .md-preview .hljs-operator,
+        .md-preview .hljs-variable,
+        .md-preview .hljs-selector-attr,
+        .md-preview .hljs-selector-class,
+        .md-preview .hljs-selector-id { color: ${tokens.constant}; }
+        .md-preview .hljs-regexp,
+        .md-preview .hljs-string,
+        .md-preview .hljs-meta .hljs-string { color: ${tokens.string}; }
+        .md-preview .hljs-built_in,
+        .md-preview .hljs-symbol { color: ${tokens.type}; }
+        .md-preview .hljs-comment,
+        .md-preview .hljs-code,
+        .md-preview .hljs-formula { color: ${tokens.comment}; }
+        .md-preview .hljs-name,
+        .md-preview .hljs-quote,
+        .md-preview .hljs-selector-tag,
+        .md-preview .hljs-selector-pseudo { color: ${tokens.tag}; }
+        .md-preview .hljs-subst,
+        .md-preview .hljs-emphasis,
+        .md-preview .hljs-strong { color: ${foreground}; }
         .md-preview-selection ::selection {
-          background: ${isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)'};
+          background: ${colors['editor.selectionBackground'] || (isDark ? '#FFFFFF40' : '#0000002E')};
         }
         .md-preview-selection *::selection {
-          background: ${isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)'};
+          background: ${colors['editor.selectionBackground'] || (isDark ? '#FFFFFF40' : '#0000002E')};
         }
       `}</style>
-      {/* Markdown body — text selectable, black/white background */}
       <div
-        className="flex-1 min-h-0 overflow-auto px-8 py-6 text-sm leading-relaxed md-preview-selection"
+        className="md-preview flex-1 min-h-0 overflow-auto px-8 py-6 text-sm leading-relaxed md-preview-selection"
         style={{
-          color: isDark ? '#fff' : '#000',
-          background: isDark ? '#000' : '#fff',
+          color: foreground,
+          background,
           userSelect: 'text',
           WebkitUserSelect: 'text',
         }}

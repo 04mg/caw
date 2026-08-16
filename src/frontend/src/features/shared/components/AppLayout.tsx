@@ -30,7 +30,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -50,7 +50,8 @@ import { subscribeAgentStatuses } from '@/features/agents/stores/agentStatusStor
 import { subscribeToGitStatus, type GitStatusEvent } from '@/features/git/services/gitStatusWs'
 import { type AgentStatus } from '@/features/agents/types'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getDefaultNewAgent, getHotkey, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { getCustomization, getDefaultNewAgent, getHotkey, loadPrefs, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
+import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
@@ -183,17 +184,13 @@ export function AppLayout() {
   const [deleteBranchChecked, setDeleteBranchChecked] = useState(false)
 
   useEffect(() => {
-    const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
-    const root = window.document.documentElement
-    if (savedTheme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      if (systemTheme === 'light') root.classList.add('light')
-      else root.classList.remove('light')
-    } else if (savedTheme === 'light') {
-      root.classList.add('light')
-    } else {
-      root.classList.remove('light')
-    }
+    let active = true
+    loadPrefs().then(() => {
+      if (active) applyCustomization(getCustomization())
+    })
+    return subscribePrefs(() => {
+      if (active) applyCustomization(getCustomization())
+    })
   }, [])
 
   useEffect(() => {
@@ -286,6 +283,8 @@ export function AppLayout() {
   }, [])
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
+  const workspaceSidebarOnRight = getCustomization().layout.sidebarOrder === 'explorer-workspace'
+  const explorerSidebarOnRight = !workspaceSidebarOnRight
 
   // Top-level SplitLayout sizing strategy
   // -------------------------------------
@@ -1818,8 +1817,37 @@ export function AppLayout() {
     touchStartRef.current = null
   }
 
+  const pageBackground = getCustomization().terminal.background
+
   return (
-    <div className="flex flex-col h-full w-full bg-background select-none">
+    <div
+      className={`relative isolate flex h-full w-full flex-col bg-background select-none${pageBackground.applyToPage ? ' page-background-active' : ''}`}
+    >
+      {pageBackground.applyToPage && (
+        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+          {pageBackground.assetId && (
+            <video
+              src={`/api/terminal/background-assets/${encodeURIComponent(pageBackground.assetId)}/content`}
+              className="absolute inset-0 h-full w-full object-cover"
+              autoPlay
+              muted
+              loop
+              playsInline
+              style={{ filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+            />
+          )}
+          {pageBackground.assetId && (
+            <img
+              src={`/api/terminal/background-assets/${encodeURIComponent(pageBackground.assetId)}/content`}
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ filter: `blur(${pageBackground.blur}px)`, transform: pageBackground.blur ? 'scale(1.04)' : undefined }}
+            />
+          )}
+          {pageBackground.assetId && (
+            <div className="page-background-overlay absolute inset-0" style={{ opacity: pageBackground.overlay }} />
+          )}
+        </div>
+      )}
       {isMobile ? (
         <div 
           className="flex flex-col h-full w-full overflow-hidden relative"
@@ -1878,6 +1906,7 @@ export function AppLayout() {
                 pickerOpen={pickerOpen}
                 onPickerOpenChange={setPickerOpen}
                 onOpenSettings={() => setSettingsOpen(true)}
+                isRight={false}
               />
             </div>
           </div>
@@ -1903,6 +1932,7 @@ export function AppLayout() {
                 searchPanelOpen={searchPanelOpen}
                 searchPanelMode={searchPanelMode}
                 onCloseSearchPanel={() => setSearchPanelOpen(false)}
+                isRight={true}
               />
             </div>
           </div>
@@ -2045,6 +2075,7 @@ export function AppLayout() {
             <div className="flex h-full w-full">
               <SplitLayout
                 orientation="horizontal"
+                reverse={workspaceSidebarOnRight}
                 className="flex-1 h-full w-full"
                 sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
@@ -2072,6 +2103,7 @@ export function AppLayout() {
                   pickerOpen={pickerOpen}
                   onPickerOpenChange={setPickerOpen}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  isRight={workspaceSidebarOnRight}
                 />
 
                 {/* Main Terminals / Editors Content. */}
@@ -2091,6 +2123,7 @@ export function AppLayout() {
                             activePaneId={activePaneId}
                             gitStatuses={gitStatuses}
                             folderSidebarCollapsed={folderSidebarCollapsed}
+                            folderSidebarOnRight={explorerSidebarOnRight}
                             onSetActiveGroup={handleSetActiveGroup}
                             onSwitchTab={switchTab}
                             onCloseTab={closeTab}
@@ -2118,6 +2151,20 @@ export function AppLayout() {
                     <div className="flex flex-col h-full bg-background">
                       {/* Empty workspace header top bar */}
                       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
+                        {folderSidebarCollapsed && !explorerSidebarOnRight && (
+                          <div className="group flex items-center justify-center h-full shrink-0 border-r border-border bg-background select-none" style={{ width: 36 }}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                              onClick={toggleFolderSidebar}
+                              title="Workspace Files"
+                            >
+                              <Folder className="h-3.5 w-3.5 group-hover:hidden" />
+                              <PanelLeft className="h-3.5 w-3.5 hidden group-hover:block" />
+                            </Button>
+                          </div>
+                        )}
                         <div className="flex flex-1 h-full">
                           <NewTabMenu
                             onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
@@ -2129,7 +2176,7 @@ export function AppLayout() {
                         </div>
                         <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
                           {/* Settings Button */}
-                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
+                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed && explorerSidebarOnRight ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -2143,7 +2190,7 @@ export function AppLayout() {
                           </div>
 
                           {/* Folder Button */}
-                          {folderSidebarCollapsed && (
+                          {folderSidebarCollapsed && explorerSidebarOnRight && (
                             <div className="group flex items-center justify-center h-full select-none" style={{ width: 36 }}>
                               <Button
                                 variant="ghost"
@@ -2193,6 +2240,7 @@ export function AppLayout() {
                       searchPanelOpen={searchPanelOpen}
                       searchPanelMode={searchPanelMode}
                       onCloseSearchPanel={() => setSearchPanelOpen(false)}
+                      isRight={explorerSidebarOnRight}
                     />
                   ) : null}
                 </div>

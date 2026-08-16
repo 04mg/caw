@@ -97,6 +97,15 @@ func (s *Store) migrate() {
 		started_at  TEXT NOT NULL DEFAULT '',
 		ended_at    TEXT NOT NULL DEFAULT '',
 		sequence    INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS terminal_background_assets (
+		id           TEXT PRIMARY KEY,
+		filename     TEXT NOT NULL,
+		media_kind   TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		file_ext     TEXT NOT NULL,
+		size_bytes   INTEGER NOT NULL,
+		created_at   TEXT NOT NULL
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
@@ -243,8 +252,8 @@ func (s *Store) Set(as AppState) {
 	var preservedSettings [][2]string
 	for _, key := range []string{
 		"vapid_public_key", "vapid_private_key",
-		"pref_default_new_agent", "pref_disabled_agents", "pref_agent_cmds", "pref_default_shell", "pref_hotkeys",
-		"pref_pets",
+		"pref_default_new_agent", "pref_disabled_agents", "pref_disabled_providers", "pref_agent_cmds",
+		"pref_default_shell", "pref_parked_terminals", "pref_hotkeys", "pref_pets", "pref_customization",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
