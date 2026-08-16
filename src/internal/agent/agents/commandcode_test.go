@@ -73,10 +73,13 @@ func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testin
 	// Session header with matching cwd so the watcher binds.
 	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
 	appendLine(header)
-	// A prompt + an assistant tool_use → the watcher binds and reports executing.
+	// A resolved iteration: prompt + assistant tool_use + its tool_result. The
+	// result is the last meaningful message, so the card reads thinking — the
+	// agent is mid-turn, which is what a Ctrl+C should cancel.
 	appendLine(`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"read x"}]}}`)
 	appendLine(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read"}]}}`)
-	waitFor("executing", 8*time.Second)
+	appendLine(`{"type":"message","id":"u1r","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
+	waitFor("thinking", 8*time.Second)
 
 	// User presses Ctrl+C → card flips to interrupted immediately, with NO
 	// transcript marker written yet (Command Code never persists interrupted
@@ -96,10 +99,11 @@ func TestCommandCodeWatcherPTYInterruptDetectedWithoutTranscriptMarker(t *testin
 	// means the agent kept running after a soft interrupt (Command Code drops
 	// interrupted turns, so a real interrupt never produces this traffic).
 	// The card must flip back to the real working state, not stay stuck on
-	// "interrupted".
+	// "interrupted". A fresh assistant tool_use with no result yet is still
+	// awaiting approval, so it lands on waiting_input.
 	appendLine(`{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"ok"}]}]}}`)
 	appendLine(`{"type":"message","id":"a2","parentId":"u2","timestamp":"2026-08-13T16:41:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash"}]}}`)
-	waitFor("executing", 8*time.Second)
+	waitFor("waiting_input", 8*time.Second)
 
 	// A genuinely new user prompt also clears the sticky interrupt and lands
 	// the card on thinking.
@@ -424,6 +428,85 @@ func TestCommandCodeWatcherPendingTurnWithoutPTYSignalStaysIdle(t *testing.T) {
 	if got := lastStatus(); got != "idle" {
 		t.Fatalf("card drifted from %q to %q without a PTY signal (statuses: %v)", "idle", got, statuses)
 	}
+
+	cancel()
+	<-done
+}
+
+func TestCommandCodeWatcherPendingApprovalShowsWaitingInput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "proj")
+	projectsDir := filepath.Join(home, ".commandcode", "projects", "home-proj")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("mkdir projects dir: %v", err)
+	}
+	transcript := filepath.Join(projectsDir, "session.jsonl")
+
+	appendLine := func(line string) {
+		t.Helper()
+		f, err := os.OpenFile(transcript, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open transcript: %v", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append transcript: %v", err)
+		}
+	}
+
+	header := `{"type":"session","version":3,"id":"abc","timestamp":"2026-08-13T16:41:01.269Z","cwd":"` + cwd + `"}`
+	appendLine(header)
+	appendLine(`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T16:41:02.000Z","message":{"role":"user","content":[{"type":"text","text":"deploy the app"}]}}`)
+
+	const leafID = "cc-pending-approval"
+	var mu sync.Mutex
+	var statuses []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		(&CommandCodeWatcher{}).Watch(ctx, leafID, cwd, false, func(status, _tool, _, _ string) {
+			mu.Lock()
+			statuses = append(statuses, status)
+			mu.Unlock()
+		}, func() {})
+	}()
+
+	waitFor := func(want string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			got := ""
+			if len(statuses) != 0 {
+				got = statuses[len(statuses)-1]
+			}
+			mu.Unlock()
+			if got == want {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("timed out waiting for status %q; statuses: %v", want, statuses)
+	}
+
+	// Binding consumes the prompt as history; the card settles on thinking.
+	waitFor("thinking", 8*time.Second)
+
+	// A shell_command tool request is persisted but NEVER answered: Command
+	// Code is waiting for the user to approve Execute Shell Command. The card
+	// must read waiting_input, not executing.
+	appendLine(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-13T16:41:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"call_00_pending","name":"shell_command","input":{"command":"cf push"}}]}}`)
+	waitFor("waiting_input", 8*time.Second)
+
+	// Once the tool runs, its result lands in a user message: the card moves
+	// on to thinking, proving waiting_input was transient (not sticky).
+	appendLine(`{"type":"message","id":"u1r","parentId":"a1","timestamp":"2026-08-13T16:41:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_00_pending","content":[{"type":"text","text":"approved"}]}]}}`)
+	waitFor("thinking", 8*time.Second)
 
 	cancel()
 	<-done

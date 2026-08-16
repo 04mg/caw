@@ -51,6 +51,13 @@ type copilotToolResult struct {
 	Output string `json:"output,omitempty"`
 }
 
+// copilotToolExecution is the data payload for "tool.execution_start" events,
+// emitted when Copilot begins running a requested tool.
+type copilotToolExecution struct {
+	ToolCallID string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+}
+
 // copilotSessionError is the data payload for "session.error" events: a
 // quota/transport/auth failure that ends the turn abnormally.
 type copilotSessionError struct {
@@ -169,16 +176,21 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidate := findCopilotEventsFile(stateDir, cwd, watcherStart, resume, agentID, sessionID)
-				if candidate != "" {
-					if ClaimSession(agentID, cwd, candidate) {
-						watchedFilePath = candidate
+				// Walk every candidate newest-first and claim the first free
+				// one. Trying only the single newest means a watcher whose
+				// newest candidate is already claimed by a sibling Copilot in
+				// the same cwd can never bind — it retries the same claimed
+				// file forever instead of falling back to the next session.
+				for _, cand := range findCopilotEventsFiles(stateDir, cwd, watcherStart, resume) {
+					if ClaimSession(agentID, cwd, cand.path) {
+						watchedFilePath = cand.path
 						lastFileSize = 0
 						lastActivity = time.Now()
 						silentTicks = 0
 						if notifyCh != nil {
 							notifier.Watch(watchedFilePath)
 						}
+						break
 					}
 				}
 			}
@@ -199,16 +211,30 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 					focused := agent.IsPtyFocused(sessionID)
 					lastPtyOut := agent.LastPtyActivity(sessionID)
 					if time.Since(lastPtyOut) < 3*time.Second || focused {
-						newFile := findCopilotEventsFile(stateDir, cwd, lastActivity, true, agentID, sessionID)
-						if newFile != "" && newFile != watchedFilePath {
-							if ClaimSession(agentID, cwd, newFile) {
+						// Prefer sessions modified after this pane's last
+						// activity (a /new or a resumed session being written
+						// to again). Fall back to the full pool newest-first
+						// so a /resume that select an older, unchanged file
+						// can still be picked up. Either way, walk the whole
+						// list so an already-claimed newest doesn't block the
+						// watcher from claiming the next candidate.
+						recent := findCopilotEventsFiles(stateDir, cwd, lastActivity, false)
+						if len(recent) == 0 {
+							recent = findCopilotEventsFiles(stateDir, cwd, lastActivity, true)
+						}
+						for _, cand := range recent {
+							if cand.path == watchedFilePath {
+								continue
+							}
+							if ClaimSession(agentID, cwd, cand.path) {
 								UnclaimSession(agentID, cwd, watchedFilePath)
-								watchedFilePath = newFile
+								watchedFilePath = cand.path
 								lastFileSize = 0
 								silentTicks = 0
 								if notifyCh != nil {
 									notifier.Watch(watchedFilePath)
 								}
+								break
 							}
 						}
 					}
@@ -239,20 +265,27 @@ func copilotSessionTitle(sessionStorePath, eventsPath string) string {
 	return CleanPrompt(title)
 }
 
-// findCopilotEventsFile searches ~/.copilot/session-state/*/events.jsonl for
-// the most recently modified one whose session.start event contains a cwd
-// matching the given cwd. Returns the first matching candidate path; the caller
-// is responsible for calling ClaimSession on the returned path.
-func findCopilotEventsFile(stateDir, cwd string, after time.Time, resume bool, agentID, ptyID string) string {
+// copilotSessionCandidate is one events.jsonl candidate with its modification
+// time, so callers can apply recency filters independently of discovery.
+type copilotSessionCandidate struct {
+	path    string
+	modTime time.Time
+}
+
+// findCopilotEventsFiles searches ~/.copilot/session-state/*/events.jsonl for
+// every session whose session.start event contains a cwd matching the given
+// cwd, newest-first. When resume is false only files modified after `after`
+// are returned: a fresh watcher must not bind to a pre-existing sibling
+// session. When resume is true the after filter is skipped so a --continue
+// watcher can reattach to the most recent session regardless of when it was
+// created. The caller is responsible for calling ClaimSession on the returned
+// paths, walking the list until one succeeds.
+func findCopilotEventsFiles(stateDir, cwd string, after time.Time, resume bool) []copilotSessionCandidate {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
-		return ""
+		return nil
 	}
-	type candidate struct {
-		path    string
-		modTime time.Time
-	}
-	var cands []candidate
+	var cands []copilotSessionCandidate
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -270,12 +303,10 @@ func findCopilotEventsFile(stateDir, cwd string, after time.Time, resume bool, a
 				continue
 			}
 		}
-		cands = append(cands, candidate{path: eventsPath, modTime: info.ModTime()})
+		cands = append(cands, copilotSessionCandidate{path: eventsPath, modTime: info.ModTime()})
 	}
-	if len(cands) == 0 {
-		return ""
-	}
-	// Sort newest-first (most recently modified first) to ensure we claim the most recent session.
+	// Sort newest-first (most recently modified first) so claims walk the list
+	// in recency order and the most recent session wins.
 	for i := 0; i < len(cands)-1; i++ {
 		for j := i + 1; j < len(cands); j++ {
 			if cands[j].modTime.After(cands[i].modTime) {
@@ -283,7 +314,7 @@ func findCopilotEventsFile(stateDir, cwd string, after time.Time, resume bool, a
 			}
 		}
 	}
-	return cands[0].path
+	return cands
 }
 
 // copilotEventsMatchesCwd reads the first line of events.jsonl looking for a
@@ -410,6 +441,21 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 			}
 			callback("thinking", "", "", sessionTitle)
 			return
+		case "tool.execution_start":
+			// Copilot emits this immediately before it starts running a tool.
+			// For user-input tools (ask_user, exit_plan_mode) "starting" means
+			// the assistant is blocked waiting for the user to answer; it
+			// never executes autonomously. This is a backstop for the
+			// assistant.message tool-request case above: it works even when
+			// the assistant.message event isn't present (e.g. a plan-mode
+			// exit whose only durable trace is the execution event).
+			var exec copilotToolExecution
+			if json.Unmarshal(ev.Data, &exec) == nil && isUserInputTool(strings.ToLower(exec.ToolName)) {
+				callback("waiting_input", exec.ToolName, "", sessionTitle)
+				return
+			}
+			// Non-user-input tools are intermediate and don't represent
+			// agent status; fall through.
 		case "assistant.message":
 			var msg copilotAssistantMsg
 			if json.Unmarshal(ev.Data, &msg) != nil {
@@ -418,7 +464,13 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 			if len(msg.ToolRequests) > 0 {
 				toolName := msg.ToolRequests[0].Name
 				status := "executing"
-				if toolName == "ask_user" {
+				// Canonical user-input tools (ask_user) and plan-approval
+				// tools (exit_plan_mode) block on the user: the assistant has
+				// finished (or paused) its work and is now waiting for input,
+				// not executing. Shared with the tool.execution_start case
+				// below so the status holds even if the message carrying the
+				// tool request is skipped.
+				if isUserInputTool(strings.ToLower(toolName)) {
 					status = "waiting_input"
 				}
 				callback(status, toolName, "", sessionTitle)
