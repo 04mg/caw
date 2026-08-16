@@ -312,6 +312,8 @@ const lightTerminalTheme = {
   brightWhite: '#f5f5f5',
 }
 
+const transparentTerminalBackground = '#00000000'
+
 function getTerminalTheme(): 'dark' | 'light' {
   return (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
 }
@@ -329,7 +331,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
   const theme = getTerminalTheme() === 'light' ? lightTerminalTheme : darkTerminalTheme
   const terminalTheme = getCustomization().terminal.background.assetId
-    ? { ...theme, background: 'transparent' }
+    ? { ...theme, background: transparentTerminalBackground }
     : theme
   const term = new Terminal({
     allowTransparency: true,
@@ -1169,7 +1171,7 @@ export function setAllTerminalFontSizes(size: number) {
 export function setAllTerminalThemes(theme: 'dark' | 'light') {
   const base = theme === 'light' ? lightTerminalTheme : darkTerminalTheme
   const t = getCustomization().terminal.background.assetId
-    ? { ...base, background: 'transparent' }
+    ? { ...base, background: transparentTerminalBackground }
     : base
   for (const inst of registry.values()) {
     inst.term.options.theme = t
@@ -1179,7 +1181,7 @@ export function setAllTerminalThemes(theme: 'dark' | 'light') {
 
 export function setAllTerminalBackgroundTransparency(enabled: boolean) {
   const base = getTerminalTheme() === 'light' ? lightTerminalTheme : darkTerminalTheme
-  const next = enabled ? { ...base, background: 'transparent' } : base
+  const next = enabled ? { ...base, background: transparentTerminalBackground } : base
   for (const inst of registry.values()) {
     inst.term.options.theme = next
   }

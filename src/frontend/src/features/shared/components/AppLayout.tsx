@@ -2136,7 +2136,21 @@ export function AppLayout() {
                     <div className="flex flex-col h-full bg-background">
                       {/* Empty workspace header top bar */}
                       <div className="flex items-center border-b border-border bg-secondary/15 h-[33px] shrink-0 select-none">
-                        <div className={`flex flex-1 h-full ${explorerSidebarOnRight ? '' : 'order-last'}`}>
+                        {folderSidebarCollapsed && !explorerSidebarOnRight && (
+                          <div className="group flex items-center justify-center h-full shrink-0 border-r border-border bg-background select-none" style={{ width: 36 }}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground animate-none"
+                              onClick={toggleFolderSidebar}
+                              title="Workspace Files"
+                            >
+                              <Folder className="h-3.5 w-3.5 group-hover:hidden" />
+                              <PanelLeft className="h-3.5 w-3.5 hidden group-hover:block" />
+                            </Button>
+                          </div>
+                        )}
+                        <div className="flex flex-1 h-full">
                           <NewTabMenu
                             onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
@@ -2145,9 +2159,9 @@ export function AppLayout() {
                             align="start"
                           />
                         </div>
-                        <div className={`flex items-center shrink-0 h-full border-border bg-background ${explorerSidebarOnRight ? 'border-l' : 'order-first border-r'}`}>
+                        <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
                           {/* Settings Button */}
-                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? (explorerSidebarOnRight ? 'border-r' : 'border-l') + ' border-border' : ''}`} style={{ width: 36 }}>
+                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed && explorerSidebarOnRight ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -2161,7 +2175,7 @@ export function AppLayout() {
                           </div>
 
                           {/* Folder Button */}
-                          {folderSidebarCollapsed && (
+                          {folderSidebarCollapsed && explorerSidebarOnRight && (
                             <div className="group flex items-center justify-center h-full select-none" style={{ width: 36 }}>
                               <Button
                                 variant="ghost"
@@ -2171,9 +2185,7 @@ export function AppLayout() {
                                 title="Workspace Files"
                               >
                                 <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                                {explorerSidebarOnRight
-                                  ? <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
-                                  : <PanelLeft className="h-3.5 w-3.5 hidden group-hover:block" />}
+                                <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
                               </Button>
                             </div>
                           )}
