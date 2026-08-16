@@ -7,10 +7,15 @@ export interface TerminalBackground {
   blur: number
 }
 
+export interface ColorSchemes {
+  dark: Record<string, string>
+  light: Record<string, string>
+}
+
 export interface CustomizationState {
   version: 1
   uiTheme: 'light' | 'dark' | 'system'
-  colors: Record<string, string>
+  colors: ColorSchemes
   editor: {
     theme: 'dark' | 'light'
     fontSize: number
@@ -113,10 +118,30 @@ const MONACO_TOKEN_COLORS: Record<string, string> = {
   attribute: '#9CDCFE',
 }
 
+const LIGHT_MONACO_COLORS: Record<string, string> = {
+  ...MONACO_COLORS,
+  'editor.background': '#FFFFFF',
+  'editor.foreground': '#000000',
+  'editorLineNumber.foreground': '#237893',
+  'editorLineNumber.activeForeground': '#0B216F',
+  'editor.lineHighlightBackground': '#0000000F',
+  'editor.selectionBackground': '#ADD6FF',
+  'editorWidget.background': '#F3F3F3',
+  'editorWidget.foreground': '#616161',
+  'editorSuggestWidget.background': '#F3F3F3',
+  'editorSuggestWidget.foreground': '#616161',
+  'minimap.background': '#FFFFFF',
+}
+
+const DEFAULT_COLOR_SCHEMES: ColorSchemes = {
+  dark: { ...DARK_COLORS, ...MONACO_COLORS },
+  light: { ...LIGHT_COLORS, ...LIGHT_MONACO_COLORS },
+}
+
 export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   version: 1,
   uiTheme: 'system',
-  colors: { ...DARK_COLORS, ...MONACO_COLORS },
+  colors: DEFAULT_COLOR_SCHEMES,
   editor: { theme: 'dark', fontSize: 12, minimap: true, tokenColors: MONACO_TOKEN_COLORS },
   terminal: {
     theme: 'dark',
@@ -128,10 +153,11 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
 
 export function normalizeCustomization(value: Partial<CustomizationState> | undefined): CustomizationState {
   const v = value ?? {}
+  const colors = normalizeColorSchemes(v.colors)
   return {
     ...DEFAULT_CUSTOMIZATION,
     ...v,
-    colors: { ...DEFAULT_CUSTOMIZATION.colors, ...v.colors },
+    colors,
     editor: {
       ...DEFAULT_CUSTOMIZATION.editor,
       ...v.editor,
@@ -146,13 +172,29 @@ export function normalizeCustomization(value: Partial<CustomizationState> | unde
   }
 }
 
+function normalizeColorSchemes(value: ColorSchemes | Record<string, string> | undefined): ColorSchemes {
+  const raw = value as unknown as Record<string, unknown> | undefined
+  const hasSchemes = raw && typeof raw.dark === 'object' && typeof raw.light === 'object'
+  if (hasSchemes) {
+    return {
+      dark: { ...DEFAULT_COLOR_SCHEMES.dark, ...(raw.dark as Record<string, string>) },
+      light: { ...DEFAULT_COLOR_SCHEMES.light, ...(raw.light as Record<string, string>) },
+    }
+  }
+  return {
+    dark: { ...DEFAULT_COLOR_SCHEMES.dark, ...(value as Record<string, string> | undefined) },
+    light: { ...DEFAULT_COLOR_SCHEMES.light },
+  }
+}
+
 export function applyCustomization(value: CustomizationState) {
   const root = document.documentElement
   const followsSystem = value.uiTheme === 'system'
   const light = value.uiTheme === 'light' || (followsSystem && window.matchMedia('(prefers-color-scheme: light)').matches)
   root.classList.toggle('light', light)
+  const colors = light ? value.colors.light : value.colors.dark
   const defaults = light ? LIGHT_COLORS : DARK_COLORS
-  for (const [name, color] of Object.entries({ ...defaults, ...value.colors })) {
+  for (const [name, color] of Object.entries(colors)) {
     if (name in defaults) root.style.setProperty(`--${name}`, color)
   }
   root.style.setProperty('--terminal-opacity', String(value.terminal.background.opacity))
@@ -161,21 +203,8 @@ export function applyCustomization(value: CustomizationState) {
 
 export function monacoTheme(value: CustomizationState) {
   const dark = value.editor.theme === 'dark'
-  const colors = value.colors
-  const fallback = dark ? MONACO_COLORS : {
-    ...MONACO_COLORS,
-    'editor.background': '#FFFFFF',
-    'editor.foreground': '#000000',
-    'editorLineNumber.foreground': '#237893',
-    'editorLineNumber.activeForeground': '#0B216F',
-    'editor.lineHighlightBackground': '#0000000F',
-    'editor.selectionBackground': '#ADD6FF',
-    'editorWidget.background': '#F3F3F3',
-    'editorWidget.foreground': '#616161',
-    'editorSuggestWidget.background': '#F3F3F3',
-    'editorSuggestWidget.foreground': '#616161',
-    'minimap.background': '#FFFFFF',
-  }
+  const colors = dark ? value.colors.dark : value.colors.light
+  const fallback = dark ? MONACO_COLORS : LIGHT_MONACO_COLORS
   return {
     base: dark ? 'vs-dark' : 'vs',
     inherit: true,

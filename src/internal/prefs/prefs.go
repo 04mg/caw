@@ -27,14 +27,44 @@ type TerminalBackground struct {
 	Blur    float64 `json:"blur"`
 }
 
+type ColorSchemes struct {
+	Dark  map[string]string `json:"dark"`
+	Light map[string]string `json:"light"`
+}
+
+func (c *ColorSchemes) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["dark"]; ok {
+		type colorSchemes ColorSchemes
+		var schemes colorSchemes
+		if err := json.Unmarshal(data, &schemes); err != nil {
+			return err
+		}
+		*c = ColorSchemes(schemes)
+		return nil
+	}
+
+	var legacy map[string]string
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	c.Dark = legacy
+	c.Light = map[string]string{}
+	return nil
+}
+
 type CustomizationState struct {
 	Version int               `json:"version"`
 	UITheme string            `json:"uiTheme"`
-	Colors  map[string]string `json:"colors"`
+	Colors  ColorSchemes      `json:"colors"`
 	Editor  struct {
-		Theme    string `json:"theme"`
-		FontSize int    `json:"fontSize"`
-		Minimap  bool   `json:"minimap"`
+		Theme       string            `json:"theme"`
+		FontSize    int               `json:"fontSize"`
+		Minimap     bool              `json:"minimap"`
+		TokenColors map[string]string `json:"tokenColors"`
 	} `json:"editor"`
 	Terminal struct {
 		Theme      string             `json:"theme"`
@@ -93,8 +123,9 @@ func defaultCustomization() CustomizationState {
 	var c CustomizationState
 	c.Version = 1
 	c.UITheme = "system"
-	c.Colors = map[string]string{}
+	c.Colors = ColorSchemes{Dark: map[string]string{}, Light: map[string]string{}}
 	c.Editor.Theme, c.Editor.FontSize, c.Editor.Minimap = "dark", 12, true
+	c.Editor.TokenColors = map[string]string{}
 	c.Terminal.Theme, c.Terminal.FontSize = "dark", 13
 	c.Terminal.Background.Opacity, c.Terminal.Background.Overlay = 1, 0.35
 	c.Layout.SidebarOrder = "workspace-explorer"
@@ -167,20 +198,26 @@ func GetPrefs(store *state.Store) PrefsState {
 		if json.Unmarshal([]byte(v), &pets) == nil {
 			p.Pets = pets
 		}
-		if v, err := store.GetSetting(keyCustomization); err == nil && v != "" {
-			var customization CustomizationState
-			if json.Unmarshal([]byte(v), &customization) == nil {
-				if customization.Version == 0 {
-					customization = defaultCustomization()
-				}
-				if customization.Colors == nil {
-					customization.Colors = map[string]string{}
-				}
-				if customization.Layout.SidebarOrder == "" {
-					customization.Layout.SidebarOrder = "workspace-explorer"
-				}
-				p.Customization = customization
+	}
+	if v, err := store.GetSetting(keyCustomization); err == nil && v != "" {
+		var customization CustomizationState
+		if json.Unmarshal([]byte(v), &customization) == nil {
+			if customization.Version == 0 {
+				customization = defaultCustomization()
 			}
+			if customization.Colors.Dark == nil {
+				customization.Colors.Dark = map[string]string{}
+			}
+			if customization.Colors.Light == nil {
+				customization.Colors.Light = map[string]string{}
+			}
+			if customization.Editor.TokenColors == nil {
+				customization.Editor.TokenColors = map[string]string{}
+			}
+			if customization.Layout.SidebarOrder == "" {
+				customization.Layout.SidebarOrder = "workspace-explorer"
+			}
+			p.Customization = customization
 		}
 	}
 

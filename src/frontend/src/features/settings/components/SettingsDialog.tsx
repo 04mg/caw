@@ -264,9 +264,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setActiveSection(initialSection as Section)
       }
 
-      const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
-      setTheme(savedTheme)
-
       const savedTerminalTheme = (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
       setTerminalTheme(savedTerminalTheme)
 
@@ -279,6 +276,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
         setCustomizationState(p.customization)
         setThemeJson(JSON.stringify(p.customization, null, 2))
+        setTheme(p.customization.uiTheme)
       })
       fetch('/api/terminal/background-assets').then((res) => res.ok ? res.json() : null).then((json) => {
         if (Array.isArray(json?.data)) setMediaAssets(json.data)
@@ -513,24 +511,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
   const applyTheme = (newTheme: 'light' | 'dark' | 'system') => {
     setTheme(newTheme)
-    const root = window.document.documentElement
-    if (newTheme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      if (systemTheme === 'light') {
-        root.classList.add('light')
-      } else {
-        root.classList.remove('light')
-      }
-    } else if (newTheme === 'light') {
-      root.classList.add('light')
-    } else {
-      root.classList.remove('light')
-    }
-    localStorage.setItem('caw:theme', newTheme)
     const next = normalizeCustomization({ ...customization, uiTheme: newTheme })
-    setCustomizationState(next)
-    applyCustomization(next)
-    void setCustomization(next)
+    saveCustomization(next)
   }
 
   const saveCustomization = (next: CustomizationState) => {
@@ -769,7 +751,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <div className="flex flex-col gap-3">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs font-medium">Customization JSON</label>
-                      <p className="text-[10px] text-muted-foreground">Edit UI colors, Monaco colors, and editor.tokenColors syntax colors directly, then apply the JSON.</p>
+                      <p className="text-[10px] text-muted-foreground">Edit colors.dark and colors.light separately, plus Monaco and editor.tokenColors syntax colors, then apply the JSON.</p>
                     </div>
                     <textarea
                       value={themeJson}
