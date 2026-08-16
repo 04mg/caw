@@ -8,6 +8,7 @@ import {
 import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
+import { ZedIcon } from '@/features/agents/components/ZedIcon'
 import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
@@ -58,6 +59,7 @@ interface AllQuotas {
 	copilot?:    ProviderData
 	openrouter?: ProviderData
 	commandcode?: ProviderData
+	zed?:         ProviderData
 }
 
 const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
@@ -215,7 +217,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const hasOllama = !disabledProviders.includes('ollama') && !!settings.ollama?.cookie
 	const hasOpenRouter = !disabledProviders.includes('openrouter') && !!settings.openrouter?.apiKey
 	const hasCommandCode = !disabledProviders.includes('commandcode') && !!settings.commandcode?.cookie
-	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter || hasCommandCode
+	const hasZed = !disabledProviders.includes('zed') && !!settings.zed?.cookie
+	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter || hasCommandCode || hasZed
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
@@ -242,7 +245,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			provider === 'antigravity' ? 'Antigravity' :
 			provider === 'opencode' ? 'OpenCode Go' :
 			provider === 'openrouter' ? 'OpenRouter' :
-			provider === 'commandcode' ? 'Command Code' : 'Ollama'
+			provider === 'commandcode' ? 'Command Code' :
+			provider === 'zed' ? 'Zed' : 'Ollama'
 
 		if (!providerData) {
 			return { text: 'Select Limit', isError: false }
@@ -305,6 +309,9 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			commandcode: {
 				fiveHour: '5h Limit',
 				weekly: 'Weekly Limit',
+				monthly: 'Monthly Limit',
+			},
+			zed: {
 				monthly: 'Monthly Limit',
 			},
 		}
@@ -502,6 +509,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								<OpenRouter className="h-3.5 w-3.5 shrink-0" />
 							) : selectedView.startsWith('commandcode') ? (
 								<CommandCodeIcon className="h-3.5 w-3.5 shrink-0" />
+							) : selectedView.startsWith('zed') ? (
+								<ZedIcon className="h-3.5 w-3.5 shrink-0" />
 							) : null}
 						</>
 					)}
@@ -951,6 +960,73 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 															</div>
 															)
 														})}
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+								)}
+
+								{(hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter || hasCommandCode) && hasZed && <DropdownMenuSeparator className="bg-border" />}
+
+								{hasZed && (
+									<div data-testid="quota-row-zed" className="px-2 flex flex-col gap-2">
+										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+											<ZedIcon className="h-3.5 w-3.5 shrink-0" />
+											Zed
+										</span>
+										{!quotas?.zed?.data ? (
+											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
+										) : (
+											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+												{[
+													{ key: 'monthly', label: 'Monthly Limit' }
+												].map(({ key, label }) => {
+													const val = quotas.zed!.data![key as 'fiveHour' | 'weekly' | 'monthly']
+													const viewKey = `zed:${key}`
+													const isActive = selectedView === viewKey
+													return (
+														<div
+															key={key}
+															onClick={() => selectView(viewKey)}
+															className={cn(
+																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																isActive && "bg-accent/20 border-border"
+															)}
+														>
+															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																<span className="text-foreground">{label}</span>
+																{isActive && <Check className="h-3 w-3 text-primary" />}
+															</div>
+															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
+														</div>
+													)
+												})}
+												{quotas.zed.data.groups?.map((group) => (
+													<div key={group.name} className="flex flex-col gap-1.5">
+														<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
+															{group.name}
+														</span>
+														{group.items.map((item) => {
+															const viewKey = `zed:${group.name}:${item.name}`
+															const isActive = selectedView === viewKey
+															return (
+																<div
+																	key={item.name}
+																	onClick={() => selectView(viewKey)}
+																	className={cn(
+																		"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
+																		isActive && "bg-accent/20 border-border"
+																	)}
+																>
+																	<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+																		<span className="text-foreground" title={item.description}>{item.label}</span>
+																		{isActive && <Check className="h-3 w-3 text-primary" />}
+																	</div>
+																{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
+																</div>
+																)
+															})}
 													</div>
 												))}
 											</div>
