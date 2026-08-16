@@ -136,6 +136,12 @@ html, body, #root {
   height: 100%;
   touch-action: none;
   border-bottom: none !important;
+  background: transparent !important;
+}
+
+.xterm-screen,
+.xterm-screen canvas {
+  background: transparent !important;
 }
 
 .xterm-keyboard-open .xterm,
@@ -614,4 +620,20 @@ html, body, #root {
 }
 .kanban-fade-out {
   animation: kanban-fade-out 160ms ease-in forwards;
+}
+/* A full-page media background is a single fixed layer. UI surfaces become
+   transparent so the shared darkness overlay controls contrast everywhere. */
+.page-background-active .bg-background,
+.page-background-active .bg-card,
+.page-background-active .bg-popover,
+.page-background-active .bg-secondary {
+  background-color: transparent !important;
+}
+
+.page-background-active {
+  background-color: transparent !important;
+}
+
+.page-background-overlay {
+  background-color: hsl(var(--background)) !important;
 }

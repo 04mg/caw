@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Clipboard } from 'lucide-react'
 import { attachTerminal, parkTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
+import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { setAllTerminalBackgroundTransparency } from '../services/terminalRegistry'
 
 interface TerminalPanelProps {
   terminalId: string
@@ -75,6 +77,23 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [savedSelection, setSavedSelection] = useState('')
   const [tuiClipboard, setTuiClipboard] = useState('')
+  const [background, setBackground] = useState(() => getCustomization().terminal.background)
+
+  useEffect(() => subscribePrefs(() => {
+    const next = getCustomization().terminal.background
+    setBackground(next)
+    setAllTerminalBackgroundTransparency(Boolean(next.assetId) || next.applyToPage)
+  }), [])
+  useEffect(() => {
+    const onCustomizationUpdated = (event: Event) => {
+      const next = (event as CustomEvent<{ terminal?: { background?: typeof background } }>).detail?.terminal?.background
+      if (!next) return
+      setBackground(next)
+      setAllTerminalBackgroundTransparency(Boolean(next.assetId) || next.applyToPage)
+    }
+    window.addEventListener('caw:customization-updated', onCustomizationUpdated)
+    return () => window.removeEventListener('caw:customization-updated', onCustomizationUpdated)
+  }, [])
 
   useEffect(() => {
     const el = elRef.current
@@ -596,7 +615,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       onContextMenu={handleContextMenu}
       data-testid={`terminal-panel-${terminalId}`}
     >
-      <div ref={elRef} className="h-full w-full overflow-hidden" style={{ backgroundColor: getTerminalBackground() }} />
+      {background.assetId && !background.applyToPage && (
+        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+          <video src={`/api/terminal/background-assets/${encodeURIComponent(background.assetId)}/content`} className="absolute inset-0 h-full w-full object-cover" autoPlay muted loop playsInline style={{ filter: `blur(${background.blur}px)`, transform: background.blur ? 'scale(1.04)' : undefined, willChange: 'filter' }} />
+          <img src={`/api/terminal/background-assets/${encodeURIComponent(background.assetId)}/content`} className="absolute inset-0 h-full w-full object-cover" style={{ filter: `blur(${background.blur}px)`, transform: background.blur ? 'scale(1.04)' : undefined, willChange: 'filter' }} />
+          <div className="absolute inset-0 bg-background" style={{ opacity: background.overlay }} />
+        </div>
+      )}
+      <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId || background.applyToPage ? 'transparent' : getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button

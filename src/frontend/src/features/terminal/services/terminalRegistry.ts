@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { RingBuffer } from './ringBuffer'
-import { getDefaultShell, getParkedTerminalLimit, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { getCustomization, getDefaultShell, getParkedTerminalLimit, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { terminalTheme, type CustomizationState } from '@/features/customization/theme'
 
 export interface TerminalInstance {
   leafId: string
@@ -266,74 +267,26 @@ async function ensureBackend(leafId: string, cwd: string, cmd?: string[], env?: 
   return id
 }
 
-const darkTerminalTheme = {
-  background: '#000',
-  foreground: '#f0f0f0',
-  cursor: '#f0f0f0',
-  selectionBackground: '#264f78',
-  black: '#2e2e2e',
-  red: '#eb4129',
-  green: '#abe047',
-  yellow: '#f6c744',
-  blue: '#47a0f0',
-  magenta: '#7b5cb0',
-  cyan: '#64dbed',
-  white: '#e5e9f0',
-  brightBlack: '#565656',
-  brightRed: '#ec5357',
-  brightGreen: '#c0e17d',
-  brightYellow: '#f9da6a',
-  brightBlue: '#6284cf',
-  brightMagenta: '#a37bb7',
-  brightCyan: '#76d7e8',
-  brightWhite: '#f6f9fa',
-}
-
-const lightTerminalTheme = {
-  background: '#fff',
-  foreground: '#1a1a1a',
-  cursor: '#1a1a1a',
-  selectionBackground: '#b0d4f1',
-  black: '#2e2e2e',
-  red: '#c41a16',
-  green: '#1c7c1c',
-  yellow: '#8b6f00',
-  blue: '#0050a4',
-  magenta: '#6c2d82',
-  cyan: '#007080',
-  white: '#e0e0e0',
-  brightBlack: '#565656',
-  brightRed: '#d73a33',
-  brightGreen: '#2da12d',
-  brightYellow: '#b89500',
-  brightBlue: '#2464b8',
-  brightMagenta: '#8a44a0',
-  brightCyan: '#0098a8',
-  brightWhite: '#f5f5f5',
-}
-
-function getTerminalTheme(): 'dark' | 'light' {
-  return (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
-}
-
 // Returns the terminal background color for the current theme, used to paint
 // the container behind the xterm.js grid so the padded area (when a larger
 // viewer centers a smaller PTY grid) shows a clean background instead of
 // ghost content from the previous larger grid.
 export function getTerminalBackground(): string {
-  return getTerminalTheme() === 'light' ? '#fff' : '#000'
+  return terminalTheme(getCustomization()).background || '#000000'
 }
 
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const savedSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
   const fontSize = isNaN(savedSize) ? 13 : Math.max(8, Math.min(32, savedSize))
-  const theme = getTerminalTheme() === 'light' ? lightTerminalTheme : darkTerminalTheme
+  const customization = getCustomization()
+  const currentTerminalTheme = terminalTheme(customization, Boolean(customization.terminal.background.assetId) || customization.terminal.background.applyToPage)
   const term = new Terminal({
+    allowTransparency: true,
     cursorBlink: true,
     fontSize,
     fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace",
     scrollback: 10000,
-    theme,
+    theme: currentTerminalTheme,
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
@@ -1162,12 +1115,18 @@ export function setAllTerminalFontSizes(size: number) {
   }
 }
 
-export function setAllTerminalThemes(theme: 'dark' | 'light') {
-  const t = theme === 'light' ? lightTerminalTheme : darkTerminalTheme
+export function applyTerminalCustomization(customization: CustomizationState) {
+  const theme = terminalTheme(customization, Boolean(customization.terminal.background.assetId) || customization.terminal.background.applyToPage)
   for (const inst of registry.values()) {
-    inst.term.options.theme = t
+    inst.term.options.theme = theme
   }
-  localStorage.setItem('caw:terminalTheme', theme)
+}
+
+export function setAllTerminalBackgroundTransparency(enabled: boolean) {
+  const next = terminalTheme(getCustomization(), enabled)
+  for (const inst of registry.values()) {
+    inst.term.options.theme = next
+  }
 }
 
 export function destroyTerminal(leafId: string, deleteBranch?: boolean) {

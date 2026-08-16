@@ -2,14 +2,16 @@ import { useState, useEffect, useCallback, useRef, type ElementType } from 'reac
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
+import { Checkbox } from '@/components/checkbox'
 
-import { Palette, Bot, Terminal, Check, Moon, Sun, Monitor, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getAgentCmdOverrides, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
+import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
+import { applyCustomization, bundledTheme, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
 import { getDeviceId, getDeviceName } from '@/features/devices/services/device'
-import { setAllTerminalFontSizes, setAllTerminalThemes } from '@/features/terminal/services/terminalRegistry'
+import { applyTerminalCustomization, setAllTerminalFontSizes } from '@/features/terminal/services/terminalRegistry'
 import { isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import {
 	getVoiceMode,
@@ -71,6 +73,16 @@ interface SettingsDialogProps {
   initialSection?: string
 }
 
+interface ThemePreset {
+  name: string
+  customization: CustomizationState
+}
+
+const BUNDLED_THEMES: ThemePreset[] = [
+  { name: 'Caw Dark', customization: bundledTheme('Caw Dark') },
+  { name: 'Caw Light', customization: bundledTheme('Caw Light') },
+]
+
 type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
@@ -78,8 +90,16 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [dialogSize, setDialogSize] = useState({ w: 660, h: 590 })
   const [mobileSectionSelected, setMobileSectionSelected] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
-  const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
+  const [theme, setTheme] = useState(() => getCustomization().uiTheme)
+  const [presetThemes, setPresetThemes] = useState<ThemePreset[]>([])
+  const [presetLoadError, setPresetLoadError] = useState('')
+  const [customization, setCustomizationState] = useState<CustomizationState>(() => getCustomization())
+  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; filename: string; contentType: string; contentUrl: string }>>([])
+  const [mediaUploading, setMediaUploading] = useState(false)
+  const [mediaUploadError, setMediaUploadError] = useState('')
+  const mediaInputRef = useRef<HTMLInputElement | null>(null)
+  const [themeJson, setThemeJson] = useState(() => JSON.stringify(getCustomization(), null, 2))
+  const [themeJsonError, setThemeJsonError] = useState('')
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [disabledProviders, setDisabledProviders] = useState<string[]>([])
   const [fontSize, setFontSize] = useState(13)
@@ -256,12 +276,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setActiveSection(initialSection as Section)
       }
 
-      const savedTheme = (localStorage.getItem('caw:theme') as 'light' | 'dark' | 'system') || 'system'
-      setTheme(savedTheme)
-
-      const savedTerminalTheme = (localStorage.getItem('caw:terminalTheme') as 'dark' | 'light') || 'dark'
-      setTerminalTheme(savedTerminalTheme)
-
       loadPrefs().then((p) => {
         setDisabledAgents(p.disabledAgents)
         setDisabledProviders(p.disabledProviders)
@@ -269,7 +283,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setShellPath(p.defaultShell)
         const v = p.parkedTerminals
         setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
+        setCustomizationState(p.customization)
+        setThemeJson(JSON.stringify(p.customization, null, 2))
+        setTheme(p.customization.uiTheme)
       })
+      fetch('/api/terminal/background-assets').then((res) => res.ok ? res.json() : null).then((json) => {
+        if (Array.isArray(json?.data)) setMediaAssets(json.data)
+      }).catch(() => {})
 
       const savedFontSize = parseInt(localStorage.getItem('caw:terminalFontSize') || '13', 10)
       setFontSize(isNaN(savedFontSize) ? 13 : Math.max(8, Math.min(32, savedFontSize)))
@@ -389,6 +409,39 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
   }, [open, loadQuotaSettings, loadQuotas, initialSection, pushSupported, pushIOSPWA])
 
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    const loadPresets = async () => {
+      setPresetLoadError('')
+      try {
+        const response = await fetch('https://api.github.com/repos/04mg/caw/contents/themes/presets')
+        if (!response.ok) throw new Error(`GitHub returned ${response.status}`)
+        const files = await response.json() as Array<{ name?: string; download_url?: string }>
+        const themes = await Promise.all(files
+          .filter((file) => file.name?.endsWith('.json') && file.download_url)
+          .map(async (file) => {
+            const presetResponse = await fetch(file.download_url!)
+            if (!presetResponse.ok) throw new Error(`Could not load ${file.name}`)
+            const customization = normalizeCustomization(await presetResponse.json() as Partial<CustomizationState>)
+            return { name: customization.uiTheme, customization }
+          }))
+        if (!cancelled) {
+          setPresetThemes(themes.filter((preset) => preset.name !== 'Caw Dark' && preset.name !== 'Caw Light'))
+        }
+      } catch {
+        if (!cancelled) {
+          setPresetThemes([])
+          setPresetLoadError('Additional presets are unavailable. Bundled themes remain available.')
+        }
+      }
+    }
+
+    void loadPresets()
+    return () => { cancelled = true }
+  }, [open])
+
   const saveSettings = useCallback(async (
     agKey: string,
     ocCookie: string,
@@ -498,22 +551,89 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
   }, [copilotDeviceFlow, copilotDeviceCode, pollCopilotDeviceToken])
 
-  const applyTheme = (newTheme: 'light' | 'dark' | 'system') => {
-    setTheme(newTheme)
-    const root = window.document.documentElement
-    if (newTheme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      if (systemTheme === 'light') {
-        root.classList.add('light')
-      } else {
-        root.classList.remove('light')
-      }
-    } else if (newTheme === 'light') {
-      root.classList.add('light')
-    } else {
-      root.classList.remove('light')
+  const selectTheme = (name: string) => {
+    if (name === 'Custom') {
+      saveCustomization(normalizeCustomization({ ...customization, uiTheme: 'Custom' }))
+      return
     }
-    localStorage.setItem('caw:theme', newTheme)
+    const preset = [...BUNDLED_THEMES, ...presetThemes].find((candidate) => candidate.name === name)
+    if (preset) saveCustomization(normalizeCustomization(preset.customization))
+  }
+
+  const saveCustomization = (next: CustomizationState) => {
+    setCustomizationState(next)
+    setTheme(next.uiTheme)
+    setThemeJson(JSON.stringify(next, null, 2))
+    setThemeJsonError('')
+    applyCustomization(next)
+    applyTerminalCustomization(next)
+    void savePref(() => setCustomization(next))
+  }
+
+  const saveCustomCustomization = (next: Partial<CustomizationState>) => {
+    saveCustomization(normalizeCustomization({ ...customization, ...next, uiTheme: 'Custom' }))
+  }
+
+  const uploadTerminalBackground = async (file: File) => {
+    setMediaUploading(true)
+    setMediaUploadError('')
+    try {
+      const form = new FormData()
+      form.set('file', file)
+      const res = await fetch('/api/terminal/background-assets', { method: 'POST', body: form })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.data) {
+        const message = json?.error?.message || `Upload failed (${res.status})`
+        throw new Error(message)
+      }
+      setMediaAssets((assets) => [...assets, json.data])
+      saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: json.data.id } } })
+    } catch (error) {
+      console.error('Failed to upload terminal background', error)
+      setMediaUploadError(error instanceof Error ? error.message : 'Upload failed')
+    } finally {
+      setMediaUploading(false)
+    }
+
+  }
+
+  const removeTerminalBackground = async () => {
+    const assetId = customization.terminal.background.assetId
+    if (!assetId) return
+
+    setMediaUploadError('')
+    try {
+      const res = await fetch(`/api/terminal/background-assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error?.message || `Remove failed (${res.status})`)
+      }
+      setMediaAssets((assets) => assets.filter((asset) => asset.id !== assetId))
+      saveCustomCustomization({
+        terminal: {
+          ...customization.terminal,
+          background: { ...customization.terminal.background, assetId: '' },
+        },
+      })
+    } catch (error) {
+      console.error('Failed to remove terminal background', error)
+      setMediaUploadError(error instanceof Error ? error.message : 'Remove failed')
+    }
+  }
+
+  const applyThemeJson = () => {
+    try {
+      const parsed = JSON.parse(themeJson) as Partial<CustomizationState>
+      if (parsed.version !== 1) throw new Error('Unsupported theme version')
+      saveCustomization(normalizeCustomization({ ...parsed, uiTheme: 'Custom' }))
+      setThemeJsonError('')
+    } catch (error) {
+      setThemeJsonError(error instanceof Error ? error.message : 'Invalid customization JSON')
+    }
+  }
+
+  const resetThemeJson = () => {
+    saveCustomization(bundledTheme('Caw Dark'))
   }
 
   // savePref persists a work-pref change and shows transient feedback
@@ -601,86 +721,124 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const renderSectionContent = () => (
     <>
       {activeSection === 'appearance' && (
-            <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
+          <div>
+            <h3 className="mb-1 text-sm font-medium">Appearance</h3>
+            <p className="text-xs text-muted-foreground">Choose a theme, then tailor the workspace background and layout.</p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium" htmlFor="theme-picker">Theme</label>
+            <Select value={theme} onValueChange={selectTheme}>
+              <SelectTrigger id="theme-picker" className="w-full">
+                <SelectValue placeholder="Choose a theme" />
+              </SelectTrigger>
+              <SelectContent>
+                {BUNDLED_THEMES.map((preset) => <SelectItem key={preset.name} value={preset.name}>{preset.name}</SelectItem>)}
+                {presetThemes.map((preset) => <SelectItem key={preset.name} value={preset.name}>{preset.name}</SelectItem>)}
+                <SelectItem value="Custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
+            {presetLoadError && <p className="text-[10px] text-muted-foreground">{presetLoadError}</p>}
+          </div>
+
+          {theme === 'Custom' && (
+            <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
               <div>
-                <h3 className="text-sm font-medium mb-1">Appearance</h3>
-                <p className="text-xs text-muted-foreground">Customize the layout theme and feel of your workspace.</p>
+                <label className="text-xs font-medium">Customization JSON</label>
+                <p className="text-[10px] text-muted-foreground">Edit all theme tokens directly. Changes are saved only when applied.</p>
               </div>
-
-              <div className="grid grid-cols-3 gap-3 mt-2">
-                <button
-                  onClick={() => applyTheme('light')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all ${
-                    theme === 'light'
-                      ? 'border-primary bg-accent/40 ring-1 ring-ring'
-                      : 'border-border hover:bg-accent/20'
-                  }`}
-                >
-                  <Sun className="h-5 w-5 mb-2 text-amber-500" />
-                  <span className="text-xs font-medium">Light</span>
-                </button>
-                <button
-                  onClick={() => applyTheme('dark')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all ${
-                    theme === 'dark'
-                      ? 'border-primary bg-accent/40 ring-1 ring-ring'
-                      : 'border-border hover:bg-accent/20'
-                  }`}
-                >
-                  <Moon className="h-5 w-5 mb-2 text-indigo-400" />
-                  <span className="text-xs font-medium">Dark</span>
-                </button>
-                <button
-                  onClick={() => applyTheme('system')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all ${
-                    theme === 'system'
-                      ? 'border-primary bg-accent/40 ring-1 ring-ring'
-                      : 'border-border hover:bg-accent/20'
-                  }`}
-                >
-                  <Monitor className="h-5 w-5 mb-2 text-muted-foreground" />
-                  <span className="text-xs font-medium">System</span>
-                </button>
-              </div>
-
-              <div className="pt-4 mt-2">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium">Terminal Theme</label>
-                  <p className="text-[10px] text-muted-foreground">Match the terminal background with the rest of the UI.</p>
-                  <div className="flex gap-2 mt-1">
-                    <button
-                      onClick={() => {
-                        setTerminalTheme('dark')
-                        setAllTerminalThemes('dark')
-                      }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                        terminalTheme === 'dark'
-                          ? 'border-primary bg-accent/40 ring-1 ring-ring'
-                          : 'border-border hover:bg-accent/20'
-                      }`}
-                    >
-                      <Moon className="h-3.5 w-3.5 text-indigo-400" />
-                      Dark
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTerminalTheme('light')
-                        setAllTerminalThemes('light')
-                      }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                        terminalTheme === 'light'
-                          ? 'border-primary bg-accent/40 ring-1 ring-ring'
-                          : 'border-border hover:bg-accent/20'
-                      }`}
-                    >
-                      <Sun className="h-3.5 w-3.5 text-amber-500" />
-                      Light
-                    </button>
-                  </div>
-                </div>
+              <textarea
+                value={themeJson}
+                onChange={(e) => setThemeJson(e.target.value)}
+                spellCheck={false}
+                className="min-h-56 w-full resize-y rounded-lg border border-input bg-background p-3 text-[11px] font-mono leading-relaxed"
+                aria-label="Customization JSON"
+              />
+              {themeJsonError && <p className="text-[11px] text-destructive">{themeJsonError}</p>}
+              <div className="flex gap-2">
+                <button onClick={applyThemeJson} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Apply JSON</button>
+                <button onClick={resetThemeJson} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20">Reset to Caw Dark</button>
               </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <label className="text-xs font-medium">Sidebar order</label>
+              <p className="text-[10px] text-muted-foreground">Swap the Workspace and File Explorer sidebars.</p>
+            </div>
+            <button
+              onClick={() => saveCustomCustomization({ layout: { sidebarOrder: customization.layout.sidebarOrder === 'workspace-explorer' ? 'explorer-workspace' : 'workspace-explorer' } })}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-accent/20"
+            >
+              {customization.layout.sidebarOrder === 'workspace-explorer' ? 'Workspace left' : 'Explorer left'}
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-xs font-medium">Terminal background</label>
+              <p className="text-[10px] text-muted-foreground">Use an image or video behind terminals, or across the full workspace.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={mediaInputRef}
+                type="file"
+                accept="image/*,video/*"
+                disabled={mediaUploading}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) void uploadTerminalBackground(file)
+                  e.currentTarget.value = ''
+                }}
+              />
+              <button type="button" disabled={mediaUploading} onClick={() => mediaInputRef.current?.click()} className="flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs text-muted-foreground hover:bg-accent/20">
+                <ImagePlus className="h-3.5 w-3.5 shrink-0" />
+                <span className="max-w-48 truncate">{mediaUploading ? 'Uploading…' : 'Choose image or video…'}</span>
+              </button>
+              {mediaUploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            </div>
+            {mediaUploadError && <p className="text-[11px] text-destructive">{mediaUploadError}</p>}
+            {mediaAssets.length > 0 && (
+              <div className="flex gap-2">
+                <select
+                  value={customization.terminal.background.assetId}
+                  onChange={(e) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: e.target.value } } })}
+                  className="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2 text-xs"
+                >
+                  <option value="">No background media</option>
+                  {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.filename}</option>)}
+                </select>
+                <button
+                  type="button"
+                  disabled={!customization.terminal.background.assetId}
+                  onClick={() => void removeTerminalBackground()}
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs text-muted-foreground hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove
+                </button>
+              </div>
+            )}
+            <label className="flex cursor-pointer items-center gap-2.5 text-xs">
+              <Checkbox
+                checked={customization.terminal.background.applyToPage}
+                onChange={() => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, applyToPage: !customization.terminal.background.applyToPage } } })}
+              />
+              <span className="flex flex-col">
+                <span className="font-medium">Apply to full page</span>
+                <span className="text-[10px] text-muted-foreground">Show selected media behind the entire workspace.</span>
+              </span>
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
+              <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } })} />
+            </div>
+          </div>
+        </div>
+      )}
 
           {activeSection === 'agents' && agentStep === 1 && (
             <div className="flex flex-col gap-4 animate-in fade-in duration-200">

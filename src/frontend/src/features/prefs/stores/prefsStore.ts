@@ -1,4 +1,5 @@
 import { wsMux } from '@/features/shared/services/wsMultiplexer'
+import { DEFAULT_CUSTOMIZATION, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
 
 export interface PetsConfig {
   enabled: boolean
@@ -21,6 +22,7 @@ export interface PrefsState {
   parkedTerminals: number
   hotkeys: Record<string, string>
   pets: PetsConfig
+  customization: CustomizationState
 }
 
 export const DEFAULT_PARKED_TERMINALS = 6
@@ -70,6 +72,7 @@ let cache: PrefsState = {
   parkedTerminals: DEFAULT_PARKED_TERMINALS,
   hotkeys: { ...DEFAULT_HOTKEYS },
   pets: { ...DEFAULT_PETS, agentPins: {} },
+  customization: DEFAULT_CUSTOMIZATION,
 }
 
 let loaded = false
@@ -81,7 +84,7 @@ function ensureMux() {
   unsubMux = wsMux.subscribe('prefs', (data) => {
     const p = data as PrefsState
     if (!p || typeof p.defaultNewAgent !== 'string') return
-    cache = p
+    cache = { ...p, customization: normalizeCustomization(p.customization) }
     loaded = true
     for (const l of listeners) l()
     window.dispatchEvent(new CustomEvent('caw:settings-updated'))
@@ -106,7 +109,7 @@ export async function loadPrefs(): Promise<PrefsState> {
     if (res.ok) {
       const data = (await res.json())?.data as PrefsState
       if (data && typeof data.defaultNewAgent === 'string') {
-        cache = data
+        cache = { ...data, customization: normalizeCustomization(data.customization) }
         loaded = true
       }
     }
@@ -246,6 +249,14 @@ export async function setPetsConfig(pets: PetsConfig): Promise<boolean> {
 
 export async function setPetsEnabled(enabled: boolean): Promise<boolean> {
   return persistAndBroadcast({ ...cache, pets: { ...cache.pets, enabled } })
+}
+
+export function getCustomization(): CustomizationState {
+  return cache.customization
+}
+
+export async function setCustomization(customization: CustomizationState): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, customization: normalizeCustomization(customization) })
 }
 
 export async function setPetsUniquePerAgent(uniquePerAgent: boolean): Promise<boolean> {
