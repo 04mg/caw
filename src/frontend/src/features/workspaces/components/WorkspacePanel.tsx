@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
-import { Plus, PanelLeft, PanelLeftClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 
@@ -33,6 +33,7 @@ interface WorkspacePanelProps {
   pickerOpen?: boolean
   onPickerOpenChange?: (open: boolean) => void
   onOpenSettings?: () => void
+  isRight?: boolean
 }
 
 export function WorkspacePanel({
@@ -49,6 +50,7 @@ export function WorkspacePanel({
   pickerOpen: externalPickerOpen,
   onPickerOpenChange,
   onOpenSettings,
+  isRight = false,
 }: WorkspacePanelProps) {
   const [internalPickerOpen, setInternalPickerOpen] = useState(false)
   const pickerOpen = externalPickerOpen ?? internalPickerOpen
@@ -157,7 +159,7 @@ export function WorkspacePanel({
   if (collapsed) {
     return (
       <div
-        className="flex h-full w-full flex-col bg-background border-r border-border overflow-hidden workspace-panel"
+        className={`flex h-full w-full flex-col bg-background overflow-hidden workspace-panel ${isRight ? 'border-l border-border' : 'border-r border-border'}`}
         onContextMenu={(e) => {
           e.preventDefault()
           setGeneralContextMenu({ x: e.clientX, y: e.clientY })
@@ -171,14 +173,14 @@ export function WorkspacePanel({
             onClick={onToggle}
             title="Show sidebar"
           >
-            <PanelLeft className="h-3.5 w-3.5" />
+            {isRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelLeft className="h-3.5 w-3.5" />}
           </Button>
         </div>
         <div className="flex flex-col items-center flex-1 overflow-y-auto">
           {workspaces.map((ws, i) => (
             <div
               key={ws.id}
-              className={`flex items-center h-[33px] w-full transition-colors ${
+              className={`flex items-center ${isRight ? 'flex-row-reverse' : ''} h-[33px] w-full transition-colors ${
                 ws.id === activeWorkspaceId ? 'bg-accent/70' : 'hover:bg-accent/40'
               }`}
             >
@@ -258,7 +260,7 @@ export function WorkspacePanel({
       }}
     >
       {!noHeader && (
-        <div className="flex items-center gap-2 border-b border-border px-3 h-[33px] shrink-0 bg-secondary/20">
+        <div className={`flex items-center gap-2 border-b border-border h-[33px] shrink-0 bg-secondary/20 ${isRight ? 'flex-row-reverse px-3' : 'px-3'}`}>
           <Button
             variant="ghost"
             size="icon"
@@ -266,7 +268,7 @@ export function WorkspacePanel({
             onClick={onToggle}
             title="Hide sidebar"
           >
-            <PanelLeftClose className="h-3.5 w-3.5" />
+            {isRight ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
           </Button>
           <span className="flex-1 text-xs font-semibold text-muted-foreground truncate">
             Workspaces
@@ -320,7 +322,7 @@ export function WorkspacePanel({
                   onPointerDown={(e) => onPointerDown(e, i)}
                   onPointerMove={(e) => onPointerMove(e, i)}
                   onPointerUp={(e) => onPointerUp(e)}
-                  className={`group flex items-center gap-1.5 pl-2 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
+                  className={`group flex items-center gap-1.5 ${isRight ? 'flex-row-reverse pl-3 pr-2 text-right' : 'pl-2 pr-3'} py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
                     i === 0 ? 'border-t-0' : ''
                   } ${isDragOver ? 'border-t-2 border-t-primary' : ''} ${
                     isActive ? 'bg-accent/70 text-accent-foreground' : 'hover:bg-accent/40 text-muted-foreground'

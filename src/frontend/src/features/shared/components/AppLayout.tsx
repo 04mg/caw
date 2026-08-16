@@ -30,7 +30,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
-import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelRight, X } from 'lucide-react'
+import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
 import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
@@ -297,6 +297,8 @@ export function AppLayout() {
   }, [])
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
+  const workspaceSidebarOnRight = getCustomization().layout.sidebarOrder === 'explorer-workspace'
+  const explorerSidebarOnRight = !workspaceSidebarOnRight
 
   // Top-level SplitLayout sizing strategy
   // -------------------------------------
@@ -1889,6 +1891,7 @@ export function AppLayout() {
                 pickerOpen={pickerOpen}
                 onPickerOpenChange={setPickerOpen}
                 onOpenSettings={() => setSettingsOpen(true)}
+                isRight={false}
               />
             </div>
           </div>
@@ -1914,6 +1917,7 @@ export function AppLayout() {
                 searchPanelOpen={searchPanelOpen}
                 searchPanelMode={searchPanelMode}
                 onCloseSearchPanel={() => setSearchPanelOpen(false)}
+                isRight={true}
               />
             </div>
           </div>
@@ -2056,7 +2060,7 @@ export function AppLayout() {
             <div className="flex h-full w-full">
               <SplitLayout
                 orientation="horizontal"
-                reverse={getCustomization().layout.sidebarOrder === 'explorer-workspace'}
+                reverse={workspaceSidebarOnRight}
                 className="flex-1 h-full w-full"
                 sizes={liveSizes.length === 3 ? liveSizes : topLevelSizes}
                 minSizes={[sidebarMinSize, '0%', folderMinSize]}
@@ -2084,6 +2088,7 @@ export function AppLayout() {
                   pickerOpen={pickerOpen}
                   onPickerOpenChange={setPickerOpen}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  isRight={workspaceSidebarOnRight}
                 />
 
                 {/* Main Terminals / Editors Content. */}
@@ -2139,9 +2144,9 @@ export function AppLayout() {
                             align="start"
                           />
                         </div>
-                        <div className="flex items-center shrink-0 h-full border-l border-border bg-background">
+                        <div className={`flex items-center shrink-0 h-full border-border bg-background ${explorerSidebarOnRight ? 'ml-auto border-l' : 'mr-auto border-r flex-row-reverse'}`}>
                           {/* Settings Button */}
-                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? 'border-r border-border' : ''}`} style={{ width: 36 }}>
+                          <div className={`flex items-center justify-center h-full select-none ${folderSidebarCollapsed ? (explorerSidebarOnRight ? 'border-r' : 'border-l') + ' border-border' : ''}`} style={{ width: 36 }}>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -2165,7 +2170,9 @@ export function AppLayout() {
                                 title="Workspace Files"
                               >
                                 <Folder className="h-3.5 w-3.5 group-hover:hidden" />
-                                <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                                {explorerSidebarOnRight
+                                  ? <PanelRight className="h-3.5 w-3.5 hidden group-hover:block" />
+                                  : <PanelLeft className="h-3.5 w-3.5 hidden group-hover:block" />}
                               </Button>
                             </div>
                           )}
@@ -2205,6 +2212,7 @@ export function AppLayout() {
                       searchPanelOpen={searchPanelOpen}
                       searchPanelMode={searchPanelMode}
                       onCloseSearchPanel={() => setSearchPanelOpen(false)}
+                      isRight={explorerSidebarOnRight}
                     />
                   ) : null}
                 </div>
