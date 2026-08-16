@@ -2,7 +2,7 @@
 
 Ready-made Caw customization presets based on the most popular color themes for VS Code and other editors.
 
-All five themes are **dark**, cover the full Caw UI (sidebar, panels, dialogs), the Monaco code editor, and its syntax tokens, and ship with no background image or transparency — paste one in and you're done.
+All five themes are **dark**, cover the full Caw UI (sidebar, panels, dialogs), Monaco syntax highlighting, and terminal colors, and ship with no background image or transparency — paste one in and you're done.
 
 ## Available themes
 
@@ -34,13 +34,14 @@ The theme is applied immediately and persisted for every device connected to Caw
 - **UI theme**: all presets set `uiTheme` to `"dark"`. The Light / Dark / System buttons above the JSON editor override this on top of the preset.
 - **Terminal background**: the presets disable the terminal background image (`assetId: ""`). To add one, upload it in **Terminal background** after applying a theme.
 - **Font size**: tweak `editor.fontSize` and `terminal.fontSize` in the JSON, or use the font size controls in the settings.
-- **Syntax colors**: the `editor.tokenColors` map controls the code highlighting in the editor.
+- **Syntax colors**: the `editor.tokenColors` map controls code highlighting and the terminal's ANSI palette.
+- **Terminal colors**: add hex `terminal.*` entries to `colors` (for example, `"terminal.background"`, `"terminal.foreground"`, or `"terminal.red"`) to override the terminal's derived colors.
 
 ## Adding a theme
 
 Theme files are standard Caw `CustomizationState` JSON (`version: 1`). The structure is:
 
-- `colors` — UI tokens as HSL triplets (e.g. `"220 13% 18%"`) plus Monaco editor colors as hex (e.g. `"editor.background": "#282C34"`).
+- `colors` — UI tokens as HSL triplets (e.g. `"220 13% 18%"`), Monaco editor colors as hex (e.g. `"editor.background": "#282C34"`), and optional `terminal.*` hex overrides.
 - `editor.tokenColors` — hex syntax colors for comments, strings, keywords, etc.
 - `terminal` — terminal theme, font size, and background.
 

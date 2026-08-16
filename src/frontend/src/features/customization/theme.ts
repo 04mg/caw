@@ -1,3 +1,5 @@
+import type { ITheme as TerminalTheme } from '@xterm/xterm'
+
 export type SidebarOrder = 'workspace-explorer' | 'explorer-workspace'
 
 export interface TerminalBackground {
@@ -118,6 +120,29 @@ const MONACO_TOKEN_COLORS: Record<string, string> = {
   attribute: '#9CDCFE',
 }
 
+const TERMINAL_COLORS: TerminalTheme = {
+  background: '#000000',
+  foreground: '#F0F0F0',
+  cursor: '#F0F0F0',
+  selectionBackground: '#264F78',
+  black: '#2E2E2E',
+  red: '#EB4129',
+  green: '#ABE047',
+  yellow: '#F6C744',
+  blue: '#47A0F0',
+  magenta: '#7B5CB0',
+  cyan: '#64DBED',
+  white: '#E5E9F0',
+  brightBlack: '#565656',
+  brightRed: '#EC5357',
+  brightGreen: '#C0E17D',
+  brightYellow: '#F9DA6A',
+  brightBlue: '#6284CF',
+  brightMagenta: '#A37BB7',
+  brightCyan: '#76D7E8',
+  brightWhite: '#F6F9FA',
+}
+
 const LIGHT_MONACO_COLORS: Record<string, string> = {
   ...MONACO_COLORS,
   'editor.background': '#FFFFFF',
@@ -213,5 +238,40 @@ export function monacoTheme(value: CustomizationState) {
       foreground: foreground.replace(/^#/, ''),
     })),
     colors: Object.fromEntries(Object.keys(fallback).map((key) => [key, colors[key] || fallback[key]])),
+  }
+}
+
+export function terminalTheme(value: CustomizationState, transparentBackground = false): TerminalTheme {
+  const dark = value.terminal.theme === 'dark'
+  const colors = dark ? value.colors.dark : value.colors.light
+  const tokens = value.editor.tokenColors
+  const get = (name: string, fallback: string) => colors[`terminal.${name}`] || fallback
+  const background = transparentBackground
+    ? '#00000000'
+    : get('background', colors['editor.background'] || TERMINAL_COLORS.background!)
+  const foreground = get('foreground', colors['editor.foreground'] || TERMINAL_COLORS.foreground!)
+
+  return {
+    ...TERMINAL_COLORS,
+    background,
+    foreground,
+    cursor: get('cursor', foreground),
+    selectionBackground: get('selectionBackground', colors['editor.selectionBackground'] || TERMINAL_COLORS.selectionBackground!),
+    black: get('black', colors['editor.lineHighlightBackground'] || TERMINAL_COLORS.black!),
+    red: get('red', tokens.regexp || TERMINAL_COLORS.red!),
+    green: get('green', tokens.function || TERMINAL_COLORS.green!),
+    yellow: get('yellow', tokens.string || TERMINAL_COLORS.yellow!),
+    blue: get('blue', tokens.tag || TERMINAL_COLORS.blue!),
+    magenta: get('magenta', tokens.keyword || TERMINAL_COLORS.magenta!),
+    cyan: get('cyan', tokens.type || TERMINAL_COLORS.cyan!),
+    white: get('white', foreground),
+    brightBlack: get('brightBlack', colors['editorLineNumber.foreground'] || TERMINAL_COLORS.brightBlack!),
+    brightRed: get('brightRed', tokens.regexp || TERMINAL_COLORS.brightRed!),
+    brightGreen: get('brightGreen', tokens.attribute || tokens.function || TERMINAL_COLORS.brightGreen!),
+    brightYellow: get('brightYellow', tokens.string || TERMINAL_COLORS.brightYellow!),
+    brightBlue: get('brightBlue', tokens.constant || tokens.tag || TERMINAL_COLORS.brightBlue!),
+    brightMagenta: get('brightMagenta', tokens.keyword || TERMINAL_COLORS.brightMagenta!),
+    brightCyan: get('brightCyan', tokens.class || tokens.type || TERMINAL_COLORS.brightCyan!),
+    brightWhite: get('brightWhite', foreground),
   }
 }
