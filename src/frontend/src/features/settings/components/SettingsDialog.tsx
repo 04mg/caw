@@ -549,6 +549,27 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     } finally {
       setMediaUploading(false)
     }
+
+  }
+
+  const exportCustomization = () => {
+    const blob = new Blob([JSON.stringify(customization, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'caw-theme.json'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importCustomization = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<CustomizationState>
+      if (parsed.version !== 1) throw new Error('Unsupported theme version')
+      saveCustomization(normalizeCustomization(parsed))
+    } catch (error) {
+      console.error('Failed to import Caw theme', error)
+    }
   }
 
   // savePref persists a work-pref change and shows transient feedback
@@ -717,6 +738,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                     <div>
                       <label className="text-xs font-medium">Accent color token</label>
                       <p className="text-[10px] text-muted-foreground">HSL values used by buttons, focus rings, and selected controls.</p>
+                    </div>
+
+                    <div className="pt-4 mt-2 flex items-center gap-2">
+                      <button onClick={exportCustomization} className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-accent/20">Export Caw theme</button>
+                      <label className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-accent/20 cursor-pointer">
+                        Import Caw theme
+                        <input type="file" accept="application/json,.json" className="hidden" onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) void importCustomization(file)
+                          e.currentTarget.value = ''
+                        }} />
+                      </label>
                     </div>
 
                     <div className="pt-4 mt-2 flex flex-col gap-3">
