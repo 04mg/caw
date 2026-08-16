@@ -9,6 +9,14 @@ import (
 
 const githubClientID = "Ov23liFkTGbDgDFsQPC8"
 
+type DeviceLoginClient struct {
+	ClientID   string
+	Scope      string
+	CodeURL    string
+	TokenURL   string
+	HTTPClient *http.Client
+}
+
 type DeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`
@@ -30,15 +38,33 @@ type DeviceTokenResponse struct {
 }
 
 func initiateDeviceLogin() (*DeviceCodeResponse, error) {
-	body := fmt.Sprintf("client_id=%s&scope=read:user", githubClientID)
-	req, err := http.NewRequest("POST", "https://github.com/login/device/code", bytes.NewBufferString(body))
+	return defaultGitHubDeviceLoginClient().Initiate()
+}
+
+func pollDeviceToken(deviceCode string) (*DeviceTokenResponse, error) {
+	return defaultGitHubDeviceLoginClient().Poll(deviceCode)
+}
+
+func defaultGitHubDeviceLoginClient() DeviceLoginClient {
+	return DeviceLoginClient{
+		ClientID:   githubClientID,
+		Scope:      "read:user",
+		CodeURL:    "https://github.com/login/device/code",
+		TokenURL:   "https://github.com/login/oauth/access_token",
+		HTTPClient: http.DefaultClient,
+	}
+}
+
+func (c DeviceLoginClient) Initiate() (*DeviceCodeResponse, error) {
+	body := fmt.Sprintf("client_id=%s&scope=%s", c.ClientID, c.Scope)
+	req, err := http.NewRequest("POST", c.CodeURL, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("device code request failed: %w", err)
 	}
@@ -51,16 +77,16 @@ func initiateDeviceLogin() (*DeviceCodeResponse, error) {
 	return &dc, nil
 }
 
-func pollDeviceToken(deviceCode string) (*DeviceTokenResponse, error) {
-	body := fmt.Sprintf("client_id=%s&device_code=%s&grant_type=urn:ietf:params:oauth:grant-type:device_code", githubClientID, deviceCode)
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", bytes.NewBufferString(body))
+func (c DeviceLoginClient) Poll(deviceCode string) (*DeviceTokenResponse, error) {
+	body := fmt.Sprintf("client_id=%s&device_code=%s&grant_type=urn:ietf:params:oauth:grant-type:device_code", c.ClientID, deviceCode)
+	req, err := http.NewRequest("POST", c.TokenURL, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token poll request failed: %w", err)
 	}
@@ -71,4 +97,11 @@ func pollDeviceToken(deviceCode string) (*DeviceTokenResponse, error) {
 		return nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
 	return &tr, nil
+}
+
+func (c DeviceLoginClient) httpClient() *http.Client {
+	if c.HTTPClient != nil {
+		return c.HTTPClient
+	}
+	return http.DefaultClient
 }

@@ -70,6 +70,19 @@ func (s *Store) migrate() {
 		value    TEXT NOT NULL,
 		PRIMARY KEY (provider, key)
 	);
+	CREATE TABLE IF NOT EXISTS quota_accounts (
+		provider TEXT NOT NULL,
+		name     TEXT NOT NULL,
+		PRIMARY KEY (provider, name)
+	);
+	CREATE TABLE IF NOT EXISTS quota_account_settings (
+		provider     TEXT NOT NULL,
+		account_name TEXT NOT NULL,
+		key          TEXT NOT NULL,
+		value        TEXT NOT NULL,
+		PRIMARY KEY (provider, account_name, key),
+		FOREIGN KEY (provider, account_name) REFERENCES quota_accounts(provider, name) ON DELETE CASCADE
+	);
 	CREATE TABLE IF NOT EXISTS agent_sessions (
 		leaf_id    TEXT PRIMARY KEY,
 		agent_id   TEXT NOT NULL DEFAULT '',
@@ -122,6 +135,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_enabled INTEGER NOT NULL DEFAULT 0")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_needs_input INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_finished INTEGER NOT NULL DEFAULT 1")
+	s.migrateQuotaAccounts()
 }
 
 func (s *Store) Get() AppState {
@@ -324,59 +338,6 @@ func (s *Store) saveLayoutTree(tx *sql.Tx, tabID, parentID string, ln LayoutNode
 	for i, child := range ln.Children {
 		s.saveLayoutTree(tx, tabID, ln.ID, child, i)
 	}
-}
-
-func (s *Store) GetQuotaSettings() (map[string]map[string]string, error) {
-	s.Mu.RLock()
-	defer s.Mu.RUnlock()
-
-	rows, err := s.db.Query("SELECT provider, key, value FROM quota_settings")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	res := make(map[string]map[string]string)
-	for rows.Next() {
-		var provider, key, val string
-		if err := rows.Scan(&provider, &key, &val); err != nil {
-			return nil, err
-		}
-		if _, ok := res[provider]; !ok {
-			res[provider] = make(map[string]string)
-		}
-		res[provider][key] = val
-	}
-	return res, nil
-}
-
-func (s *Store) SaveQuotaSettings(settings map[string]map[string]string) error {
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec("DELETE FROM quota_settings"); err != nil {
-		return err
-	}
-
-	for provider, kv := range settings {
-		for key, val := range kv {
-			if val == "" {
-				continue
-			}
-			_, err := tx.Exec("INSERT INTO quota_settings (provider, key, value) VALUES (?, ?, ?)", provider, key, val)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return tx.Commit()
 }
 
 func (s *Store) Close() {

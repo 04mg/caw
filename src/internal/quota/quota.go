@@ -31,6 +31,14 @@ type QuotaResponse struct {
 }
 
 type ProviderResponse struct {
+	Data     *QuotaResponse          `json:"data,omitempty"`
+	Error    string                  `json:"error,omitempty"`
+	Accounts []NamedProviderResponse `json:"accounts,omitempty"`
+}
+
+type NamedProviderResponse struct {
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
 	Data  *QuotaResponse `json:"data,omitempty"`
 	Error string         `json:"error,omitempty"`
 }

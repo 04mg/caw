@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, type ElementType } from 'react'
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -14,53 +14,36 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
 import { getDisabledProviders, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import {
+	deserializeQuotaSelection,
+	getQuotaMetricEntries,
+	normalizeProviderQuota,
+	normalizeQuotaSettingsPayload,
+	providerHasConfiguredAccount,
+	serializeQuotaSelection,
+	QUOTA_PROVIDER_IDS,
+	QUOTA_PROVIDER_LABELS,
+	type NormalizedProviderQuota,
+	type QuotaGroup,
+	type QuotaItem,
+	type QuotaMetricKey,
+	type QuotaProviderId,
+	type QuotaSelection,
+} from '@/features/shared/utils/quotaLimits'
 
-interface Quota {
-	used:  number
-	limit: number
-	unit?: string // "" | "percentage" | "credits" | "count" | "currency" | "info"
-	resetTime?: string
+const PROVIDER_ICONS: Record<QuotaProviderId, ElementType> = {
+	claude: Claude.Color,
+	codex: Codex.Color,
+	copilot: GithubCopilot,
+	antigravity: Antigravity.Color,
+	opencode: OpenCode,
+	ollama: Ollama,
+	openrouter: OpenRouter,
+	commandcode: CommandCodeIcon,
+	zed: ZedIcon,
 }
 
-interface QuotaItem {
-	name:        string
-	label:       string
-	description: string
-	used:        number
-	limit:       number
-	unit?:       string
-	resetTime?:  string
-}
-
-interface QuotaGroup {
-	name:        string
-	description: string
-	items:       QuotaItem[]
-}
-
-interface QuotaResponse {
-	fiveHour: Quota
-	weekly:   Quota
-	monthly:  Quota
-	groups?:  QuotaGroup[]
-}
-
-interface ProviderData {
-	data?: QuotaResponse
-	error?: string
-}
-
-interface AllQuotas {
-	antigravity?: ProviderData
-	opencode?:    ProviderData
-	ollama?:      ProviderData
-	claude?:     ProviderData
-	codex?:      ProviderData
-	copilot?:    ProviderData
-	openrouter?: ProviderData
-	commandcode?: ProviderData
-	zed?:         ProviderData
-}
+const AUTO_HIDDEN_ON_ERROR = new Set<QuotaProviderId>(['claude', 'codex'])
 
 const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
 	if (unit === 'info') {
@@ -71,10 +54,8 @@ const formatQuotaValue = (used: number, limit: number, unit?: string): { text: s
 	}
 	const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
 	if (unit === 'currency') {
-		// Dollar-based quotas (Command Code, OpenRouter): show as "$".
 		return { text: `${used}$ / ${limit}$`, percentage: pct }
 	}
-	// credits / count
 	return { text: `${used}/${limit}`, percentage: pct }
 }
 
@@ -102,14 +83,66 @@ interface StatusBarProps {
 	onSendText?: (text: string) => void
 }
 
+function renderProviderIcon(providerId: QuotaProviderId) {
+	const Icon = PROVIDER_ICONS[providerId]
+	return <Icon className="h-3.5 w-3.5 shrink-0" />
+}
+
 export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
-	const [quotas, setQuotas] = useState<AllQuotas | null>(null)
-	const [settings, setSettings] = useState<Record<string, Record<string, string>>>({})
+	const [quotas, setQuotas] = useState<Record<string, unknown> | null>(null)
+	const [settingsPayload, setSettingsPayload] = useState<unknown>({})
 	const [disabledProviders, setDisabledProviders] = useState<string[]>(getDisabledProviders())
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
 	const voice = useVoiceMode()
+
+	const settings = useMemo(() => normalizeQuotaSettingsPayload(settingsPayload).providers, [settingsPayload])
+	const normalizedQuotas = useMemo(() => {
+		const result = {} as Record<QuotaProviderId, NormalizedProviderQuota>
+		for (const providerId of QUOTA_PROVIDER_IDS) {
+			result[providerId] = normalizeProviderQuota(providerId, quotas?.[providerId], settings[providerId])
+		}
+		return result
+	}, [quotas, settings])
+
+	const visibleProviders = useMemo(() => {
+		return QUOTA_PROVIDER_IDS.filter((providerId) => {
+			if (disabledProviders.includes(providerId)) return false
+			if (AUTO_HIDDEN_ON_ERROR.has(providerId) && normalizedQuotas[providerId].error && normalizedQuotas[providerId].accounts.length === 0) {
+				return false
+			}
+			return providerHasConfiguredAccount(providerId, settings[providerId], normalizedQuotas[providerId])
+		})
+	}, [disabledProviders, normalizedQuotas, settings])
+
+	const availableSelections = useMemo(() => {
+		const selections: string[] = []
+		for (const providerId of visibleProviders) {
+			for (const account of normalizedQuotas[providerId].accounts) {
+				for (const metric of getQuotaMetricEntries(providerId, account.data)) {
+					selections.push(serializeQuotaSelection({
+						providerId,
+						accountId: normalizedQuotas[providerId].accounts.length > 1 ? account.id : undefined,
+						kind: 'window',
+						metricKey: metric.key,
+					}))
+				}
+				for (const group of account.data?.groups || []) {
+					for (const item of group.items) {
+						selections.push(serializeQuotaSelection({
+							providerId,
+							accountId: normalizedQuotas[providerId].accounts.length > 1 ? account.id : undefined,
+							kind: 'groupItem',
+							groupName: group.name,
+							itemName: item.name,
+						}))
+					}
+				}
+			}
+		}
+		return selections
+	}, [normalizedQuotas, visibleProviders])
 
 	useEffect(() => {
 		const onResize = () => setIsMobile(window.innerWidth < 768)
@@ -122,7 +155,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			const res = await fetch('/api/quotas/settings')
 			if (res.ok) {
 				const json = await res.json()
-				setSettings(json?.data || {})
+				setSettingsPayload(json?.data || {})
 			}
 		} catch (e) {
 			console.error('Error fetching settings', e)
@@ -152,7 +185,6 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		await fetchQuotas()
 	}, [fetchSettings, fetchQuotas])
 
-	// Auto poll every 3 minutes
 	useEffect(() => {
 		refreshAll()
 		const timer = setInterval(fetchQuotas, 180000)
@@ -165,25 +197,31 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		}
 	}, [refreshAll, fetchQuotas])
 
-	// Keep the disabled-provider list in sync with prefs (this tab and other
-	// devices) so toggling in Settings takes effect immediately.
 	useEffect(() => {
 		return subscribePrefs(() => setDisabledProviders(getDisabledProviders()))
 	}, [])
 
-	// Load / initialize selected view
 	useEffect(() => {
 		const saved = localStorage.getItem('caw:quota:selected_view')
 		if (saved) {
-			setSelectedView(saved)
-		} else {
-			setSelectedView('claude:fiveHour')
+			const parsed = deserializeQuotaSelection(saved)
+			setSelectedView(parsed ? serializeQuotaSelection(parsed) : saved)
 		}
 	}, [])
 
-	const selectView = (view: string) => {
-		setSelectedView(view)
-		localStorage.setItem('caw:quota:selected_view', view)
+	useEffect(() => {
+		if (availableSelections.length === 0) return
+		if (!selectedView || !availableSelections.includes(selectedView)) {
+			const next = availableSelections[0]
+			setSelectedView(next)
+			localStorage.setItem('caw:quota:selected_view', next)
+		}
+	}, [availableSelections, selectedView])
+
+	const selectView = (view: QuotaSelection) => {
+		const next = serializeQuotaSelection(view)
+		setSelectedView(next)
+		localStorage.setItem('caw:quota:selected_view', next)
 	}
 
 	const handleToggleVoice = () => {
@@ -209,16 +247,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		voice.reset()
 	}
 
-	const hasClaude = !disabledProviders.includes('claude') && settings.claude?.installed !== 'false' && !(quotas && quotas.claude?.error)
-	const hasCodex = !disabledProviders.includes('codex') && settings.codex?.installed !== 'false' && !(quotas && quotas.codex?.error)
-	const hasCopilot = !disabledProviders.includes('copilot') && !!settings.copilot?.token
-	const hasAntigravity = !disabledProviders.includes('antigravity') && settings.antigravity?.installed !== 'false'
-	const hasOpenCode = !disabledProviders.includes('opencode') && !!(settings.opencode?.cookie && settings.opencode?.workspaceId)
-	const hasOllama = !disabledProviders.includes('ollama') && !!settings.ollama?.cookie
-	const hasOpenRouter = !disabledProviders.includes('openrouter') && !!settings.openrouter?.apiKey
-	const hasCommandCode = !disabledProviders.includes('commandcode') && !!settings.commandcode?.cookie
-	const hasZed = !disabledProviders.includes('zed') && !!settings.zed?.cookie
-	const isConfigured = hasClaude || hasCodex || hasCopilot || hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter || hasCommandCode || hasZed
+	const isConfigured = visibleProviders.length > 0
+	const activeSelection = deserializeQuotaSelection(selectedView)
 
 	const getQuotaDisplay = () => {
 		if (!isConfigured) {
@@ -227,112 +257,78 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		if (isLoading && !quotas) {
 			return { text: 'Loading Limits...', isError: false }
 		}
-		if (!quotas) {
+		if (!quotas && availableSelections.length === 0) {
 			return { text: 'No Data', isError: false }
 		}
-
-		const parts = selectedView.split(':')
-		const provider = parts[0]
-		if (disabledProviders.includes(provider)) {
-			return { text: 'Select Limit', isError: false }
-		}
-		const providerData = quotas[provider as keyof AllQuotas]
-
-		const providerLabel =
-			provider === 'claude' ? 'Claude' :
-			provider === 'codex' ? 'Codex' :
-			provider === 'copilot' ? 'Copilot' :
-			provider === 'antigravity' ? 'Antigravity' :
-			provider === 'opencode' ? 'OpenCode Go' :
-			provider === 'openrouter' ? 'OpenRouter' :
-			provider === 'commandcode' ? 'Command Code' :
-			provider === 'zed' ? 'Zed' : 'Ollama'
-
-		if (!providerData) {
+		if (!activeSelection) {
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (providerData.error) {
+		const providerId = activeSelection.providerId as QuotaProviderId
+		if (disabledProviders.includes(providerId)) {
+			return { text: 'Select Limit', isError: false }
+		}
+		const providerQuota = normalizedQuotas[providerId]
+		if (!providerQuota) {
+			return { text: 'Select Limit', isError: false }
+		}
+		if (providerQuota.error && providerQuota.accounts.length === 0) {
 			return { text: 'Select Limit', isError: false }
 		}
 
-		if (!providerData.data) {
-			return { text: `${providerLabel}: Loading`, isError: false }
+		const account = providerQuota.accounts.find((entry) => entry.id === activeSelection.accountId) || providerQuota.accounts[0]
+		if (!account?.data) {
+			return { text: `${QUOTA_PROVIDER_LABELS[providerId]}: Loading`, isError: false }
 		}
 
-		// Check for dynamic group selection: provider:groupName:itemName
-		if (providerData.data.groups && parts.length === 3) {
-			const groupName = parts[1]
-			const itemName = parts[2]
-			const group = providerData.data.groups.find(g => g.name === groupName)
-			const item = group?.items.find(i => i.name === itemName)
-			if (item) {
-				const display = formatQuotaValue(item.used, item.limit, item.unit)
-				return { text: isMobile ? `${providerLabel} ${display.text}` : `${providerLabel} (${item.label}): ${display.text}`, isError: false, percentage: display.percentage }
+		const showAccount = providerQuota.accounts.length > 1
+		const accountPrefix = showAccount ? (isMobile ? `${account.name} ` : ` · ${account.name}`) : ''
+
+		if (activeSelection.kind === 'groupItem') {
+			const group = account.data.groups?.find((entry) => entry.name === activeSelection.groupName)
+			const item = group?.items.find((entry) => entry.name === activeSelection.itemName)
+			if (!item) {
+				return { text: 'Select Limit', isError: false }
+			}
+			if (item.unit === 'info') {
+				const infoText = item.resetTime ? formatResetTime(item.resetTime) : item.label
+				return {
+					text: isMobile
+						? `${QUOTA_PROVIDER_LABELS[providerId]} ${accountPrefix}${infoText}`.trim()
+						: `${QUOTA_PROVIDER_LABELS[providerId]}${accountPrefix} (${item.label}): ${infoText}`,
+					isError: false,
+					percentage: 0,
+				}
+			}
+			const display = formatQuotaValue(item.used, item.limit, item.unit)
+			return {
+				text: isMobile
+					? `${QUOTA_PROVIDER_LABELS[providerId]} ${accountPrefix}${display.text}`.trim()
+					: `${QUOTA_PROVIDER_LABELS[providerId]}${accountPrefix} (${item.label}): ${display.text}`,
+				isError: false,
+				percentage: display.percentage,
 			}
 		}
 
-		const type = parts[1]
-		const limitLabels: Record<string, Record<string, string>> = {
-			claude: {
-				fiveHour: 'Session Limit',
-				weekly: 'Weekly Limit',
-				monthly: 'Monthly Limit',
-			},
-			codex: {
-				fiveHour: '5h Limit',
-				weekly: 'Weekly Limit',
-			},
-			copilot: {
-				fiveHour: 'Premium Interactions',
-				weekly: 'Chat Limit',
-			},
-			antigravity: {
-				fiveHour: '5h Rolling Limit',
-				weekly: 'Weekly Limit',
-				monthly: 'Monthly Limit',
-			},
-			opencode: {
-				fiveHour: '5h Rolling Limit',
-				weekly: 'Weekly Limit',
-				monthly: 'Monthly Limit',
-			},
-			ollama: {
-				fiveHour: 'Session Limit',
-				weekly: 'Weekly Limit',
-			},
-			openrouter: {
-				fiveHour: 'Daily Usage',
-				weekly: 'Weekly Usage',
-				monthly: 'Monthly Usage',
-			},
-			commandcode: {
-				fiveHour: '5h Limit',
-				weekly: 'Weekly Limit',
-				monthly: 'Monthly Limit',
-			},
-			zed: {
-				monthly: 'Monthly Limit',
-			},
-		}
-		const labelMap = limitLabels[provider]
-		const typeLabel = (labelMap && labelMap[type]) || (type === 'fiveHour' ? '5h' : type === 'weekly' ? 'Wk' : 'Mo')
-		const q = providerData.data[type as 'fiveHour' | 'weekly' | 'monthly']
-		if (!q) {
+		const metric = account.data[activeSelection.metricKey as QuotaMetricKey]
+		const label = getQuotaMetricEntries(providerId, account.data).find((entry) => entry.key === activeSelection.metricKey)?.label
+		if (!metric || !label) {
 			return { text: 'Select Limit', isError: false }
 		}
-
-		const display = formatQuotaValue(q.used, q.limit, q.unit)
-		return { text: isMobile ? `${providerLabel} ${display.text}` : `${providerLabel} (${typeLabel}): ${display.text}`, isError: false, percentage: display.percentage }
+		const display = formatQuotaValue(metric.used, metric.limit, metric.unit)
+		return {
+			text: isMobile
+				? `${QUOTA_PROVIDER_LABELS[providerId]} ${accountPrefix}${display.text}`.trim()
+				: `${QUOTA_PROVIDER_LABELS[providerId]}${accountPrefix} (${label}): ${display.text}`,
+			isError: false,
+			percentage: display.percentage,
+		}
 	}
 
 	const activeDisplay = getQuotaDisplay()
 
 	const renderProgressBar = (used: number, limit: number, unit?: string, resetTime?: string) => {
-		const isInfo = unit === 'info'
-		if (isInfo) {
-			return null
-		}
+		if (unit === 'info') return null
 		const display = formatQuotaValue(used, limit, unit)
 		const pct = display.percentage
 		return (
@@ -346,8 +342,8 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 				<div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
 					<div
 						className={cn(
-							"h-full rounded-full transition-all duration-300",
-							pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+							'h-full rounded-full transition-all duration-300',
+							pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-emerald-500',
 						)}
 						style={{ width: `${Math.min(100, pct)}%` }}
 					/>
@@ -356,72 +352,158 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		)
 	}
 
-	return (
-		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-start md:items-center justify-between text-xs text-foreground md:text-muted-foreground select-none font-sans pb-4 md:pb-0 pt-2 md:pt-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
-		<div className="flex items-center gap-2">
-			{!hideControlCenter && (
-				<>
-					<Tooltip delayDuration={0}>
-						<TooltipTrigger asChild>
-					<button
-						ref={controlCenterButtonRef}
-						onClick={onToggleAgentBoard}
-						data-testid="status-bar-control-center"
-						className={cn(
-								"shrink-0 transition-colors cursor-pointer",
-								agentBoardOpen ? "text-primary" : isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+	const renderGroupItems = (providerId: QuotaProviderId, accountId: string | undefined, groups: QuotaGroup[]) => (
+		groups.map((group) => (
+			<div key={group.name} className="flex flex-col gap-1.5">
+				<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
+					{group.name}
+				</span>
+				{group.items.map((item: QuotaItem) => {
+					const isActive = selectedView === serializeQuotaSelection({
+						providerId,
+						accountId,
+						kind: 'groupItem',
+						groupName: group.name,
+						itemName: item.name,
+					})
+					return (
+						<div
+							key={item.name}
+							onClick={() => selectView({ providerId, accountId, kind: 'groupItem', groupName: group.name, itemName: item.name })}
+							className={cn(
+								'flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all',
+								isActive && 'bg-accent/20 border-border',
 							)}
 						>
-								<SquareKanban className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
+							<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+								<span className="text-foreground" title={item.description}>{item.label}</span>
+								{isActive && <Check className="h-3 w-3 text-primary" />}
+							</div>
+							{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
+						</div>
+					)
+				})}
+			</div>
+		))
+	)
+
+	const renderProviderRows = (providerId: QuotaProviderId) => {
+		const providerQuota = normalizedQuotas[providerId]
+		const showAccounts = providerQuota.accounts.length > 1
+		if (providerQuota.accounts.length === 0 || !providerQuota.accounts.some((account) => account.data)) {
+			return <span className="text-[10px] text-muted-foreground italic font-sans">{providerQuota.error || 'Loading or no connection...'}</span>
+		}
+
+		return (
+			<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
+				{providerQuota.accounts.map((account, index) => {
+					if (!account.data) {
+						return (
+							<div key={account.id || index} className="flex flex-col gap-1">
+								{showAccounts && <span className="text-[10px] font-semibold text-foreground/60 tracking-wide">{account.name}</span>}
+								<span className="text-[10px] text-muted-foreground italic font-sans">{account.error || providerQuota.error || 'Loading or no connection...'}</span>
+							</div>
+						)
+					}
+					const accountId = showAccounts ? account.id : undefined
+					return (
+						<div key={account.id || index} className="flex flex-col gap-2.5">
+							{showAccounts && (
+								<span className="text-[10px] font-semibold text-foreground/60 tracking-wide">{account.name}</span>
+							)}
+							{getQuotaMetricEntries(providerId, account.data).map(({ key, label, quota }) => {
+								const isActive = selectedView === serializeQuotaSelection({ providerId, accountId, kind: 'window', metricKey: key })
+								return (
+									<div
+										key={key}
+										onClick={() => selectView({ providerId, accountId, kind: 'window', metricKey: key })}
+										className={cn(
+											'flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all',
+											isActive && 'bg-accent/20 border-border',
+										)}
+									>
+										<div className="flex justify-between items-center text-[11px] font-medium font-sans">
+											<span className="text-foreground">{label}</span>
+											{isActive && <Check className="h-3 w-3 text-primary" />}
+										</div>
+										{renderProgressBar(quota.used, quota.limit, quota.unit, quota.resetTime)}
+									</div>
+								)
+							})}
+							{account.data.groups && account.data.groups.length > 0 && renderGroupItems(providerId, accountId, account.data.groups)}
+						</div>
+					)
+				})}
+			</div>
+		)
+	}
+
+	return (
+		<div className="min-h-[33px] shrink-0 border-t border-border bg-secondary/20 px-4 flex items-start md:items-center justify-between text-xs text-foreground md:text-muted-foreground select-none font-sans pb-4 md:pb-0 pt-2 md:pt-0" style={{ paddingBottom: isMobile ? 'calc(env(safe-area-inset-bottom, 0px) + 16px)' : undefined }}>
+			<div className="flex items-center gap-2">
+				{!hideControlCenter && (
+					<>
+						<Tooltip delayDuration={0}>
+							<TooltipTrigger asChild>
+								<button
+									ref={controlCenterButtonRef}
+									onClick={onToggleAgentBoard}
+									data-testid="status-bar-control-center"
+									className={cn(
+										'shrink-0 transition-colors cursor-pointer',
+										agentBoardOpen ? 'text-primary' : isMobile ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+									)}
+								>
+									<SquareKanban className={cn(isMobile ? 'h-5 w-5' : 'h-3.5 w-3.5')} />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top" className="select-none">
+								Control Center
+							</TooltipContent>
+						</Tooltip>
+						{!isMobile && <span className="h-4 w-px bg-border shrink-0" />}
+					</>
+				)}
+				{hideControlCenter && (
+					<Tooltip delayDuration={0}>
+						<TooltipTrigger asChild>
+							<button
+								onClick={() => onOpenSettings()}
+								className={cn('shrink-0 transition-colors cursor-pointer', isMobile ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}
+							>
+								<Settings className={cn(isMobile ? 'h-5 w-5 ml-1' : 'h-3.5 w-3.5')} />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="top" className="select-none">
-							Control Center
+							Settings
 						</TooltipContent>
 					</Tooltip>
-					{!isMobile && <span className="h-4 w-px bg-border shrink-0" />}
-				</>
-			)}
-			{hideControlCenter && (
-				<Tooltip delayDuration={0}>
-					<TooltipTrigger asChild>
-						<button
-							onClick={() => onOpenSettings()}
-							className={cn("shrink-0 transition-colors cursor-pointer", isMobile ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
-						>
-							<Settings className={cn(isMobile ? "h-5 w-5 ml-1" : "h-3.5 w-3.5")} />
-						</button>
-					</TooltipTrigger>
-					<TooltipContent side="top" className="select-none">
-						Settings
-					</TooltipContent>
-				</Tooltip>
-			)}
-			{hideControlCenter && !isMobile && (
-				<span className="h-4 w-px bg-border shrink-0" />
-			)}
-			{!isMobile && (
-				<>
-					{workspaceName ? (
-						<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-					) : (
-						<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-					)}
-					<span className="text-[11px] font-sans text-muted-foreground">
-						{workspaceName || 'Ready'}
-					</span>
-					{worktreeBranch && (
-						<>
-							<span className="text-border select-none">·</span>
-							<span className="flex items-center gap-1 text-muted-foreground">
-								<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
-								<span className="text-[11px] font-sans">{worktreeBranch}</span>
-							</span>
-						</>
-					)}
-				</>
-			)}
-		</div>
+				)}
+				{hideControlCenter && !isMobile && (
+					<span className="h-4 w-px bg-border shrink-0" />
+				)}
+				{!isMobile && (
+					<>
+						{workspaceName ? (
+							<Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						) : (
+							<span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+						)}
+						<span className="text-[11px] font-sans text-muted-foreground">
+							{workspaceName || 'Ready'}
+						</span>
+						{worktreeBranch && (
+							<>
+								<span className="text-border select-none">·</span>
+								<span className="flex items-center gap-1 text-muted-foreground">
+									<Workflow className="h-3 w-3 shrink-0 text-violet-400" />
+									<span className="text-[11px] font-sans">{worktreeBranch}</span>
+								</span>
+							</>
+						)}
+					</>
+				)}
+			</div>
 
 			<div className="flex items-center gap-2">
 				{isMobile && voice.phase !== 'idle' && (
@@ -450,21 +532,18 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									data-testid="status-bar-voice-mode"
 									disabled={voice.phase === 'loading'}
 									className={cn(
-										"shrink-0 transition-colors cursor-pointer",
+										'shrink-0 transition-colors cursor-pointer',
 										voice.phase === 'listening'
-											? "text-primary"
+											? 'text-primary'
 											: voice.phase === 'loading'
-												? "text-muted-foreground cursor-wait"
-												: "text-muted-foreground hover:text-foreground"
+												? 'text-muted-foreground cursor-wait'
+												: 'text-muted-foreground hover:text-foreground',
 									)}
 								>
 									{voice.phase === 'loading' ? (
 										<Loader2 className="h-3.5 w-3.5 animate-spin" />
 									) : (
-										<Mic className={cn(
-											"h-3.5 w-3.5",
-											voice.phase === 'listening' && "lava-lamp-mic"
-										)} />
+										<Mic className={cn('h-3.5 w-3.5', voice.phase === 'listening' && 'lava-lamp-mic')} />
 									)}
 								</button>
 							</TooltipTrigger>
@@ -476,586 +555,97 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					</>
 				)}
 
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-				<button data-testid="status-bar-quota-trigger" className={cn("flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer", !isMobile && "px-2")}>
-					{isLoading ? (
-						<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-					) : (
-						<div className={cn(
-							"h-1.5 w-1.5 rounded-full",
-							activeDisplay.text === 'Configure Limits' 
-								? 'bg-amber-400' 
-								: activeDisplay.percentage !== undefined
-									? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
-									: 'bg-muted-foreground'
-						)} />
-					)}
-					{isConfigured && !isLoading && (
-						<>
-							{selectedView.startsWith('claude') ? (
-								<Claude.Color className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('codex') ? (
-								<Codex.Color className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('copilot') ? (
-								<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('antigravity') ? (
-								<Antigravity.Color className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('opencode') ? (
-								<OpenCode className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('ollama') ? (
-								<Ollama className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('openrouter') ? (
-								<OpenRouter className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('commandcode') ? (
-								<CommandCodeIcon className="h-3.5 w-3.5 shrink-0" />
-							) : selectedView.startsWith('zed') ? (
-								<ZedIcon className="h-3.5 w-3.5 shrink-0" />
-							) : null}
-						</>
-					)}
-						<span className="text-[11px] shrink-0 font-sans">{activeDisplay.text}</span>
-						<ChevronUp className="h-3 w-3 opacity-60 shrink-0" />
-					</button>
-				</DropdownMenuTrigger>
-
-				<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none font-sans">
-					<div className="flex items-center justify-between px-2 py-1.5">
-						<span className="text-xs font-semibold text-foreground">Usage limits</span>
-						<button
-							onClick={(e) => {
-								e.stopPropagation()
-								refreshAll()
-							}}
-							disabled={isLoading}
-							data-testid="status-bar-quota-refresh"
-							className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
-							title="Refresh Limits"
-						>
-							<RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<button data-testid="status-bar-quota-trigger" className={cn('flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer', !isMobile && 'px-2')}>
+							{isLoading ? (
+								<Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+							) : (
+								<div className={cn(
+									'h-1.5 w-1.5 rounded-full',
+									activeDisplay.text === 'Configure Limits'
+										? 'bg-amber-400'
+										: activeDisplay.percentage !== undefined
+											? activeDisplay.percentage >= 90 ? 'bg-red-500' : activeDisplay.percentage >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+											: 'bg-muted-foreground',
+								)} />
+							)}
+							{activeSelection && isConfigured && !isLoading && renderProviderIcon(activeSelection.providerId as QuotaProviderId)}
+							<span className="text-[11px] shrink-0 font-sans">{activeDisplay.text}</span>
+							<ChevronUp className="h-3 w-3 opacity-60 shrink-0" />
 						</button>
-					</div>
+					</DropdownMenuTrigger>
 
-					<DropdownMenuSeparator className="bg-border" />
+					<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none font-sans">
+						<div className="flex items-center justify-between px-2 py-1.5">
+							<span className="text-xs font-semibold text-foreground">Usage limits</span>
+							<button
+								onClick={(e) => {
+									e.stopPropagation()
+									refreshAll()
+								}}
+								disabled={isLoading}
+								data-testid="status-bar-quota-refresh"
+								className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+								title="Refresh Limits"
+							>
+								<RefreshCw className={cn('h-3 w-3', isLoading && 'animate-spin')} />
+							</button>
+						</div>
 
-					<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
-						{!isConfigured ? (
-							<div className="px-2 py-4 text-center text-xs text-muted-foreground">
-								No providers configured.
-								<button
-									onClick={() => {
-										onOpenSettings('limits')
-									}}
-									data-testid="quota-configure-providers"
-									className="mt-2 block w-full px-2 py-1.5 text-center text-xs font-medium text-primary bg-secondary/40 border border-border rounded hover:bg-secondary transition-all"
-								>
-									Configure Providers in Settings
-								</button>
-							</div>
-						) : (
+						<DropdownMenuSeparator className="bg-border" />
+
+						<div className="flex flex-col gap-3 py-1.5 max-h-[220px] overflow-y-auto pr-1 thin-scroll" style={{ scrollbarWidth: 'thin' }}>
+							{!isConfigured ? (
+								<div className="px-2 py-4 text-center text-xs text-muted-foreground">
+									No providers configured.
+									<button
+										onClick={() => {
+											onOpenSettings('limits')
+										}}
+										data-testid="quota-configure-providers"
+										className="mt-2 block w-full px-2 py-1.5 text-center text-xs font-medium text-primary bg-secondary/40 border border-border rounded hover:bg-secondary transition-all"
+									>
+										Configure Providers in Settings
+									</button>
+								</div>
+							) : (
+								<>
+									{visibleProviders.map((providerId, index) => (
+										<div key={providerId}>
+											{index > 0 && <DropdownMenuSeparator className="bg-border mb-3" />}
+											<div data-testid={`quota-row-${providerId}`} className="px-2 flex flex-col gap-2">
+												<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
+													{renderProviderIcon(providerId)}
+													{QUOTA_PROVIDER_LABELS[providerId]}
+												</span>
+												{renderProviderRows(providerId)}
+											</div>
+										</div>
+									))}
+								</>
+							)}
+						</div>
+
+						{isConfigured && (
 							<>
-								{hasClaude && (
-									<div data-testid="quota-row-claude" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Claude.Color className="h-3.5 w-3.5 shrink-0" />
-											Claude
-										</span>
-										{!quotas?.claude?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: 'Session Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' },
-													{ key: 'monthly', label: 'Monthly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.claude!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `claude:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-											</div>
-										)}
-									</div>
-								)}
-
-								{hasClaude && hasCodex && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasCodex && (
-									<div data-testid="quota-row-codex" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Codex.Color className="h-3.5 w-3.5 shrink-0" />
-											Codex
-										</span>
-										{!quotas?.codex?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: '5h Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.codex!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `codex:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-											</div>
-										)}
-									</div>
-								)}
-
-								{(hasClaude || hasCodex) && hasCopilot && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasCopilot && (
-									<div data-testid="quota-row-copilot" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<GithubCopilot className="h-3.5 w-3.5 shrink-0" />
-											Copilot
-										</span>
-										{!quotas?.copilot?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: 'Premium Interactions' },
-													{ key: 'weekly', label: 'Chat Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.copilot!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `copilot:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-											</div>
-										)}
-									</div>
-								)}
-
-								{(hasClaude || hasCodex || hasCopilot) && hasAntigravity && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasAntigravity && (
-									<div data-testid="quota-row-antigravity" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Antigravity.Color className="h-3.5 w-3.5 shrink-0" />
-											Antigravity
-										</span>
-										{!quotas?.antigravity?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-3 pl-1.5 border-l border-border">
-												{quotas.antigravity.data.groups ? (
-													quotas.antigravity.data.groups.map((group) => (
-														<div key={group.name} className="flex flex-col gap-1.5">
-															<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
-																{group.name}
-															</span>
-															{group.items.map((item) => {
-																const viewKey = `antigravity:${group.name}:${item.name}`
-																const isActive = selectedView === viewKey
-																return (
-																	<div
-																		key={item.name}
-																		onClick={() => selectView(viewKey)}
-																		className={cn(
-																			"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																			isActive && "bg-accent/20 border-border"
-																		)}
-																	>
-																		<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																			<span className="text-foreground" title={item.description}>{item.label}</span>
-																			{isActive && <Check className="h-3 w-3 text-primary" />}
-																		</div>
-																		{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
-																	</div>
-																)
-															})}
-														</div>
-													))
-												) : (
-													[
-														{ key: 'fiveHour', label: '5h Rolling Limit' },
-														{ key: 'weekly', label: 'Weekly Limit' },
-														{ key: 'monthly', label: 'Monthly Limit' }
-													].map(({ key, label }) => {
-														const val = quotas.antigravity!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-														const viewKey = `antigravity:${key}`
-														const isActive = selectedView === viewKey
-														return (
-															<div
-																key={key}
-																onClick={() => selectView(viewKey)}
-																className={cn(
-																	"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																	isActive && "bg-accent/20 border-border"
-																)}
-															>
-																<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																	<span className="text-foreground">{label}</span>
-																	{isActive && <Check className="h-3 w-3 text-primary" />}
-																</div>
-																{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-															</div>
-														)
-													})
-												)}
-											</div>
-										)}
-									</div>
-								)}
-
-								{hasAntigravity && hasOpenCode && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasOpenCode && (
-									<div data-testid="quota-row-opencode" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<OpenCode className="h-3.5 w-3.5 shrink-0" />
-											OpenCode Go
-										</span>
-										{!quotas?.opencode?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: '5h Rolling Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' },
-													{ key: 'monthly', label: 'Monthly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.opencode!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `opencode:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-											</div>
-										)}
-									</div>
-								)}
-
-								{(hasAntigravity || hasOpenCode) && hasOllama && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasOllama && (
-									<div data-testid="quota-row-ollama" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<Ollama className="h-3.5 w-3.5 shrink-0" />
-											Ollama
-										</span>
-										{!quotas?.ollama?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: 'Session Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.ollama!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `ollama:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-											</div>
-										)}
-									</div>
-								)}
-								{(hasAntigravity || hasOpenCode || hasOllama) && hasOpenRouter && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasOpenRouter && (
-									<div data-testid="quota-row-openrouter" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<OpenRouter className="h-3.5 w-3.5 shrink-0" />
-											OpenRouter
-										</span>
-										{!quotas?.openrouter?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: 'Daily Usage' },
-													{ key: 'weekly', label: 'Weekly Usage' },
-													{ key: 'monthly', label: 'Monthly Usage' }
-												].map(({ key, label }) => {
-													const val = quotas.openrouter!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `openrouter:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-												{quotas.openrouter.data.groups?.map((group) => (
-													<div key={group.name} className="flex flex-col gap-1.5">
-														<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
-															{group.name}
-														</span>
-														{group.items.map((item) => {
-															const viewKey = `openrouter:${group.name}:${item.name}`
-															const isActive = selectedView === viewKey
-															return (
-																<div
-																	key={item.name}
-																	onClick={() => selectView(viewKey)}
-																	className={cn(
-																		"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																		isActive && "bg-accent/20 border-border"
-																	)}
-																>
-																	<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																		<span className="text-foreground" title={item.description}>{item.label}</span>
-																		{isActive && <Check className="h-3 w-3 text-primary" />}
-																	</div>
-																{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
-															</div>
-															)
-														})}
-</div>
-										))}
-											</div>
-										)}
-									</div>
-								)}
-
-								{(hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter) && hasCommandCode && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasCommandCode && (
-									<div data-testid="quota-row-commandcode" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<CommandCodeIcon className="h-3.5 w-3.5 shrink-0" />
-											Command Code
-										</span>
-										{!quotas?.commandcode?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'fiveHour', label: '5h Limit' },
-													{ key: 'weekly', label: 'Weekly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.commandcode!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `commandcode:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-												{quotas.commandcode.data.groups?.map((group) => (
-													<div key={group.name} className="flex flex-col gap-1.5">
-														<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
-															{group.name}
-														</span>
-														{group.items.map((item) => {
-															const viewKey = `commandcode:${group.name}:${item.name}`
-															const isActive = selectedView === viewKey
-															return (
-																<div
-																	key={item.name}
-																	onClick={() => selectView(viewKey)}
-																	className={cn(
-																		"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																		isActive && "bg-accent/20 border-border"
-																	)}
-																>
-																	<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																		<span className="text-foreground" title={item.description}>{item.label}</span>
-																		{isActive && <Check className="h-3 w-3 text-primary" />}
-																	</div>
-																{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
-															</div>
-															)
-														})}
-													</div>
-												))}
-											</div>
-										)}
-									</div>
-								)}
-
-								{(hasAntigravity || hasOpenCode || hasOllama || hasOpenRouter || hasCommandCode) && hasZed && <DropdownMenuSeparator className="bg-border" />}
-
-								{hasZed && (
-									<div data-testid="quota-row-zed" className="px-2 flex flex-col gap-2">
-										<span className="text-[10px] font-semibold text-foreground/70 tracking-wider uppercase flex items-center gap-1.5">
-											<ZedIcon className="h-3.5 w-3.5 shrink-0" />
-											Zed
-										</span>
-										{!quotas?.zed?.data ? (
-											<span className="text-[10px] text-muted-foreground italic font-sans">Loading or no connection...</span>
-										) : (
-											<div className="flex flex-col gap-2.5 pl-1.5 border-l border-border">
-												{[
-													{ key: 'monthly', label: 'Monthly Limit' }
-												].map(({ key, label }) => {
-													const val = quotas.zed!.data![key as 'fiveHour' | 'weekly' | 'monthly']
-													const viewKey = `zed:${key}`
-													const isActive = selectedView === viewKey
-													return (
-														<div
-															key={key}
-															onClick={() => selectView(viewKey)}
-															className={cn(
-																"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																isActive && "bg-accent/20 border-border"
-															)}
-														>
-															<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																<span className="text-foreground">{label}</span>
-																{isActive && <Check className="h-3 w-3 text-primary" />}
-															</div>
-															{renderProgressBar(val.used, val.limit, val.unit, val.resetTime)}
-														</div>
-													)
-												})}
-												{quotas.zed.data.groups?.map((group) => (
-													<div key={group.name} className="flex flex-col gap-1.5">
-														<span className="text-[9px] font-semibold text-foreground/50 tracking-wider uppercase font-sans">
-															{group.name}
-														</span>
-														{group.items.map((item) => {
-															const viewKey = `zed:${group.name}:${item.name}`
-															const isActive = selectedView === viewKey
-															return (
-																<div
-																	key={item.name}
-																	onClick={() => selectView(viewKey)}
-																	className={cn(
-																		"flex flex-col p-1.5 rounded border border-transparent hover:border-border hover:bg-accent/10 cursor-pointer transition-all",
-																		isActive && "bg-accent/20 border-border"
-																	)}
-																>
-																	<div className="flex justify-between items-center text-[11px] font-medium font-sans">
-																		<span className="text-foreground" title={item.description}>{item.label}</span>
-																		{isActive && <Check className="h-3 w-3 text-primary" />}
-																	</div>
-																{renderProgressBar(item.used, item.limit, item.unit, item.resetTime)}
-																</div>
-																)
-															})}
-													</div>
-												))}
-											</div>
-										)}
-									</div>
-								)}
+								<DropdownMenuSeparator className="bg-border" />
+								<div className="px-1 py-1">
+									<button
+										onClick={() => {
+											onOpenSettings('limits')
+										}}
+										data-testid="quota-configure-providers"
+										className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer font-sans"
+									>
+										<Key className="h-3 w-3" />
+										Configure Providers...
+									</button>
+								</div>
 							</>
 						)}
-					</div>
-
-					{isConfigured && (
-						<>
-							<DropdownMenuSeparator className="bg-border" />
-							<div className="px-1 py-1">
-								<button
-									onClick={() => {
-										onOpenSettings('limits')
-									}}
-									data-testid="quota-configure-providers"
-									className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/30 rounded transition-all cursor-pointer font-sans"
-								>
-									<Key className="h-3 w-3" />
-									Configure Providers...
-								</button>
-							</div>
-						</>
-					)}
-				</DropdownMenuContent>
-			</DropdownMenu>
+					</DropdownMenuContent>
+				</DropdownMenu>
 			</div>
 		</div>
 	)
