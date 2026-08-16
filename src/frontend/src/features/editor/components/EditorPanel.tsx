@@ -10,9 +10,11 @@ import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/ser
 import { pathsEqual } from '@/features/shared/utils/path'
 import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
 import { useFileDirty } from '../hooks/useFileDirty'
+import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { monacoTheme } from '@/features/customization/theme'
 
 
-function defineCawDarkTheme(monaco: Monaco) {
+function defineCawTheme(monaco: Monaco) {
   monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
     noSemanticValidation: true,
     noSyntaxValidation: true,
@@ -21,33 +23,7 @@ function defineCawDarkTheme(monaco: Monaco) {
     noSemanticValidation: true,
     noSyntaxValidation: true,
   })
-  monaco.editor.defineTheme('caw-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#000000',
-      'editorGutter.background': '#000000',
-      'editorLineNumber.foreground': '#3a3a3a',
-      'minimap.background': '#000000',
-      'diffEditor.insertedTextBackground': '#1a4a1a55',
-      'diffEditor.removedTextBackground': '#4a1a1a55',
-      'diffEditorGutter.insertedLineBackground': '#0a3d0a33',
-      'diffEditorGutter.removedLineBackground': '#3d0a0a33',
-      'editorGutter.modifiedBackground': '#3a3a3a',
-      'editorGutter.addedBackground': '#2a5a2a',
-      'editorGutter.deletedBackground': '#5a2a2a',
-      'editorWidget.background': '#000000',
-      'editorWidget.border': '#1a1a1a',
-      'editorSuggestWidget.background': '#000000',
-      'editorSuggestWidget.border': '#1a1a1a',
-      'editorHoverWidget.background': '#000000',
-      'editorHoverWidget.border': '#1a1a1a',
-      'peekViewResult.background': '#000000',
-      'peekViewEditor.background': '#000000',
-      'peekViewEditorGutter.background': '#000000',
-    },
-  })
+  monaco.editor.defineTheme('caw-custom', monacoTheme(getCustomization()))
 }
 
 interface EditorPanelProps {
@@ -78,6 +54,7 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const [initialValue, setInitialValue] = useState<string | undefined>(undefined)
   // Toggle between source editor and rendered markdown preview for .md files.
   const [view, setView] = useState<'editor' | 'preview'>('editor')
+  const [, setCustomizationVersion] = useState(0)
   const isMarkdown = !!filePath && filePath.toLowerCase().endsWith('.md')
 
   // Reset binary override when file changes
@@ -93,6 +70,14 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
   const monacoRef = useRef<Monaco | null>(null)
   const lastSavedAtRef = useRef(0)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => subscribePrefs(() => {
+    if (monacoRef.current) {
+      defineCawTheme(monacoRef.current)
+      monacoRef.current.editor.setTheme('caw-custom')
+    }
+    setCustomizationVersion((version) => version + 1)
+  }), [])
 
   // Helper: get the live Monaco model for this filePath (if any).
   const getLiveModel = useCallback(() => {
@@ -438,7 +423,6 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
     )
   }
 
-  const isDarkTheme = !window.document.documentElement.classList.contains('light')
 
   // Build a stable Monaco URI for the model so it persists across unmounts.
   const monacoPath = filePath ? `file://${filePath}` : undefined
@@ -542,10 +526,10 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           <DiffEditor
             height="100%"
             language={getLanguage(filePath)}
-            theme={isDarkTheme ? 'caw-dark' : 'light'}
+            theme="caw-custom"
             original={originalContent}
             modified={editedContent}
-            beforeMount={defineCawDarkTheme}
+            beforeMount={defineCawTheme}
             options={{
               readOnly: true,
               fontSize: 12,
@@ -560,8 +544,8 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
           <Editor
             height="100%"
             language="diff"
-            theme={isDarkTheme ? 'caw-dark' : 'light'}
-            beforeMount={defineCawDarkTheme}
+            theme="caw-custom"
+            beforeMount={defineCawTheme}
             value={content}
             options={{
               readOnly: true,
@@ -581,9 +565,9 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
                 height="100%"
                 path={monacoPath}
                 language={getLanguage(filePath)}
-                theme={isDarkTheme ? 'caw-dark' : 'light'}
+                theme="caw-custom"
                 beforeMount={(monaco) => {
-                  defineCawDarkTheme(monaco)
+                  defineCawTheme(monaco)
                   monacoRef.current = monaco
                 }}
                 defaultValue={initialValue}

@@ -97,6 +97,15 @@ func (s *Store) migrate() {
 		started_at  TEXT NOT NULL DEFAULT '',
 		ended_at    TEXT NOT NULL DEFAULT '',
 		sequence    INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS terminal_background_assets (
+		id           TEXT PRIMARY KEY,
+		filename     TEXT NOT NULL,
+		media_kind   TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		file_ext     TEXT NOT NULL,
+		size_bytes   INTEGER NOT NULL,
+		created_at   TEXT NOT NULL
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
