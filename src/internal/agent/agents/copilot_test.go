@@ -119,6 +119,57 @@ func TestCopilotTurnEndRetainsFinalAssistantResponse(t *testing.T) {
 	}
 }
 
+func TestCopilotExitPlanModeReportsWaitingInput(t *testing.T) {
+	// Exiting plan mode hands control back to the user: Copilot presents the
+	// plan and blocks until the user approves or rejects it. The watcher must
+	// report waiting_input (not executing/idle) while the approval is pending.
+	events := []copilotEvent{
+		{Type: "user.message", Data: rawJSON(t, copilotUserMsg{Content: "plan the change"})},
+		{Type: "assistant.message", Data: rawJSON(t, copilotAssistantMsg{ToolRequests: []copilotToolReq{{ToolCallID: "t1", Name: "exit_plan_mode"}}})},
+	}
+	p := writeCopilotEvents(t, events)
+	var status, tool string
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+		status, tool = s, tl
+	})
+	if status != "waiting_input" || tool != "exit_plan_mode" {
+		t.Fatalf("exit_plan_mode status = (%q, %q), want (waiting_input, exit_plan_mode)", status, tool)
+	}
+}
+
+func TestCopilotExecutionStartExitPlanModeWithoutMessageReportsWaitingInput(t *testing.T) {
+	// The durable trace of a plan-mode exit can be just the
+	// tool.execution_start event (no assistant.message tool request paired
+	// with it). The watcher must still report waiting_input, not executing.
+	events := []copilotEvent{
+		{Type: "user.message", Data: rawJSON(t, copilotUserMsg{Content: "plan the change"})},
+		{Type: "tool.execution_start", Data: rawJSON(t, copilotToolExecution{ToolCallID: "t1", ToolName: "exit_plan_mode"})},
+	}
+	p := writeCopilotEvents(t, events)
+	var status, tool string
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+		status, tool = s, tl
+	})
+	if status != "waiting_input" || tool != "exit_plan_mode" {
+		t.Fatalf("execution_start exit_plan_mode status = (%q, %q), want (waiting_input, exit_plan_mode)", status, tool)
+	}
+}
+
+func TestCopilotAskUserReportsWaitingInput(t *testing.T) {
+	events := []copilotEvent{
+		{Type: "user.message", Data: rawJSON(t, copilotUserMsg{Content: "help me decide"})},
+		{Type: "assistant.ask_user", Data: rawJSON(t, copilotAskUser{Question: "which option?"})},
+	}
+	p := writeCopilotEvents(t, events)
+	var status, tool string
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+		status, tool = s, tl
+	})
+	if status != "waiting_input" || tool != "ask_user" {
+		t.Fatalf("ask_user status = (%q, %q), want (waiting_input, ask_user)", status, tool)
+	}
+}
+
 func TestCopilotSessionTitleUsesGeneratedSummary(t *testing.T) {
 	dir := t.TempDir()
 	sessionStorePath := filepath.Join(dir, "session-store.db")
