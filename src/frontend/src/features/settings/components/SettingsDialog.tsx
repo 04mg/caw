@@ -4,7 +4,7 @@ import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 import { Checkbox } from '@/components/checkbox'
 
-import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
@@ -33,6 +33,7 @@ import { HotkeyRecorder } from './HotkeyRecorder'
 import { SaveToast } from './SaveToast'
 import { PetsSettingsPanel } from './PetsSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
+import { createQuotaAccount, getSelectedQuotaAccount, normalizeQuotaSettingsPayload, serializeQuotaSettingsPayload, type QuotaProviderId, type QuotaProviderSettings, type QuotaSettingsMode } from '@/features/shared/utils/quotaLimits'
 
 const EMOJI_MAP: Record<string, string> = {
   feat: '✨',
@@ -110,17 +111,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [scrollFriction, setScrollFriction] = useState(0.85)
   const [scrollVelocityThreshold, setScrollVelocityThreshold] = useState(0.05)
   const [scrollGrace, setScrollGrace] = useState(1200)
-  const [antigravityKey, setAntigravityKey] = useState('')
-  const [opencodeCookie, setOpencodeCookie] = useState('')
-  const [opencodeWorkspace, setOpencodeWorkspace] = useState('')
-  const [ollamaCookie, setOllamaCookie] = useState('')
-  const [openrouterApiKey, setOpenrouterApiKey] = useState('')
-  const [commandCodeCookie, setCommandCodeCookie] = useState('')
-  const [zedCookie, setZedCookie] = useState('')
-  const [claudeAccessToken, setClaudeAccessToken] = useState('')
-  const [codexAccessToken, setCodexAccessToken] = useState('')
-  const [copilotToken, setCopilotToken] = useState('')
-  const [copilotEnterpriseHost, setCopilotEnterpriseHost] = useState('')
+  const [quotaSettingsMode, setQuotaSettingsMode] = useState<QuotaSettingsMode>('legacy')
+  const [quotaProviders, setQuotaProviders] = useState<Record<string, QuotaProviderSettings>>({})
   const [copilotDeviceFlow, setCopilotDeviceFlow] = useState<'idle' | 'waiting' | 'polling' | 'done' | 'error'>('idle')
   const [copilotDeviceCode, setCopilotDeviceCode] = useState('')
   const [copilotUserCode, setCopilotUserCode] = useState('')
@@ -129,14 +121,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const copilotIntervalRef = useRef(5)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [copilotDeviceError, setCopilotDeviceError] = useState('')
-  const [selectedLimitProvider, setSelectedLimitProvider] = useState<'claude' | 'codex' | 'copilot' | 'antigravity' | 'opencode' | 'ollama' | 'openrouter' | 'commandcode' | 'zed'>('claude')
+  const [selectedLimitProvider, setSelectedLimitProvider] = useState<QuotaProviderId>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
   const [agentStep, setAgentStep] = useState<1 | 2>(1)
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
   const [agentCmdDraft, setAgentCmdDraft] = useState<string>('')
-  const [agyInstalled, setAgyInstalled] = useState(true)
-  const [claudeInstalled, setClaudeInstalled] = useState(true)
-  const [codexInstalled, setCodexInstalled] = useState(true)
   const [quotas, setQuotas] = useState<Record<string, { error?: string }> | null>(null)
   const [defaultNewAgent, setDefaultNewAgent] = useState('none')
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
@@ -187,25 +176,135 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [changelog, setChangelog] = useState<{ tagName: string; body: string; htmlUrl: string } | null>(null)
   const [changelogLoading, setChangelogLoading] = useState(false)
 
+  const createEmptyQuotaProvider = (installed?: boolean): QuotaProviderSettings => ({
+    installed,
+    accounts: [{ id: 'default', name: 'Default', config: {} }],
+    defaultAccountId: 'default',
+  })
+
+  const selectedLimitProviderSettings = quotaProviders[selectedLimitProvider] || createEmptyQuotaProvider()
+  const selectedLimitAccount = getSelectedQuotaAccount(selectedLimitProviderSettings)
+  const selectedLimitConfig = selectedLimitAccount.config || {}
+  const agyInstalled = quotaProviders.antigravity?.installed !== false
+  const claudeInstalled = quotaProviders.claude?.installed !== false
+  const codexInstalled = quotaProviders.codex?.installed !== false
+
+  const persistQuotaSettings = useCallback(async (nextProviders: Record<string, QuotaProviderSettings>, nextMode: QuotaSettingsMode = quotaSettingsMode) => {
+    try {
+      const endpoint = nextMode === 'accounts' ? '/api/quotas/settings/accounts' : '/api/quotas/settings'
+      const body = nextMode === 'accounts'
+        ? Object.fromEntries(Object.entries(nextProviders).map(([providerId, provider]) => [
+          providerId,
+          provider.accounts.map((account) => ({ id: account.id, name: account.name, config: account.config })),
+        ]))
+        : serializeQuotaSettingsPayload(nextProviders, nextMode)
+      const res = await fetch(endpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        console.error('Failed to save quota settings', res.status, await res.text().catch(() => ''))
+      }
+    } catch (e) {
+      console.error('Failed to save quota settings', e)
+    }
+  }, [quotaSettingsMode])
+
+  const updateQuotaProvider = useCallback((providerId: QuotaProviderId, updater: (provider: QuotaProviderSettings) => QuotaProviderSettings, nextMode?: QuotaSettingsMode) => {
+    setQuotaProviders((current) => {
+      const currentProvider = current[providerId] || createEmptyQuotaProvider()
+      const updatedProvider = updater({
+        installed: currentProvider.installed,
+        accounts: currentProvider.accounts.map((account) => ({ ...account, config: { ...account.config } })),
+        defaultAccountId: currentProvider.defaultAccountId,
+      })
+      const normalizedProvider = updatedProvider.accounts.length > 0
+        ? updatedProvider
+        : createEmptyQuotaProvider(updatedProvider.installed)
+      const resolvedMode = nextMode || quotaSettingsMode
+      const nextProviders = { ...current, [providerId]: normalizedProvider }
+      if (resolvedMode !== quotaSettingsMode) {
+        setQuotaSettingsMode(resolvedMode)
+      }
+      void persistQuotaSettings(nextProviders, resolvedMode)
+      return nextProviders
+    })
+  }, [persistQuotaSettings, quotaSettingsMode])
+
+  const selectLimitAccount = useCallback((providerId: QuotaProviderId, accountId: string) => {
+    const provider = quotaProviders[providerId] || createEmptyQuotaProvider()
+    updateQuotaProvider(providerId, (current) => ({
+      ...current,
+      defaultAccountId: accountId,
+    }), provider.accounts.length > 1 ? 'accounts' : quotaSettingsMode)
+  }, [quotaProviders, quotaSettingsMode, updateQuotaProvider])
+
+  const renameLimitAccount = useCallback((providerId: QuotaProviderId, name: string) => {
+    updateQuotaProvider(providerId, (current) => ({
+      ...current,
+      accounts: current.accounts.map((account) => account.id === current.defaultAccountId ? { ...account, name } : account),
+    }), 'accounts')
+  }, [updateQuotaProvider])
+
+  const addLimitAccount = useCallback((providerId: QuotaProviderId) => {
+    updateQuotaProvider(providerId, (current) => {
+      const account = createQuotaAccount(providerId, current.accounts)
+      return {
+        ...current,
+        accounts: [...current.accounts, account],
+        defaultAccountId: account.id,
+      }
+    }, 'accounts')
+  }, [updateQuotaProvider])
+
+  const deleteLimitAccount = useCallback((providerId: QuotaProviderId) => {
+    updateQuotaProvider(providerId, (current) => {
+      if (current.accounts.length <= 1) return current
+      const accounts = current.accounts.filter((account) => account.id !== current.defaultAccountId)
+      return {
+        ...current,
+        accounts,
+        defaultAccountId: accounts[0]?.id || 'default',
+      }
+    }, 'accounts')
+  }, [updateQuotaProvider])
+
+  const updateLimitConfigValue = useCallback((providerId: QuotaProviderId, key: string, value: string) => {
+    const provider = quotaProviders[providerId] || createEmptyQuotaProvider()
+    const shouldUseAccountsMode = quotaSettingsMode === 'accounts' || provider.accounts.length > 1 || provider.accounts[0]?.name !== 'Default'
+    updateQuotaProvider(providerId, (current) => ({
+      ...current,
+      accounts: current.accounts.map((account) => account.id === current.defaultAccountId ? {
+        ...account,
+        config: {
+          ...account.config,
+          [key]: value,
+        },
+      } : account),
+    }), shouldUseAccountsMode ? 'accounts' : 'legacy')
+  }, [quotaProviders, quotaSettingsMode, updateQuotaProvider])
+
   const loadQuotaSettings = useCallback(async () => {
     try {
-      const res = await fetch('/api/quotas/settings')
-      if (res.ok) {
-        const data = (await res.json())?.data
-        setAntigravityKey(data.antigravity?.apiKey || '')
-        setOpencodeCookie(data.opencode?.cookie || '')
-        setOpencodeWorkspace(data.opencode?.workspaceId || '')
-        setOllamaCookie(data.ollama?.cookie || '')
-        setOpenrouterApiKey(data.openrouter?.apiKey || '')
-        setCommandCodeCookie(data.commandcode?.cookie || '')
-        setZedCookie(data.zed?.cookie || '')
-        setClaudeAccessToken(data.claude?.accessToken || '')
-        setCodexAccessToken(data.codex?.accessToken || '')
-        setCopilotToken(data.copilot?.token || '')
-        setCopilotEnterpriseHost(data.copilot?.enterpriseHost || '')
-        setAgyInstalled(data.antigravity?.installed !== 'false')
-        setClaudeInstalled(data.claude?.installed !== 'false')
-        setCodexInstalled(data.codex?.installed !== 'false')
+      const accountRes = await fetch('/api/quotas/settings/accounts')
+      const legacyRes = await fetch('/api/quotas/settings')
+      if (accountRes.ok) {
+        const accountPayload = (await accountRes.json())?.data
+        const legacyPayload = legacyRes.ok ? (await legacyRes.json())?.data : undefined
+        const normalized = normalizeQuotaSettingsPayload(accountPayload)
+        const legacy = normalizeQuotaSettingsPayload(legacyPayload)
+        for (const [providerId, provider] of Object.entries(legacy.providers)) {
+          if (normalized.providers[providerId]) {
+            normalized.providers[providerId].installed = provider.installed
+          }
+        }
+        setQuotaSettingsMode(normalized.mode)
+        setQuotaProviders(normalized.providers)
+      } else if (legacyRes.ok) {
+        const normalized = normalizeQuotaSettingsPayload((await legacyRes.json())?.data)
+        setQuotaSettingsMode(normalized.mode)
+        setQuotaProviders(normalized.providers)
       }
     } catch (e) {
       console.error('Failed to load quota settings', e)
@@ -445,43 +544,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     return () => { cancelled = true }
   }, [open])
 
-  const saveSettings = useCallback(async (
-    agKey: string,
-    ocCookie: string,
-    ocWorkspace: string,
-    olCookie: string,
-    clToken: string,
-    cdToken: string,
-    cpToken: string,
-    cpHost: string,
-    orKey: string,
-    ccCookie: string,
-    zdCookie: string,
-  ) => {
-    try {
-      const res = await fetch('/api/quotas/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          antigravity: { apiKey: agKey },
-          opencode: { cookie: ocCookie, workspaceId: ocWorkspace },
-          ollama: { cookie: olCookie },
-          claude: { accessToken: clToken },
-          codex: { accessToken: cdToken },
-          copilot: { token: cpToken, enterpriseHost: cpHost },
-          openrouter: { apiKey: orKey },
-          commandcode: { cookie: ccCookie },
-          zed: { cookie: zdCookie },
-        }),
-      })
-      if (!res.ok) {
-        console.error('Failed to save quota settings', res.status, await res.text().catch(() => ''))
-      }
-    } catch (e) {
-      console.error('Failed to save quota settings', e)
-    }
-  }, [])
-
   const startCopilotDeviceLogin = async () => {
     try {
       setCopilotDeviceFlow('waiting')
@@ -515,9 +577,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       }
       const data = (await res.json())?.data
       if (data.access_token) {
-        setCopilotToken(data.access_token)
+        updateLimitConfigValue('copilot', 'token', data.access_token)
         setCopilotDeviceFlow('done')
-        saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, data.access_token, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
       } else if (data.error === 'authorization_pending') {
         pollTimerRef.current = setTimeout(pollCopilotDeviceToken, copilotIntervalRef.current * 1000)
       } else if (data.error === 'slow_down') {
@@ -532,20 +593,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       setCopilotDeviceError(e.message || 'Poll failed')
       setCopilotDeviceFlow('error')
     }
-  }, [
-    copilotDeviceCode,
-    antigravityKey,
-    opencodeCookie,
-    opencodeWorkspace,
-    ollamaCookie,
-    claudeAccessToken,
-    codexAccessToken,
-    copilotEnterpriseHost,
-    openrouterApiKey,
-    commandCodeCookie,
-    zedCookie,
-    saveSettings,
-  ])
+  }, [copilotDeviceCode, updateLimitConfigValue])
 
   useEffect(() => {
     if (copilotDeviceFlow !== 'polling' || !copilotDeviceCode) return
@@ -1551,7 +1599,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       label={prov.label}
                       testId={`settings-provider-${prov.id}`}
                       onClick={() => {
-                        setSelectedLimitProvider(prov.id as any)
+                        setSelectedLimitProvider(prov.id as QuotaProviderId)
                         setLimitStep(2)
                       }}
                     />
@@ -1564,7 +1612,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'limits' && limitStep === 2 && (
             <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200">
               <div className="flex flex-col gap-2 shrink-0">
-                <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
                   <h3 className="text-sm font-semibold select-none">
                     {selectedLimitProvider === 'claude' && 'Claude Configuration'}
                     {selectedLimitProvider === 'codex' && 'Codex Configuration'}
@@ -1579,6 +1628,15 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Specify the details needed to authenticate limits tracking for this provider.
                   </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addLimitAccount(selectedLimitProvider)}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer shrink-0"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add account
+                  </button>
                 </div>
               </div>
 
@@ -1610,6 +1668,61 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
 
+              {selectedLimitProviderSettings.accounts.length > 1 && <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Accounts</label>
+                    <p className="text-[10px] text-muted-foreground">Name saved credentials and switch which account this provider uses.</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => addLimitAccount(selectedLimitProvider)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+                      aria-label="Add account"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteLimitAccount(selectedLimitProvider)}
+                      disabled={selectedLimitProviderSettings.accounts.length <= 1}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-50 transition-all cursor-pointer"
+                      aria-label="Delete account"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Active Account</label>
+                    <Select value={selectedLimitAccount.id} onValueChange={(value) => selectLimitAccount(selectedLimitProvider, value)}>
+                      <SelectTrigger className="w-full text-xs">
+                        <SelectValue placeholder="Select an account" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedLimitProviderSettings.accounts.map((account) => (
+                          <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Account Name</label>
+                    <input
+                      type="text"
+                      value={selectedLimitAccount.name}
+                      onChange={(e) => renameLimitAccount(selectedLimitProvider, e.target.value)}
+                      placeholder="e.g. Work, Personal"
+                      className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
+                    />
+                  </div>
+                </div>
+              </div>}
+
               <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
@@ -1620,11 +1733,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
                       <input
                         type="password"
-                        value={claudeAccessToken}
+                        value={selectedLimitConfig.accessToken || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setClaudeAccessToken(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, val, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                          updateLimitConfigValue('claude', 'accessToken', val)
                         }}
                         placeholder="Enter Claude OAuth access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1642,11 +1754,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
                       <input
                         type="password"
-                        value={codexAccessToken}
+                        value={selectedLimitConfig.accessToken || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setCodexAccessToken(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, val, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                          updateLimitConfigValue('codex', 'accessToken', val)
                         }}
                         placeholder="Enter Codex OAuth access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1733,12 +1844,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">GitHub OAuth Token</label>
                         <input
                           type="password"
-                          value={copilotToken}
+                          value={selectedLimitConfig.token || ''}
                           onChange={(e) => {
                             const val = e.target.value
-                            setCopilotToken(val)
                             setCopilotDeviceFlow('idle')
-                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, val, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                            updateLimitConfigValue('copilot', 'token', val)
                           }}
                           placeholder="gho_..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1748,11 +1858,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Enterprise Host (Optional)</label>
                         <input
                           type="text"
-                          value={copilotEnterpriseHost}
+                          value={selectedLimitConfig.enterpriseHost || ''}
                           onChange={(e) => {
                             const val = e.target.value
-                            setCopilotEnterpriseHost(val)
-                            saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, val, openrouterApiKey, commandCodeCookie, zedCookie)
+                            updateLimitConfigValue('copilot', 'enterpriseHost', val)
                           }}
                           placeholder="e.g. octocorp.ghe.com"
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1771,11 +1880,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">Refresh Token / Access Token (Optional)</label>
                       <input
                         type="password"
-                        value={antigravityKey}
+                        value={selectedLimitConfig.apiKey || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setAntigravityKey(val)
-                          saveSettings(val, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                          updateLimitConfigValue('antigravity', 'apiKey', val)
                         }}
                         placeholder="Enter Antigravity refresh token or access token..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1794,11 +1902,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Auth Cookie</label>
                         <input
                           type="password"
-                          value={opencodeCookie}
+                          value={selectedLimitConfig.cookie || ''}
                           onChange={(e) => {
                             const val = e.target.value
-                            setOpencodeCookie(val)
-                            saveSettings(antigravityKey, val, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                            updateLimitConfigValue('opencode', 'cookie', val)
                           }}
                           placeholder="auth cookie value..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1808,11 +1915,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Workspace ID</label>
                         <input
                           type="text"
-                          value={opencodeWorkspace}
+                          value={selectedLimitConfig.workspaceId || ''}
                           onChange={(e) => {
                             const val = e.target.value
-                            setOpencodeWorkspace(val)
-                            saveSettings(antigravityKey, opencodeCookie, val, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                            updateLimitConfigValue('opencode', 'workspaceId', val)
                           }}
                           placeholder="e.g. wrk_01KVB2..."
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1831,11 +1937,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">__Secure-session Cookie</label>
                       <input
                         type="password"
-                        value={ollamaCookie}
+                        value={selectedLimitConfig.cookie || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setOllamaCookie(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, val, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, zedCookie)
+                          updateLimitConfigValue('ollama', 'cookie', val)
                         }}
                         placeholder="Enter __Secure-session cookie..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1853,11 +1958,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">API Key</label>
                       <input
                         type="password"
-                        value={openrouterApiKey}
+                        value={selectedLimitConfig.apiKey || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setOpenrouterApiKey(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, val, commandCodeCookie, zedCookie)
+                          updateLimitConfigValue('openrouter', 'apiKey', val)
                         }}
                         placeholder="sk-or-v1-..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1875,11 +1979,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">Session Cookie</label>
                       <input
                         type="password"
-                        value={commandCodeCookie}
+                        value={selectedLimitConfig.cookie || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setCommandCodeCookie(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, val, zedCookie)
+                          updateLimitConfigValue('commandcode', 'cookie', val)
                         }}
                         placeholder="Enter __Secure-commandcode_prod_.session_token value..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
@@ -1897,11 +2000,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                       <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">Session Cookie</label>
                       <input
                         type="password"
-                        value={zedCookie}
+                        value={selectedLimitConfig.cookie || ''}
                         onChange={(e) => {
                           const val = e.target.value
-                          setZedCookie(val)
-                          saveSettings(antigravityKey, opencodeCookie, opencodeWorkspace, ollamaCookie, claudeAccessToken, codexAccessToken, copilotToken, copilotEnterpriseHost, openrouterApiKey, commandCodeCookie, val)
+                          updateLimitConfigValue('zed', 'cookie', val)
                         }}
                         placeholder="Enter zed.session cookie value..."
                         className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
