@@ -82,7 +82,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
   const [terminalTheme, setTerminalTheme] = useState<'dark' | 'light'>('dark')
   const [customization, setCustomizationState] = useState<CustomizationState>(() => getCustomization())
-  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; name: string; contentType: string }>>([])
+  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; filename: string; contentType: string; contentUrl: string }>>([])
   const [mediaUploading, setMediaUploading] = useState(false)
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [disabledProviders, setDisabledProviders] = useState<string[]>([])
@@ -275,7 +275,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         setParkedLimit(Number.isFinite(v) ? Math.max(0, Math.min(16, Math.floor(v))) : DEFAULT_PARKED_TERMINALS)
         setCustomizationState(p.customization)
       })
-      fetch('/api/media').then((res) => res.ok ? res.json() : null).then((json) => {
+      fetch('/api/terminal/background-assets').then((res) => res.ok ? res.json() : null).then((json) => {
         if (Array.isArray(json?.data)) setMediaAssets(json.data)
       }).catch(() => {})
 
@@ -539,7 +539,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     try {
       const form = new FormData()
       form.set('file', file)
-      const res = await fetch('/api/media', { method: 'POST', body: form })
+      const res = await fetch('/api/terminal/background-assets', { method: 'POST', body: form })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.data) throw new Error('Upload failed')
       setMediaAssets((assets) => [...assets, json.data])
@@ -735,7 +735,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                           className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs"
                         >
                           <option value="">No background media</option>
-                          {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+                          {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.filename}</option>)}
                         </select>
                       )}
                       <label className="text-[10px] text-muted-foreground">Overlay {Math.round(customization.terminal.background.overlay * 100)}%</label>
