@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, Clipboard } from 'lucide-react'
+import { Copy, Clipboard, RotateCw } from 'lucide-react'
 import { attachTerminal, parkTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
@@ -60,6 +60,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   // change (manual resize) or a visibility change. Forcing one repaint here
   // once the layout has settled recovers that wasted early first-paint.
   const firstPaintRef = useRef(true)
+  const reloadRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
   const keyboardOpenRef = useRef(false)
@@ -105,7 +106,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
 
-    const flushResize = () => {
+    const flushResize = (force = false) => {
       fitTimerRef.current = null
       if (cancelled || !inst) return
       // xterm.js resize() reflows the buffer synchronously. While the
@@ -115,7 +116,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       // (the artifacts seen when returning to a terminal). Defer the fit
       // and retry once the buffer is quiescent.
       if (isTerminalReplaying(terminalId)) {
-        fitTimerRef.current = setTimeout(flushResize, 100)
+        fitTimerRef.current = setTimeout(() => flushResize(force), 100)
         return
       }
       // First-paint recovery: the registry's replay-end repaint is one-shot
@@ -152,18 +153,22 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
           inst.term.write('\x1b[?2026l')
           return
         }
+        if (force) {
+          inst.term.refresh(0, inst.term.rows - 1)
+        }
         const key = `${dims.cols}x${dims.rows}`
-        if (key === lastDimsRef.current) {
+        if (!force && key === lastDimsRef.current) {
           inst.term.write('\x1b[?2026l')
           return
         }
         lastDimsRef.current = key
         if (inst.ws?.readyState === WebSocket.OPEN) {
-          inst.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }))
+          inst.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows, force }))
         }
         inst.term.write('\x1b[?2026l')
       } catch { /* ignore */ }
     }
+    reloadRef.current = () => flushResize(true)
 
     const handleRightClickMousedown = (e: MouseEvent) => {
       if (e.button === 2) {
@@ -267,6 +272,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
 
     return () => {
       cancelled = true
+      reloadRef.current = () => {}
       document.removeEventListener('visibilitychange', onVisibility)
       document.removeEventListener('pageshow', onVisibility)
       window.removeEventListener('focus', onVisibility)
@@ -609,6 +615,12 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     setContextMenu(null)
   }
 
+  const handleReload = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setContextMenu(null)
+    reloadRef.current()
+  }
+
   return (
     <div
       className="relative h-full w-full overflow-hidden custom-context-menu"
@@ -625,6 +637,13 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId || background.applyToPage ? 'transparent' : getTerminalBackground() }} />
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
+          <button
+            onClick={handleReload}
+            className="flex items-center w-full px-3 py-1.5 text-xs text-foreground/80 hover:bg-accent hover:text-foreground text-left cursor-pointer gap-2"
+          >
+            <RotateCw size={14} />
+            <span>Reload</span>
+          </button>
           <button
             onClick={handleCopy}
             disabled={!savedSelection}
