@@ -1844,7 +1844,7 @@ export function AppLayout() {
             />
           )}
           {pageBackground.assetId && (
-            <div className="absolute inset-0 bg-background" style={{ opacity: pageBackground.overlay }} />
+            <div className="page-background-overlay absolute inset-0" style={{ opacity: pageBackground.overlay }} />
           )}
         </div>
       )}
