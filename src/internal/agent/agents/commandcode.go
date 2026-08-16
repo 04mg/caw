@@ -111,6 +111,12 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// lastReportedStatus tracks the status most recently sent to the UI so
 	// the PTY-interrupt pass (below) can tell whether the turn is working.
 	var lastReportedStatus string
+	// lastWorkingAt marks when the current working turn began. PTY input is
+	// handled independently from transcript polling, so an interrupt sent
+	// while the card was idle can otherwise be observed after a new prompt has
+	// already made the card working. Only interrupts sent during this turn can
+	// cancel it.
+	var lastWorkingAt time.Time
 	// PTY-interrupt detection. Command Code never persists an interrupted
 	// turn (an in-flight turn is dropped from the transcript), so
 	// transcript-only detection leaves the card showing the stale working
@@ -185,6 +191,10 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
 				status = "interrupted"
 			}
+			switch status {
+			case "thinking", "executing", "tool_failed":
+				lastWorkingAt = time.Now()
+			}
 			lastReportedStatus = status
 			callback(status, tool, details, sessionTitle)
 		}
@@ -257,7 +267,8 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				last := agent.LastPtyInterrupt(sessionID)
 				if last.After(lastInterruptSeen) {
 					lastInterruptSeen = last
-					if lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed" {
+					if last.After(lastWorkingAt) &&
+						(lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed") {
 						interruptApplied = true
 						lastReportedStatus = "interrupted"
 						interruptBoundarySize = lastFileSize
