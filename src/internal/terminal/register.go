@@ -247,8 +247,9 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 			if cols <= 0 || rows <= 0 {
 				continue
 			}
+			force, _ := msg["force"].(bool)
 			sess.mu.Lock()
-			sess.resizePTY(cols, rows, wc)
+			sess.resizePTY(cols, rows, wc, force)
 			sess.mu.Unlock()
 			select {
 			case firstResize <- struct{}{}:
