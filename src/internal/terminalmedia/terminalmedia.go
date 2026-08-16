@@ -59,10 +59,7 @@ type requestError struct {
 
 func (e *requestError) Error() string { return e.message }
 
-var (
-	errMissingFile = &requestError{status: http.StatusBadRequest, message: "missing file field"}
-	errLocalOnly   = &requestError{status: http.StatusForbidden, message: "terminal background assets are only available to local requests"}
-)
+var errMissingFile = &requestError{status: http.StatusBadRequest, message: "missing file field"}
 
 var (
 	pngConfig = mediaConfig{
@@ -425,12 +422,6 @@ func authorizeLocalRequest(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func validateLocalRequest(r *http.Request) error {
-	if !isLoopbackRequest(r.RemoteAddr) {
-		return errLocalOnly
-	}
-	if !isLocalHostHeader(r.Host) {
-		return errLocalOnly
-	}
 	if err := validateSameOrigin(r); err != nil {
 		return err
 	}
@@ -482,35 +473,6 @@ func normalizeHostPort(hostport string) string {
 		return hostport
 	}
 	return hostport
-}
-
-func isLoopbackRequest(remoteAddr string) bool {
-	if remoteAddr == "" {
-		return false
-	}
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func isLocalHostHeader(hostport string) bool {
-	hostport = strings.TrimSpace(hostport)
-	if hostport == "" {
-		return false
-	}
-	host, _, err := net.SplitHostPort(hostport)
-	if err != nil {
-		host = hostport
-	}
-	host = strings.Trim(host, "[]")
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func validateFilename(raw string) (string, string, error) {
