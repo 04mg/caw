@@ -427,6 +427,12 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 					delete(runningTasks, mt[1])
 				}
 			}
+			// manage_task's empty result is the authoritative task list. It can
+			// omit a completion notification for a scheduled task, so clear any
+			// stale task ids previously observed in the transcript.
+			if strings.Contains(strings.ToLower(step.Content), "no background tasks are currently running") {
+				clear(runningTasks)
+			}
 		}
 	}
 
@@ -612,4 +618,3 @@ func firstLine(s string) string {
 	}
 	return ""
 }
-

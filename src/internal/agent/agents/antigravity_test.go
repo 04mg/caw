@@ -79,3 +79,24 @@ func TestAntigravityNormalIdleStillIdle(t *testing.T) {
 		t.Fatalf("final answer status = %q, want idle", status)
 	}
 }
+
+func TestAntigravityNoBackgroundTasksClearsStaleTask(t *testing.T) {
+	// Antigravity's manage_task command can report that its task list is empty
+	// without first sending a completion message for each scheduled task.
+	lines := []string{
+		`{"type":"USER_INPUT","content":"build the project"}`,
+		`{"type":"RUN_COMMAND","status":"RUNNING","content":"Tool is running as a background task with task id: session/task-32"}`,
+		`{"type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: session/task-34"}`,
+		`{"type":"SYSTEM_MESSAGE","status":"DONE","content":"Task id \"session/task-32\" finished with result"}`,
+		`{"type":"GENERIC","status":"DONE","content":"No background tasks are currently running."}`,
+		`{"type":"PLANNER_RESPONSE","status":"DONE","content":"The build completed successfully.","tool_calls":[]}`,
+	}
+	p := writeAntigravityTranscript(t, lines)
+	var status string
+	(&AntigravityWatcher{}).parseAntigravityLog(p, 0, func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "idle" {
+		t.Fatalf("status = %q, want idle", status)
+	}
+}
