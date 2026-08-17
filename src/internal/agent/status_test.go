@@ -74,3 +74,55 @@ func TestHandlePtyInputRecordsStandaloneEscapeAfterDebounce(t *testing.T) {
 	}
 	SetPtyInterruptForTest(id, time.Time{})
 }
+
+func TestUpdateStatusUnknownRetainsExternalSessionAndSource(t *testing.T) {
+	const leaf = "explain-leaf"
+	// Simulate a watcher binding a native session then reporting a status.
+	RecordExternalSession(leaf, "oc-session-1")
+	updateStatus(leaf, "opencode", "/home/user/project", "executing", "bash", "details", "title", "watcher")
+
+	// The watchdog then flips a stale working state to unknown.
+	updateStatus(leaf, "opencode", "/home/user/project", "unknown", "", "", "title", "watchdog")
+
+	statusesMu.RLock()
+	s, ok := statuses[leaf]
+	statusesMu.RUnlock()
+	if !ok {
+		t.Fatal("expected status entry to exist")
+	}
+	if s.Status != "unknown" {
+		t.Fatalf("status = %q, want unknown", s.Status)
+	}
+	if s.Source != "watchdog" {
+		t.Fatalf("source = %q, want watchdog", s.Source)
+	}
+	if s.ExternalSessionID != "oc-session-1" {
+		t.Fatalf("externalSessionID = %q, want oc-session-1", s.ExternalSessionID)
+	}
+
+	// Explain must surface the bound native session, the source, and the leaf.
+	ex := ExplainStatuses()
+	statusesMu.RLock()
+	delete(statuses, leaf)
+	statusesMu.RUnlock()
+	externalSessionsMu.Lock()
+	delete(externalSessions, leaf)
+	externalSessionsMu.Unlock()
+
+	var found *ExplainStatus
+	for i := range ex {
+		if ex[i].SessionID == leaf {
+			found = &ex[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected ExplainStatuses to include the leaf")
+	}
+	if found.ExternalSessionID != "oc-session-1" {
+		t.Fatalf("explain externalSessionID = %q, want oc-session-1", found.ExternalSessionID)
+	}
+	if found.Source != "watchdog" {
+		t.Fatalf("explain source = %q, want watchdog", found.Source)
+	}
+}

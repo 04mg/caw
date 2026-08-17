@@ -19,6 +19,9 @@ export function getAgentStatusDot(agent: AgentStatus): StatusDotColors {
   if (s === 'thinking' || s === 'executing') {
     return { dot: 'bg-blue-400', ring: 'bg-blue-400 animate-ping' }
   }
+  if (s === 'unknown') {
+    return { dot: 'bg-violet-400', ring: 'bg-violet-400 animate-pulse' }
+  }
   return { dot: 'bg-slate-400', ring: null }
 }
 
@@ -27,13 +30,15 @@ export function getAgentStatusDot(agent: AgentStatus): StatusDotColors {
 //   0 = failed (crashed / interrupted / tool_failed)
 //   1 = needs input (waiting_input)
 //   2 = working (thinking / executing)
-//   3 = idle (and anything else)
+//   3 = unknown (stale / unclassifiable — not a confident idle)
+//   4 = idle (and anything else)
 export function statusPriority(status: string): number {
   const s = status.toLowerCase()
   if (s === 'crashed' || s === 'interrupted' || s === 'tool_failed') return 0
   if (s === 'waiting_input') return 1
   if (s === 'thinking' || s === 'executing') return 2
-  return 3
+  if (s === 'unknown') return 3
+  return 4
 }
 
 // getStrongestStatus returns the strongest status (by priority) among the

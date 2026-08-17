@@ -88,7 +88,7 @@ func freshTimeMs() int64 { return time.Now().UnixMilli() }
 // interfere with each other.
 func resetClaimRegistry() {
 	claimsMu.Lock()
-	claims = make(map[string]map[string]bool)
+	claims = make(map[string]map[string]claim)
 	claimsMu.Unlock()
 }
 
@@ -551,7 +551,7 @@ func TestOldSessionClaimedWhenRecentlyUpdated(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-x")
 	if got != oldSession {
 		t.Fatalf("expected %q, got %q", oldSession, got)
 	}
@@ -577,7 +577,7 @@ func TestOldSessionSkippedWhenStale(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-x")
 	if got != "" {
 		t.Fatalf("expected empty (skip stale old session on fresh launch), got %q", got)
 	}
@@ -601,7 +601,7 @@ func TestFreshSessionClaimedRegardlessOfPtyState(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-x")
 	if got != newSession {
 		t.Fatalf("expected %q, got %q", newSession, got)
 	}
@@ -631,7 +631,7 @@ func TestAlreadyClaimedSessionSkipped(t *testing.T) {
 	defer cleanup()
 
 	watcherStart := time.Now().Add(-10 * time.Second)
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-x")
 	if got != newSession {
 		t.Fatalf("expected %q (skip claimed %q), got %q", newSession, oldSession, got)
 	}
@@ -661,12 +661,12 @@ func TestOpenCodeSessionNotLeakedAcrossWorkspaces(t *testing.T) {
 	watcherStart := time.Now().Add(-10 * time.Second)
 	// Watcher running in testCwd finds no sessions there; it must NOT
 	// claim the session that belongs to otherCwd.
-	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false)
+	got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-x")
 	if got != "" {
 		t.Fatalf("watcher in %q must not claim session from %q, got %q", testCwd, otherCwd, got)
 	}
 	// The session remains unclaimed and available to a watcher in its own cwd.
-	got2 := findUnclaimedOpenCodeSession(dbPath, otherCwd, watcherStart, testAgent, false)
+	got2 := findUnclaimedOpenCodeSession(dbPath, otherCwd, watcherStart, testAgent, false, "leaf-x")
 	if got2 != newSession {
 		t.Fatalf("watcher in %q should claim its own session, got %q", otherCwd, got2)
 	}

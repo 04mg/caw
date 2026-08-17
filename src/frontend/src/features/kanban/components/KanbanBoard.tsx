@@ -141,6 +141,17 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
 
     if (!agent.cwd) return null
 
+    // Fallback for when the exact leaf is no longer present in any workspace
+    // layout (e.g. a pane was closed while the PTY outlived it). Resolve by
+    // cwd ONLY when exactly one live leaf in the entire visible workspace set
+    // matches the agent's cwd. With multiple matching leaves (e.g. two agent
+    // panes sharing one workspace root), the match is ambiguous and falling
+    // back to the first one would navigate the user to the WRONG agent — the
+    // exact failure reported when two OpenCode sessions were wrongly routed.
+    // In the ambiguous case we return null so the card renders as
+    // "Unknown Workspace" / non-navigable rather than misrouting.
+    let cwdMatch: WorkspaceDetails | null = null
+    let matchCount = 0
     for (const ws of workspaces) {
       for (let tabIdx = 0; tabIdx < ws.layouts.length; tabIdx++) {
         const tab = ws.layouts[tabIdx]
@@ -148,18 +159,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         for (const leafId of leafIds) {
           const leaf = getLeaf(tab.layout, leafId)
           if (!leaf || leaf.cwd !== agent.cwd) continue
-          return {
-            workspaceId: ws.id,
-            workspaceName: ws.name || ws.path || 'Workspace',
-            workspaceEmoji: ws.emoji || '💼',
-            tabIndex: tabIdx,
-            paneId: leafId,
-            agentBranch: leaf?.agentBranch,
+          matchCount++
+          if (matchCount === 1) {
+            cwdMatch = {
+              workspaceId: ws.id,
+              workspaceName: ws.name || ws.path || 'Workspace',
+              workspaceEmoji: ws.emoji || '💼',
+              tabIndex: tabIdx,
+              paneId: leafId,
+              agentBranch: leaf?.agentBranch,
+            }
           }
         }
       }
     }
-    return null
+    return matchCount === 1 ? cwdMatch : null
   }, [workspaces])
 
   // Map AgentStatus status to ColumnId. A crashed card stays in the column
@@ -170,6 +184,11 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // "interrupted" maps to idle (the user cancelled; the agent is no longer
   // working) but renders with a red dot. "tool_failed" maps to working (the
   // agent keeps running after a tool error) and also renders with a red dot.
+  // "unknown" (stale / unclassifiable) maps to idle: the agent may still be
+  // running but Caw cannot confirm it, and "unknown" is NOT a claim that the
+  // agent is finished waiting for input. The card is rendered with a distinct
+  // "status uncertain" marker and never issues a finished notification (the
+  // backend suppresses push for unknown).
   const getColumnForStatus = (agent: AgentStatus): ColumnId => {
     if (agent.status === 'crashed') {
       const lc = agent.lastColumn
@@ -219,7 +238,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
     Object.values(statuses).forEach((agent) => {
       const colId = getColumnForStatus(agent)
-      if (colId === 'idle' && agent.status !== 'crashed' && !findWorkspaceDetails(agent)) {
+      // Idle agents whose workspace can't be resolved are hidden to avoid
+      // cluttering the Idle column with "Unknown Workspace" cards. A crashed
+      // card is always kept (its purpose is to surface a dead run). An
+      // "unknown" card is also always kept even if no workspace resolves: the
+      // whole point of "status uncertain" is to make the user aware the agent
+      // may still be running, so hiding it would conceal that state.
+      if (colId === 'idle' && agent.status !== 'crashed' && agent.status !== 'unknown' && !findWorkspaceDetails(agent)) {
         return
       }
       grouped[colId].push(agent)
@@ -287,6 +312,9 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     // error text but keeps the card live and navigable — unlike crashed,
     // which becomes a dismissable dead card.
     const isErrorState = agent.status === 'interrupted' || agent.status === 'tool_failed'
+    // An unknown state means Caw cannot confirm the agent's lifecycle (it may
+    // still be running). It is NOT a claim that the agent is idle/finished.
+    const isUnknown = agent.status === 'unknown'
 
     // Choose column classes for styling card headers/borders
     const colId = getColumnForStatus(agent)
@@ -365,8 +393,12 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                 {isErrorState && (
                   <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
                 )}
+                {isUnknown && (
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60"></span>
+                )}
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${
                   isErrorState ? 'bg-red-500'
+                    : isUnknown ? 'bg-violet-400'
                     : colId === 'working' ? 'bg-blue-400'
                     : colId === 'needs_input' ? 'bg-amber-400'
                     : 'bg-slate-400'
@@ -404,6 +436,19 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               >
                 <span className="text-foreground/90">{agent.title}</span>
               </div>
+            </div>
+          )}
+
+          {/* Unknown status notice — Caw could not confirm whether the agent is
+              still working. Deliberately distinct from idle so the user does
+              not assume the agent finished and is waiting for input. */}
+          {isUnknown && (
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-violet-400/90 font-semibold">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-400"></span>
+              </span>
+              <span>Status uncertain</span>
             </div>
           )}
 
