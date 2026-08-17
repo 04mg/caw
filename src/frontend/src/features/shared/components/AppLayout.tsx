@@ -284,6 +284,7 @@ export function AppLayout() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSidebarOnRight = getCustomization().layout.sidebarOrder === 'explorer-workspace'
+  const logoFilter = getCustomization().logo.filter
   const explorerSidebarOnRight = !workspaceSidebarOnRight
 
   // Top-level SplitLayout sizing strategy
@@ -1733,7 +1734,7 @@ export function AppLayout() {
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
+      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+→" label="Switch pane" />
@@ -1749,7 +1750,7 @@ export function AppLayout() {
     </div>
   ) : activeWorkspace && layouts.length === 0 ? (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
+      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+→" label="Switch pane" />
@@ -1765,7 +1766,7 @@ export function AppLayout() {
     </div>
   ) : (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: 'brightness(0) invert(0.55) opacity(0.2)' }} />
+      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
       <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
         <div className="flex flex-col gap-3">
           <Shortcut keys="Alt+→" label="Switch pane" />
