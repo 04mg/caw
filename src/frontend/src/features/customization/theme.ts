@@ -26,6 +26,7 @@ export interface CustomizationState {
     tokenColorsLight?: Record<string, string>
   }
   terminal: { theme: 'dark' | 'light'; fontSize: number; background: TerminalBackground }
+  logo: { filter: string }
   layout: { sidebarOrder: SidebarOrder }
 }
 
@@ -194,6 +195,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
     fontSize: 13,
     background: { assetId: '', overlay: 0.35, blur: 0, applyToPage: false },
   },
+  logo: { filter: 'brightness(0) invert(0.55) opacity(0.2)' },
   layout: { sidebarOrder: 'workspace-explorer' },
 }
 
@@ -251,6 +253,7 @@ export function normalizeCustomization(value: Partial<CustomizationState> | unde
       background: { ...DEFAULT_CUSTOMIZATION.terminal.background, ...background },
     },
     layout: { ...DEFAULT_CUSTOMIZATION.layout, ...v.layout },
+    logo: { ...DEFAULT_CUSTOMIZATION.logo, ...v.logo },
   }
 }
 
