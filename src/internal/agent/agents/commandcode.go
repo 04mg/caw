@@ -111,6 +111,8 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// lastReportedStatus tracks the status most recently sent to the UI so
 	// the PTY-interrupt pass (below) can tell whether the turn is working.
 	var lastReportedStatus string
+	var lastReportedTool string
+	var lastReportedDetails string
 	// lastWorkingAt marks when the current working turn began. PTY input is
 	// handled independently from transcript polling, so an interrupt sent
 	// while the card was idle can otherwise be observed after a new prompt has
@@ -196,6 +198,8 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				lastWorkingAt = time.Now()
 			}
 			lastReportedStatus = status
+			lastReportedTool = tool
+			lastReportedDetails = details
 			callback(status, tool, details, sessionTitle)
 		}
 		transcriptMessageCount += int64(w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, wrappedCallback))
@@ -272,7 +276,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						interruptApplied = true
 						lastReportedStatus = "interrupted"
 						interruptBoundarySize = lastFileSize
-						callback("interrupted", "", "", sessionTitle)
+						callback("interrupted", lastReportedTool, lastReportedDetails, sessionTitle)
 					}
 				}
 

@@ -147,6 +147,9 @@ var (
 	// persist an interrupted turn to state.db).
 	ptyInterrupt   = make(map[string]time.Time)
 	ptyInterruptMu sync.RWMutex
+	// ptyEscapePending delays a standalone ESC long enough to distinguish it
+	// from the first byte of a fragmented terminal escape sequence.
+	ptyEscapePending = make(map[string]*time.Timer)
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -198,11 +201,38 @@ func init() {
 // flipping the status. Recording only the explicit interrupt keys keeps the
 // hook safe and narrow.
 func handlePtyInput(id string, data string) {
-	if isInterruptInput(data) {
+	if strings.Contains(data, "\x03") {
 		ptyInterruptMu.Lock()
+		if timer := ptyEscapePending[id]; timer != nil {
+			timer.Stop()
+			delete(ptyEscapePending, id)
+		}
 		ptyInterrupt[id] = time.Now()
 		ptyInterruptMu.Unlock()
+		return
 	}
+
+	ptyInterruptMu.Lock()
+	if data != "\x1b" {
+		if timer := ptyEscapePending[id]; timer != nil {
+			timer.Stop()
+			delete(ptyEscapePending, id)
+		}
+		ptyInterruptMu.Unlock()
+		return
+	}
+	if timer := ptyEscapePending[id]; timer != nil {
+		timer.Stop()
+	}
+	ptyEscapePending[id] = time.AfterFunc(100*time.Millisecond, func() {
+		ptyInterruptMu.Lock()
+		if ptyEscapePending[id] != nil {
+			delete(ptyEscapePending, id)
+			ptyInterrupt[id] = time.Now()
+		}
+		ptyInterruptMu.Unlock()
+	})
+	ptyInterruptMu.Unlock()
 }
 
 // isInterruptInput reports whether the given PTY input bytes contain the user
