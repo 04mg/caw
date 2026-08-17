@@ -43,8 +43,6 @@ const PROVIDER_ICONS: Record<QuotaProviderId, ElementType> = {
 	zed: ZedIcon,
 }
 
-const AUTO_HIDDEN_ON_ERROR = new Set<QuotaProviderId>(['claude', 'codex'])
-
 const formatQuotaValue = (used: number, limit: number, unit?: string): { text: string, percentage: number } => {
 	if (unit === 'info') {
 		return { text: '', percentage: 0 }
@@ -109,10 +107,12 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 	const visibleProviders = useMemo(() => {
 		return QUOTA_PROVIDER_IDS.filter((providerId) => {
 			if (disabledProviders.includes(providerId)) return false
-			if (AUTO_HIDDEN_ON_ERROR.has(providerId) && normalizedQuotas[providerId].error && normalizedQuotas[providerId].accounts.length === 0) {
+			const quota = normalizedQuotas[providerId]
+			const hasUsableData = quota.accounts.some((account) => Boolean(account.data))
+			if (!hasUsableData && (quota.error || quota.accounts.some((account) => Boolean(account.error)))) {
 				return false
 			}
-			return providerHasConfiguredAccount(providerId, settings[providerId], normalizedQuotas[providerId])
+			return providerHasConfiguredAccount(providerId, settings[providerId], quota)
 		})
 	}, [disabledProviders, normalizedQuotas, settings])
 
