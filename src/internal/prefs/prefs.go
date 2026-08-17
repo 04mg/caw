@@ -57,9 +57,9 @@ func (c *ColorSchemes) UnmarshalJSON(data []byte) error {
 }
 
 type CustomizationState struct {
-	Version int               `json:"version"`
-	UITheme string            `json:"uiTheme"`
-	Colors  ColorSchemes      `json:"colors"`
+	Version int          `json:"version"`
+	UITheme string       `json:"uiTheme"`
+	Colors  ColorSchemes `json:"colors"`
 	Editor  struct {
 		Theme            string            `json:"theme"`
 		FontSize         int               `json:"fontSize"`
@@ -72,6 +72,9 @@ type CustomizationState struct {
 		FontSize   int                `json:"fontSize"`
 		Background TerminalBackground `json:"background"`
 	} `json:"terminal"`
+	Logo struct {
+		Filter string `json:"filter"`
+	} `json:"logo"`
 	Layout struct {
 		SidebarOrder string `json:"sidebarOrder"`
 	} `json:"layout"`
@@ -129,6 +132,7 @@ func defaultCustomization() CustomizationState {
 	c.Editor.TokenColors = map[string]string{}
 	c.Terminal.Theme, c.Terminal.FontSize = "dark", 13
 	c.Terminal.Background.Overlay = 0.35
+	c.Logo.Filter = "brightness(0) invert(0.55) opacity(0.2)"
 	c.Layout.SidebarOrder = "workspace-explorer"
 	return c
 }
@@ -220,6 +224,9 @@ func GetPrefs(store *state.Store) PrefsState {
 			}
 			if customization.Layout.SidebarOrder == "" {
 				customization.Layout.SidebarOrder = "workspace-explorer"
+			}
+			if customization.Logo.Filter == "" {
+				customization.Logo.Filter = defaultCustomization().Logo.Filter
 			}
 			p.Customization = customization
 		}
