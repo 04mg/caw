@@ -61,10 +61,11 @@ type CustomizationState struct {
 	UITheme string            `json:"uiTheme"`
 	Colors  ColorSchemes      `json:"colors"`
 	Editor  struct {
-		Theme       string            `json:"theme"`
-		FontSize    int               `json:"fontSize"`
-		Minimap     bool              `json:"minimap"`
-		TokenColors map[string]string `json:"tokenColors"`
+		Theme            string            `json:"theme"`
+		FontSize         int               `json:"fontSize"`
+		Minimap          bool              `json:"minimap"`
+		TokenColors      map[string]string `json:"tokenColors"`
+		TokenColorsLight map[string]string `json:"tokenColorsLight"`
 	} `json:"editor"`
 	Terminal struct {
 		Theme      string             `json:"theme"`
@@ -213,6 +214,9 @@ func GetPrefs(store *state.Store) PrefsState {
 			}
 			if customization.Editor.TokenColors == nil {
 				customization.Editor.TokenColors = map[string]string{}
+			}
+			if customization.Editor.TokenColorsLight == nil {
+				customization.Editor.TokenColorsLight = map[string]string{}
 			}
 			if customization.Layout.SidebarOrder == "" {
 				customization.Layout.SidebarOrder = "workspace-explorer"
