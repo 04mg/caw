@@ -71,6 +71,27 @@ type copilotTurnEnd struct {
 	TurnID string `json:"turnId"`
 }
 
+// copilotSubagentEvent is the data payload for "subagent.started" and
+// "subagent.completed" events. Copilot records a subagent as a summary event
+// in the parent's events.jsonl; the subagent's own work is not written there.
+type copilotSubagentEvent struct {
+	ToolCallID string `json:"toolCallId"`
+	AgentName  string `json:"agentName,omitempty"`
+}
+
+// copilotWatchState carries state that must survive across incremental reads
+// of the watched events.jsonl file. In particular it tracks subagents that
+// have started but not yet completed, so an intermediate assistant.turn_end
+// (the parent pausing after delegating work) is not mistaken for the end of
+// the whole session.
+type copilotWatchState struct {
+	activeSubagents map[string]string
+}
+
+func (s *copilotWatchState) reset() {
+	s.activeSubagents = nil
+}
+
 // copilotUserMsg is the data payload for "user.message" events.
 type copilotUserMsg struct {
 	Content            string `json:"content"`
@@ -99,6 +120,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	var lastAssistantDetails string
 	var lastActivity time.Time
 	var silentTicks int
+	var parseState copilotWatchState
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -147,7 +169,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			lastStatus, lastTool, lastDetails = status, tool, details
 			callback(status, tool, details, sessionTitle)
 		}
-		w.parseCopilotEvents(watchedFilePath, lastFileSize, wrappedCallback)
+		w.parseCopilotEvents(watchedFilePath, lastFileSize, &parseState, wrappedCallback)
 		lastFileSize = info.Size()
 		lastActivity = info.ModTime()
 		silentTicks = 0
@@ -187,6 +209,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 						lastFileSize = 0
 						lastActivity = time.Now()
 						silentTicks = 0
+						parseState.reset()
 						if notifyCh != nil {
 							notifier.Watch(watchedFilePath)
 						}
@@ -231,6 +254,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 								watchedFilePath = cand.path
 								lastFileSize = 0
 								silentTicks = 0
+								parseState.reset()
 								if notifyCh != nil {
 									notifier.Watch(watchedFilePath)
 								}
@@ -352,16 +376,21 @@ func copilotEventsMatchesCwd(eventsPath, cwd string) bool {
 }
 
 // parseCopilotEvents reads new lines from the events.jsonl file and derives
-// the current status from the last meaningful event.
-func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callback func(status, tool, details, title string)) {
+// the current status from the last meaningful event. The supplied state is
+// updated in place and must survive across incremental reads: Copilot writes
+// subagent lifecycle events (subagent.started/completed) in the parent's
+// stream, so the watcher has to remember active subagents to avoid reporting
+// the parent's intermediate pause as "idle"/finished.
+func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state *copilotWatchState, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
 	// Forward pass: collect the first user prompt as the session title
-	// fallback and retain the final visible assistant response. Copilot
-	// follows that response with assistant.turn_end, which carries no text.
+	// fallback, retain the final visible assistant response, and maintain the
+	// set of active subagents. Copilot follows a visible assistant response
+	// with assistant.turn_end, which carries no text.
 	var sessionTitle string
 	var lastAssistantText string
 	for _, line := range lines {
@@ -369,7 +398,8 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 		if json.Unmarshal([]byte(line), &ev) != nil {
 			continue
 		}
-		if ev.Type == "user.message" {
+		switch ev.Type {
+		case "user.message":
 			var msg copilotUserMsg
 			if json.Unmarshal(ev.Data, &msg) == nil {
 				prompt := msg.Content
@@ -380,11 +410,23 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 					sessionTitle = CleanPrompt(prompt)
 				}
 			}
-		}
-		if ev.Type == "assistant.message" {
+		case "assistant.message":
 			var msg copilotAssistantMsg
 			if json.Unmarshal(ev.Data, &msg) == nil && msg.Content != "" {
 				lastAssistantText = msg.Content
+			}
+		case "subagent.started":
+			var sub copilotSubagentEvent
+			if json.Unmarshal(ev.Data, &sub) == nil && sub.ToolCallID != "" {
+				if state.activeSubagents == nil {
+					state.activeSubagents = make(map[string]string)
+				}
+				state.activeSubagents[sub.ToolCallID] = sub.AgentName
+			}
+		case "subagent.completed":
+			var sub copilotSubagentEvent
+			if json.Unmarshal(ev.Data, &sub) == nil && sub.ToolCallID != "" {
+				delete(state.activeSubagents, sub.ToolCallID)
 			}
 		}
 	}
@@ -399,6 +441,17 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 		}
 		switch ev.Type {
 		case "assistant.turn_end":
+			// The parent agent may finish one of several turns (e.g. the
+			// turn that delegated work to a subagent) while background work
+			// is still running. In that case the whole session is NOT done:
+			// report "thinking" instead of "idle" so the user doesn't get a
+			// false "finished" notification. Reporting "thinking" (rather
+			// than "executing"/"background_task") also preserves the true
+			// finished notification once the subagent actually completes.
+			if len(state.activeSubagents) > 0 {
+				callback("thinking", "", lastAssistantText, sessionTitle)
+				return
+			}
 			callback("idle", "", lastAssistantText, sessionTitle)
 			return
 		case "abort":
@@ -486,6 +539,10 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, callb
 				// "confirm"/"approve"/"[y/n]" was removed: it produced false
 				// positives when the assistant's explanation happened to use
 				// those words.
+				if len(state.activeSubagents) > 0 {
+					callback("thinking", "", msg.Content, sessionTitle)
+					return
+				}
 				callback("idle", "", msg.Content, sessionTitle)
 				return
 			}

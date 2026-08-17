@@ -40,7 +40,7 @@ func TestCopilotAbortReportsInterrupted(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status = s
 	})
 	if status != "interrupted" {
@@ -57,7 +57,7 @@ func TestCopilotSessionErrorReportsToolFailed(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status, details string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status, details = s, d
 	})
 	if status != "tool_failed" {
@@ -76,7 +76,7 @@ func TestCopilotToolResultErrorReportsToolFailed(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status, details string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status, details = s, d
 	})
 	if status != "tool_failed" {
@@ -93,7 +93,7 @@ func TestCopilotToolResultSuccessReportsThinking(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status = s
 	})
 	if status != "thinking" {
@@ -108,7 +108,7 @@ func TestCopilotTurnEndRetainsFinalAssistantResponse(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status, details string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, _, d, _ string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, _, d, _ string) {
 		status, details = s, d
 	})
 	if status != "idle" {
@@ -116,6 +116,93 @@ func TestCopilotTurnEndRetainsFinalAssistantResponse(t *testing.T) {
 	}
 	if details != "Completed the requested change." {
 		t.Fatalf("turn_end details = %q, want final assistant response", details)
+	}
+}
+
+func TestCopilotTurnEndWithActiveSubagentStaysWorking(t *testing.T) {
+	// Copilot delegates to a subagent, then the parent finishes its turn. This
+	// is not the end of the whole session: the subagent is still running, so
+	// reporting idle would fire a spurious "finished" notification.
+	events := []copilotEvent{
+		{Type: "user.message", Data: rawJSON(t, copilotUserMsg{Content: "implement multi-account support"})},
+		{Type: "subagent.started", Data: rawJSON(t, copilotSubagentEvent{ToolCallID: "toolu_1", AgentName: "general-purpose"})},
+		{Type: "assistant.turn_end", Data: rawJSON(t, copilotTurnEnd{TurnID: "1"})},
+	}
+	p := writeCopilotEvents(t, events)
+	var status, tool string
+	state := &copilotWatchState{}
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, state, func(s, tl, d, ti string) {
+		status, tool = s, tl
+	})
+	if status != "thinking" || tool != "" {
+		t.Fatalf("active subagent turn_end status = (%q, %q), want (thinking, \"\")", status, tool)
+	}
+}
+
+func TestCopilotTurnEndAfterSubagentCompletedReportsIdle(t *testing.T) {
+	// Once the delegated subagent finishes, the parent's next turn_end is the
+	// real end of the task and should be reported as idle.
+	events := []copilotEvent{
+		{Type: "subagent.started", Data: rawJSON(t, copilotSubagentEvent{ToolCallID: "toolu_1"})},
+		{Type: "assistant.turn_end", Data: rawJSON(t, copilotTurnEnd{TurnID: "1"})},
+		{Type: "subagent.completed", Data: rawJSON(t, copilotSubagentEvent{ToolCallID: "toolu_1"})},
+		{Type: "assistant.turn_end", Data: rawJSON(t, copilotTurnEnd{TurnID: "2"})},
+	}
+	p := writeCopilotEvents(t, events)
+	var status string
+	state := &copilotWatchState{}
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, state, func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "idle" {
+		t.Fatalf("completed subagent turn_end status = %q, want idle", status)
+	}
+}
+
+func TestCopilotSubagentStateSurvivesIncrementalReads(t *testing.T) {
+	// The subagent lifecycle can span multiple reads of events.jsonl. The
+	// watcher must carry the "started" state across calls so a turn_end in a
+	// later chunk still knows the subagent is active.
+	startEvents := []copilotEvent{
+		{Type: "subagent.started", Data: rawJSON(t, copilotSubagentEvent{ToolCallID: "toolu_1"})},
+		{Type: "assistant.turn_end", Data: rawJSON(t, copilotTurnEnd{TurnID: "1"})},
+	}
+	p := writeCopilotEvents(t, startEvents)
+	state := &copilotWatchState{}
+	var status string
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, state, func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "thinking" {
+		t.Fatalf("first chunk status = %q, want thinking", status)
+	}
+
+	// Append the completion + final turn_end, then read only the new bytes.
+	finishEvents := []copilotEvent{
+		{Type: "subagent.completed", Data: rawJSON(t, copilotSubagentEvent{ToolCallID: "toolu_1"})},
+		{Type: "assistant.turn_end", Data: rawJSON(t, copilotTurnEnd{TurnID: "2"})},
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open events for append: %v", err)
+	}
+	var offset int64
+	info, _ := f.Stat()
+	offset = info.Size()
+	for _, ev := range finishEvents {
+		b, _ := json.Marshal(ev)
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	f.Close()
+
+	status = ""
+	(&CopilotWatcher{}).parseCopilotEvents(p, offset, state, func(s, tl, d, ti string) {
+		status = s
+	})
+	if status != "idle" {
+		t.Fatalf("second chunk status = %q, want idle", status)
 	}
 }
 
@@ -129,7 +216,7 @@ func TestCopilotExitPlanModeReportsWaitingInput(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status, tool string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status, tool = s, tl
 	})
 	if status != "waiting_input" || tool != "exit_plan_mode" {
@@ -147,7 +234,7 @@ func TestCopilotExecutionStartExitPlanModeWithoutMessageReportsWaitingInput(t *t
 	}
 	p := writeCopilotEvents(t, events)
 	var status, tool string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status, tool = s, tl
 	})
 	if status != "waiting_input" || tool != "exit_plan_mode" {
@@ -162,7 +249,7 @@ func TestCopilotAskUserReportsWaitingInput(t *testing.T) {
 	}
 	p := writeCopilotEvents(t, events)
 	var status, tool string
-	(&CopilotWatcher{}).parseCopilotEvents(p, 0, func(s, tl, d, ti string) {
+	(&CopilotWatcher{}).parseCopilotEvents(p, 0, &copilotWatchState{}, func(s, tl, d, ti string) {
 		status, tool = s, tl
 	})
 	if status != "waiting_input" || tool != "ask_user" {
