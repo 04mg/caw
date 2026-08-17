@@ -61,3 +61,21 @@ func TestClaimSessionLegacyStillWorks(t *testing.T) {
 		t.Fatal("second claim of same key should fail")
 	}
 }
+
+// TestClaimedByReportsOwner verifies the ownership registry reports which leaf
+// owns a claim, and returns "" for unclaimed keys.
+func TestClaimedByReportsOwner(t *testing.T) {
+	resetClaims()
+	const agentID = "opencode"
+	const cwd = "/home/user/project"
+
+	if got := ClaimedBy(agentID, cwd, "session-a"); got != "" {
+		t.Fatalf("unclaimed key should report no owner, got %q", got)
+	}
+	if !ClaimSessionForLeaf(agentID, cwd, "session-a", "leaf-1") {
+		t.Fatal("first leaf should win the claim")
+	}
+	if got := ClaimedBy(agentID, cwd, "session-a"); got != "leaf-1" {
+		t.Fatalf("expected owner leaf-1, got %q", got)
+	}
+}

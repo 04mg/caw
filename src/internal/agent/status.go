@@ -223,6 +223,55 @@ func BoundExternalSession(sessionID string) string {
 	return externalSessions[sessionID]
 }
 
+// PersistedExternalSession returns the agent's own internal session id/path
+// persisted for the given leaf by a previous Caw process, or "" if none.
+// Watchers call this at startup so a reopened pane resumes tracking the exact
+// native session it was running (via resumeCmdForAgent) instead of re-running
+// a heuristic candidate scan that can mis-associate a sibling session sharing
+// the same cwd.
+func PersistedExternalSession(leafID string) string {
+	if stateStore == nil || leafID == "" {
+		return ""
+	}
+	return stateStore.GetExternalSessionID(leafID)
+}
+
+// ReportAgentState applies a lifecycle/session report from an agent hook or
+// plugin for an active terminal leaf. This is the additive "report-agent"
+// authority (mirroring Herdr's pane.report_agent): official integrations can
+// push semantic state and native session identity out-of-band, which is more
+// robust than polling the agent's store. Reports only affect a leaf that is
+// currently running an agent (verified against activeSessions), so a spoofed
+// or stale report can never create a card or drive a session the platform no
+// longer owns.
+//
+// status must be one of the known lifecycle states ("thinking", "executing",
+// "waiting_input", "idle", "unknown", "interrupted", "tool_failed") or "" to
+// report session identity only. externalSessionID, when non-empty, records the
+// agent's own native session id/path so a reopen resumes the exact session.
+// source labels the reporter (e.g. "opencode-plugin") for the explain endpoint.
+func ReportAgentState(sessionID, agentID, status, tool, details, title, externalSessionID, source string) bool {
+	activeSesMu.Lock()
+	wCtx, active := activeSessions[sessionID]
+	activeSesMu.Unlock()
+	if !active {
+		return false
+	}
+	if externalSessionID != "" {
+		RecordExternalSession(sessionID, externalSessionID)
+	}
+	if status == "" {
+		return true
+	}
+	switch status {
+	case "thinking", "executing", "waiting_input", "idle", "unknown", "interrupted", "tool_failed":
+	default:
+		return false
+	}
+	updateStatus(sessionID, agentID, wCtx.cwd, status, tool, details, title, source)
+	return true
+}
+
 func init() {
 	terminal.OnSessionStart = handleSessionStart
 	terminal.OnSessionExit = handleSessionExit
@@ -1010,16 +1059,23 @@ func isSubagentTool(tool string) bool {
 // continue flag, indicating the agent will reattach to a pre-existing
 // internal session rather than starting a new one. This is set by
 // terminal.resumeCmdForAgent on reopen.
+//
+// It recognizes every resume form across the supported agents:
+//   - --continue / -c / --resume / --last (claude, pi, omp, copilot, agy)
+//   - -s <id> / --session <id> (opencode exact-session resume)
+//   - resume <id> / resume --last (codex subcommand)
 func isResumeCmd(cmd []string) bool {
-	for _, a := range cmd {
+	for i, a := range cmd {
 		switch a {
 		case "--continue", "-c", "--resume", "--last":
 			return true
-		}
-	}
-	// codex uses "resume" as a subcommand
-	for _, a := range cmd {
-		if a == "resume" {
+		case "-s", "--session":
+			// opencode -s <session-id> | opencode --session <session-id>
+			if i+1 < len(cmd) && cmd[i+1] != "" {
+				return true
+			}
+		case "resume":
+			// codex resume <session-id> | codex resume --last
 			return true
 		}
 	}

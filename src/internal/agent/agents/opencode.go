@@ -123,8 +123,12 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 
 	processState := func(changed bool) {
 		if openCodeSessionID == "" {
+			// A reopened pane must resume tracking its exact prior session
+			// (set by resumeCmdForAgent via `opencode -s <id>`). Bind to it
+			// first, never a heuristic scan over the shared DB, so two panes
+			// sharing a cwd each follow their own conversation.
 			if changed {
-				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
+				openCodeSessionID = bindOpenCodeInitial(dbPath, cwd, watcherStart, agentID, resume, sessionID)
 				if openCodeSessionID != "" {
 					silentTicks = 0
 					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
@@ -252,6 +256,44 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 	var tu int64
 	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, sid).Scan(&tu)
 	return tu
+}
+
+// bindOpenCodeInitial selects the initial OpenCode session to bind for a leaf.
+// It prefers the exact native session id persisted for the leaf by a previous
+// Caw process (so a reopened pane resumes its own conversation even when a
+// sibling OpenCode shares the same cwd), and only falls back to a candidate
+// scan for a fresh launch. The exact id is validated to still exist and belong
+// to the same directory before claiming.
+func bindOpenCodeInitial(dbPath, cwd string, watcherStart time.Time, agentID string, resume bool, leaf string) string {
+	if exact := agent.PersistedExternalSession(leaf); exact != "" && openCodeSessionExists(dbPath, exact, cwd) {
+		if ClaimSessionForLeaf(agentID, cwd, exact, leaf) {
+			return exact
+		}
+	}
+	return findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, leaf)
+}
+
+// openCodeSessionExists reports whether the given session id exists in the DB
+// and (when cwd is set) belongs to the same directory, so a persisted id that
+// no longer exists (or was moved to another workspace) is not resurrected.
+func openCodeSessionExists(dbPath, sid, cwd string) bool {
+	if sid == "" {
+		return false
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var directory string
+	err = db.QueryRow(`SELECT COALESCE(directory,'') FROM session WHERE id = ?`, sid).Scan(&directory)
+	if err != nil {
+		return false
+	}
+	if cwd != "" && directory != cwd {
+		return false
+	}
+	return true
 }
 
 // findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the

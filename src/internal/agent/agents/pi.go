@@ -174,6 +174,27 @@ func watchPiFormatSessions(
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
+				// Prefer the exact transcript path persisted for this leaf by
+				// a previous Caw process so a reopened pane resumes its own
+				// session when several panes share a cwd.
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+					if info, err := os.Stat(exact); err == nil && !info.IsDir() && strings.HasSuffix(exact, ".jsonl") {
+						if cfg.acceptPath == nil || cfg.acceptPath(exact) {
+							if ClaimSessionForLeaf(agentID, cwd, exact, sessionID) {
+								watchedFilePath = exact
+								lastFileSize = 0
+								lastCheck = time.Now()
+								lastActivity = info.ModTime()
+								silentTicks = 0
+								if notifyCh != nil {
+									notifier.Watch(watchedFilePath)
+								}
+								agent.RecordExternalSession(sessionID, exact)
+							}
+						}
+					}
+				}
+				if watchedFilePath == "" {
 				searchDir := projectSearchDir()
 				candidates, err := FindEarliestFiles(searchDir, ".jsonl", lastCheck)
 				if err != nil {
@@ -181,7 +202,7 @@ func watchPiFormatSessions(
 				}
 				candidates = filterCandidates(candidates)
 				for _, c := range candidates {
-					if ClaimSession(agentID, cwd, c.Path) {
+					if ClaimSessionForLeaf(agentID, cwd, c.Path, sessionID) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
@@ -190,8 +211,10 @@ func watchPiFormatSessions(
 						if notifyCh != nil {
 							notifier.Watch(watchedFilePath)
 						}
+						agent.RecordExternalSession(sessionID, c.Path)
 						break
 					}
+				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -219,7 +242,7 @@ func watchPiFormatSessions(
 						}
 						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSession(agentID, cwd, newKey) {
+							if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
 								UnclaimSession(agentID, cwd, watchedFilePath)
 								watchedFilePath = newKey
 								lastFileSize = 0
@@ -228,6 +251,7 @@ func watchPiFormatSessions(
 								if notifyCh != nil {
 									notifier.Watch(watchedFilePath)
 								}
+								agent.RecordExternalSession(sessionID, newKey)
 							}
 						}
 					}
