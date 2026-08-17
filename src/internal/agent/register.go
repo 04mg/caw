@@ -65,6 +65,15 @@ func (h *Handler) ListStatuses(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, list)
 }
 
+// ExplainStatuses handles GET /agents/statuses/explain. It returns the
+// diagnostic view of every tracked agent session (bound native session id,
+// status authority source, PTY evidence) so misclassifications can be
+// investigated. This is intentionally separate from the card-facing
+// ListStatuses so extra diagnostic fields never leak into the Kanban payload.
+func (h *Handler) ExplainStatuses(w http.ResponseWriter, r *http.Request) {
+	httpx.RespondJSON(w, ExplainStatuses())
+}
+
 // DismissStatus handles DELETE /agents/statuses/{id}. It removes a crashed
 // card from the Kanban board. Only sessions currently in the "crashed"
 // terminal state can be dismissed this way; live sessions are not affected
@@ -84,6 +93,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /agents", h.SetupWorkspace)
 	mux.HandleFunc("GET /agents/changes", h.CheckChanges)
 	mux.HandleFunc("GET /agents/statuses", h.ListStatuses)
+	mux.HandleFunc("GET /agents/statuses/explain", h.ExplainStatuses)
 	mux.HandleFunc("DELETE /agents/statuses/{id}", h.DismissStatus)
 }
 

@@ -124,7 +124,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	processState := func(changed bool) {
 		if openCodeSessionID == "" {
 			if changed {
-				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume)
+				openCodeSessionID = findUnclaimedOpenCodeSession(dbPath, cwd, watcherStart, agentID, resume, sessionID)
 				if openCodeSessionID != "" {
 					silentTicks = 0
 					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
@@ -215,7 +215,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				if ptyRecent || focused {
 					newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
 					if newKey != "" && newKey != openCodeSessionID {
-						if ClaimSession(agentID, cwd, newKey) {
+						if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
 							UnclaimSession(agentID, cwd, openCodeSessionID)
 							openCodeSessionID = newKey
 							lastReportedStatus = ""
@@ -287,7 +287,7 @@ func openCodeSessionUpdated(dbPath, sid string) int64 {
 // since a previous Caw run has time_updated well before the watcher started and
 // is skipped — this prevents a fresh OpenCode launch from spuriously binding
 // to a leftover session just because the TUI rendered PTY bytes on startup.
-func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool) string {
+func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, leaf string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
@@ -363,7 +363,7 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 				}
 			}
 		}
-		if ClaimSession(agentID, cwd, r.id) {
+		if ClaimSessionForLeaf(agentID, cwd, r.id, leaf) {
 			return r.id
 		}
 	}

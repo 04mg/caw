@@ -91,6 +91,12 @@ func (s *Store) GetExternalSessionID(leafID string) string {
 // session row, Codex rollout file, etc.). Subsequent calls overwrite the
 // value, so a mid-session /new or /resume that rebinds to a different agent
 // session updates the record and the next Caw reopen resumes the right one.
+//
+// The write is an upsert: a plain UPDATE silently does nothing when no
+// agent_sessions row exists for the leaf (e.g. a watcher bound a native
+// session before MarkAgentStarted ran, or the row was cleared), leaving a
+// dangling binding that a reopen cannot resume. INSERT OR REPLACE guarantees
+// the external id is always persisted keyed by leaf.
 func (s *Store) SetExternalSessionID(leafID, externalSessionID string) {
 	if leafID == "" || externalSessionID == "" {
 		return
@@ -98,8 +104,9 @@ func (s *Store) SetExternalSessionID(leafID, externalSessionID string) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	_, _ = s.db.Exec(
-		"UPDATE agent_sessions SET external_session_id = ? WHERE leaf_id = ?",
-		externalSessionID, leafID,
+		`INSERT INTO agent_sessions (leaf_id, external_session_id) VALUES (?, ?)
+		 ON CONFLICT(leaf_id) DO UPDATE SET external_session_id = excluded.external_session_id`,
+		leafID, externalSessionID,
 	)
 }
 
