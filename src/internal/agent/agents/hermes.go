@@ -123,7 +123,11 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 	processState := func(changed bool) {
 		if hermesSessionID == "" {
 			if changed {
-				hermesSessionID = findUnclaimedHermesSession(dbPath, watcherStart, agentID, resume)
+				// A reopened pane must resume tracking its exact prior session
+				// (set by resumeCmdForAgent via `hermes --resume <id>`). Bind
+				// to the persisted id first, never a heuristic scan over the
+				// shared DB, so two panes never swap their bound sessions.
+				hermesSessionID = bindHermesInitial(dbPath, watcherStart, agentID, resume, sessionID)
 				if hermesSessionID != "" {
 					silentTicks = 0
 					lastBoundMsgTime = hermesLastMessageTime(dbPath, hermesSessionID)
@@ -235,7 +239,7 @@ func (w *HermesWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 				if ptyRecent || focused {
 					newKey := findRebindHermesSession(dbPath, agentID, hermesSessionID)
 					if newKey != "" && newKey != hermesSessionID {
-						if ClaimSession(agentID, claimCwd, newKey) {
+						if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
 							UnclaimSession(agentID, claimCwd, hermesSessionID)
 							hermesSessionID = newKey
 							lastReportedStatus = ""
@@ -327,6 +331,36 @@ func hermesSessionTitle(dbPath, sid string) string {
 		sessionTitle = CleanPrompt(firstUser)
 	}
 	return sessionTitle
+}
+
+// bindHermesInitial selects the initial Hermes session to bind for a leaf.
+// It prefers the exact native session id persisted for the leaf by a previous
+// Caw process (so a reopened pane resumes its own conversation), and only
+// falls back to a candidate scan for a fresh launch. The exact id is validated
+// to still be a live session before claiming.
+func bindHermesInitial(dbPath string, watcherStart time.Time, agentID string, resume bool, leaf string) string {
+	if exact := agent.PersistedExternalSession(leaf); exact != "" && hermesSessionLive(dbPath, exact) {
+		if ClaimSessionForLeaf(agentID, "", exact, leaf) {
+			return exact
+		}
+	}
+	return findUnclaimedHermesSession(dbPath, watcherStart, agentID, resume)
+}
+
+// hermesSessionLive reports whether the given session id exists and has not
+// ended, so a persisted id that no longer exists is not resurrected.
+func hermesSessionLive(dbPath, sid string) bool {
+	if sid == "" {
+		return false
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var ended sql.NullTime
+	err = db.QueryRow(`SELECT ended_at FROM sessions WHERE id = ?`, sid).Scan(&ended)
+	return err == nil && !ended.Valid
 }
 
 // findUnclaimedHermesSession enumerates candidate Hermes sessions in the

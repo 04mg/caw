@@ -180,6 +180,25 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
+				// Prefer the exact transcript path persisted for this leaf by
+				// a previous Caw process so a reopened pane resumes its own
+				// session when several Claude panes share a cwd.
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+					if info, err := os.Stat(exact); err == nil && !info.IsDir() && strings.HasSuffix(exact, ".jsonl") {
+						if ClaimSessionForLeaf(agentID, cwd, exact, sessionID) {
+							watchedFilePath = exact
+							lastFileSize = 0
+							lastCheck = time.Now()
+							lastActivity = info.ModTime()
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
+							agent.RecordExternalSession(sessionID, exact)
+						}
+					}
+				}
+				if watchedFilePath == "" {
 				// Recompute searchDir each tick — the cwd-specific
 				// subdirectory may not exist when Watch() first starts
 				// (Claude creates it lazily on first message).
@@ -189,7 +208,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					continue
 				}
 				for _, c := range candidates {
-					if ClaimSession(agentID, cwd, c.Path) {
+					if ClaimSessionForLeaf(agentID, cwd, c.Path, sessionID) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						lastCheck = time.Now()
@@ -198,8 +217,10 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 						if notifyCh != nil {
 							notifier.Watch(watchedFilePath)
 						}
+						agent.RecordExternalSession(sessionID, c.Path)
 						break
 					}
+				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -245,7 +266,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 					}
 					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, cwd, newKey) {
+						if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
 							UnclaimSession(agentID, cwd, watchedFilePath)
 							watchedFilePath = newKey
 							lastFileSize = 0
@@ -254,6 +275,7 @@ func (w *ClaudeWatcher) Watch(ctx context.Context, sessionID string, cwd string,
 							if notifyCh != nil {
 								notifier.Watch(watchedFilePath)
 							}
+							agent.RecordExternalSession(sessionID, newKey)
 						}
 					}
 				}

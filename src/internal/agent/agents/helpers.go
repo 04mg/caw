@@ -169,21 +169,45 @@ func ShouldRebind(silentTicks int, currentKey string, lastActivity time.Time, ot
 // session identifier (a transcript file path, an internal session row id,
 // or an Antigravity conversation id). Other watchers of the same agent type
 // skip already-claimed candidates and pick the next most recent one.
+//
+// Claims are ownership-aware: each claim records which terminal leaf id owns
+// it. The leaf is the primary identity that status events are keyed by, so a
+// claim must never be stolen by a sibling leaf (that is exactly the failure
+// that swapped two OpenCode sessions' statuses). Ownership lets the platform
+// enforce "a lifecycle event may update only the leaf that owns the native
+// session it describes" without each watcher reimplementing it.
+
+type claim struct {
+	leaf string
+}
 
 var (
 	claimsMu sync.Mutex
-	// claims maps "<agentID>::<cwd>" -> set of claimed internal session keys
-	claims = make(map[string]map[string]bool)
+	// claims maps "<agentID>::<cwd>" -> native session key -> owning leaf.
+	claims = make(map[string]map[string]claim)
 )
 
 // ClaimSession tries to claim an internal agent session identified by key for
-// the given agentID+cwd. Returns true if the claim succeeded (the key was
-// free) and false if it was already claimed by another watcher. Claims are
-// keyed by agent type AND cwd, so two *different* agent types in the same cwd
-// never collide, and the same agent type in *different* cwds never collide.
-// The first watcher to call ClaimSession for a free key wins; the key stays
-// claimed until UnclaimSession is called (normally when the PTY closes).
+// the given agentID+cwd, owned by leaf. Returns true if the claim succeeded
+// (the key was free) and false if it was already claimed by another leaf.
+// Claims are keyed by agent type AND cwd, so two *different* agent types in
+// the same cwd never collide, and the same agent type in *different* cwds
+// never collide. The first leaf to call ClaimSession for a free key wins; the
+// key stays claimed until UnclaimSession is called (normally when the PTY
+// closes).
+//
+// leaf may be "" for callers that predate ownership tracking or do not have a
+// leaf to associate. Ownership still prevents a second, non-empty leaf from
+// stealing a key claimed with a non-empty leaf, and vice-versa.
 func ClaimSession(agentID, cwd, key string) bool {
+	return ClaimSessionForLeaf(agentID, cwd, key, "")
+}
+
+// ClaimSessionForLeaf is ClaimSession with an explicit owning leaf. When leaf
+// is non-empty and the key is already claimed by a different non-empty leaf,
+// the claim is refused (a claim may never be stolen). A caller may re-claim a
+// key it already owns (idempotent) so a rebind does not spuriously fail.
+func ClaimSessionForLeaf(agentID, cwd, key, leaf string) bool {
 	if key == "" {
 		return false
 	}
@@ -192,13 +216,23 @@ func ClaimSession(agentID, cwd, key string) bool {
 	defer claimsMu.Unlock()
 	set, ok := claims[group]
 	if !ok {
-		set = make(map[string]bool)
+		set = make(map[string]claim)
 		claims[group] = set
 	}
-	if set[key] {
+	if existing, taken := set[key]; taken {
+		// Refuse to steal a claim held by anyone else: a different, known leaf
+		// (the ownership guarantee that prevents two panes in one cwd from
+		// swapping their bound sessions' statuses), OR a second anonymous
+		// (leaf-less) claimer, which preserves the original boolean semantics
+		// of ClaimSession. Only the same non-empty owner may re-claim (so a
+		// rebind by the owning leaf is idempotent and does not spuriously
+		// fail).
+		if leaf != "" && existing.leaf == leaf {
+			return true
+		}
 		return false
 	}
-	set[key] = true
+	set[key] = claim{leaf: leaf}
 	return true
 }
 
@@ -218,6 +252,22 @@ func UnclaimSession(agentID, cwd, key string) {
 			delete(claims, group)
 		}
 	}
+}
+
+// ClaimedBy returns the leaf that currently owns the given claim, or "" when
+// the key is unclaimed (or the claim was made without a leaf owner). Used by
+// watchers and tests to verify ownership before attempting a rebind.
+func ClaimedBy(agentID, cwd, key string) string {
+	if key == "" {
+		return ""
+	}
+	group := agentID + "::" + cwd
+	claimsMu.Lock()
+	defer claimsMu.Unlock()
+	if c, ok := claims[group][key]; ok {
+		return c.leaf
+	}
+	return ""
 }
 
 // ----- fsnotify-based file change notifier ---------------------------------

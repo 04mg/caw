@@ -65,6 +65,15 @@ func (h *Handler) ListStatuses(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, list)
 }
 
+// ExplainStatuses handles GET /agents/statuses/explain. It returns the
+// diagnostic view of every tracked agent session (bound native session id,
+// status authority source, PTY evidence) so misclassifications can be
+// investigated. This is intentionally separate from the card-facing
+// ListStatuses so extra diagnostic fields never leak into the Kanban payload.
+func (h *Handler) ExplainStatuses(w http.ResponseWriter, r *http.Request) {
+	httpx.RespondJSON(w, ExplainStatuses())
+}
+
 // DismissStatus handles DELETE /agents/statuses/{id}. It removes a crashed
 // card from the Kanban board. Only sessions currently in the "crashed"
 // terminal state can be dismissed this way; live sessions are not affected
@@ -78,12 +87,43 @@ func (h *Handler) DismissStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// ReportStatus handles POST /agents/statuses/{id}/report. It applies an agent
+// lifecycle/session report (from a hook/plugin) scoped to an active terminal
+// leaf. The body carries optional status, tool, details, title, external
+// session id, and a source label for the explain endpoint.
+func (h *Handler) ReportStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		AgentID           string `json:"agentId"`
+		Status            string `json:"status"`
+		Tool              string `json:"tool,omitempty"`
+		Details           string `json:"details,omitempty"`
+		Title             string `json:"title,omitempty"`
+		ExternalSessionID string `json:"externalSessionId,omitempty"`
+		Source            string `json:"source,omitempty"`
+	}
+	if !httpx.BindRequest(w, r, &req) {
+		return
+	}
+	if req.AgentID == "" {
+		httpx.RespondBadRequest(w, "agentId is required")
+		return
+	}
+	if !ReportAgentState(id, req.AgentID, req.Status, req.Tool, req.Details, req.Title, req.ExternalSessionID, req.Source) {
+		httpx.RespondNotFound(w, "no active agent session with that id")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func Register(mux *http.ServeMux) {
 	h := NewHandler(NewService())
 	mux.HandleFunc("GET /agents", h.ListAgents)
 	mux.HandleFunc("POST /agents", h.SetupWorkspace)
 	mux.HandleFunc("GET /agents/changes", h.CheckChanges)
 	mux.HandleFunc("GET /agents/statuses", h.ListStatuses)
+	mux.HandleFunc("GET /agents/statuses/explain", h.ExplainStatuses)
+	mux.HandleFunc("POST /agents/statuses/{id}/report", h.ReportStatus)
 	mux.HandleFunc("DELETE /agents/statuses/{id}", h.DismissStatus)
 }
 
