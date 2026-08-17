@@ -33,6 +33,7 @@ func TestSetPtyInterruptForTestRoundTrip(t *testing.T) {
 	if !LastPtyInterrupt("leaf-1").IsZero() {
 		t.Fatal("expected zero time for unknown session")
 	}
+
 	at := time.Now()
 	SetPtyInterruptForTest("leaf-1", at)
 	if got := LastPtyInterrupt("leaf-1"); !got.Equal(at) {
@@ -46,4 +47,30 @@ func TestSetPtyInterruptForTestRoundTrip(t *testing.T) {
 	if !LastPtyInterrupt("leaf-1").IsZero() {
 		t.Fatal("expected zero time after clearing")
 	}
+}
+
+func TestHandlePtyInputDoesNotTreatFragmentedEscapeSequenceAsInterrupt(t *testing.T) {
+	const id = "fragmented-escape"
+	SetPtyInterruptForTest(id, time.Time{})
+
+	handlePtyInput(id, "\x1b")
+	handlePtyInput(id, "[")
+	time.Sleep(150 * time.Millisecond)
+
+	if got := LastPtyInterrupt(id); !got.IsZero() {
+		t.Fatalf("fragmented escape sequence recorded an interrupt at %v", got)
+	}
+}
+
+func TestHandlePtyInputRecordsStandaloneEscapeAfterDebounce(t *testing.T) {
+	const id = "standalone-escape"
+	SetPtyInterruptForTest(id, time.Time{})
+
+	handlePtyInput(id, "\x1b")
+	time.Sleep(150 * time.Millisecond)
+
+	if got := LastPtyInterrupt(id); got.IsZero() {
+		t.Fatal("standalone escape did not record an interrupt")
+	}
+	SetPtyInterruptForTest(id, time.Time{})
 }
