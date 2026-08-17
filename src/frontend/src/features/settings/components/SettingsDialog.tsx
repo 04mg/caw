@@ -857,14 +857,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             {mediaUploadError && <p className="text-[11px] text-destructive">{mediaUploadError}</p>}
             {mediaAssets.length > 0 && (
               <div className="flex gap-2">
-                <select
+                <Select
                   value={customization.terminal.background.assetId}
-                  onChange={(e) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: e.target.value } } })}
-                  className="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2 text-xs"
+                  onValueChange={(value) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, assetId: value } } })}
                 >
-                  <option value="">No background media</option>
-                  {mediaAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.filename}</option>)}
-                </select>
+                  <SelectTrigger className="min-w-0 flex-1">
+                    <SelectValue placeholder="No background media" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No background media</SelectItem>
+                    {mediaAssets.map((asset) => <SelectItem key={asset.id} value={asset.id}>{asset.filename}</SelectItem>)}
+                  </SelectContent>
+                </Select>
                 <button
                   type="button"
                   disabled={!customization.terminal.background.assetId}
@@ -889,6 +893,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] text-muted-foreground">Darkness over background {Math.round(customization.terminal.background.overlay * 100)}%</label>
               <Slider value={[customization.terminal.background.overlay * 100]} min={0} max={90} step={5} onValueChange={([overlay]) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, overlay: overlay / 100 } } })} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] text-muted-foreground">Background blur {customization.terminal.background.blur}px</label>
+              <Slider value={[customization.terminal.background.blur]} min={0} max={30} step={1} onValueChange={([blur]) => saveCustomCustomization({ terminal: { ...customization.terminal, background: { ...customization.terminal.background, blur } } })} />
             </div>
           </div>
         </div>

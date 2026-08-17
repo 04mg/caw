@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
@@ -214,7 +215,7 @@ export function WorkspacePanel({
         {contextMenu && (() => {
           const ws = workspaces.find((w) => w.id === contextMenu.workspaceId)
           if (!ws) return null
-          return (
+          return createPortal(
             <div
               className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
               style={{ left: contextMenu.x, top: contextMenu.y }}
@@ -234,7 +235,8 @@ export function WorkspacePanel({
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete workspace
               </button>
-            </div>
+            </div>,
+            document.body
           )
         })()}
         <WorkspacePickerDialog open={pickerOpen} onOpenChange={setPickerOpen} onChoose={handleChoose} />
@@ -377,7 +379,7 @@ export function WorkspacePanel({
       {contextMenu && (() => {
         const ws = workspaces.find((w) => w.id === contextMenu.workspaceId)
         if (!ws) return null
-        return (
+        return createPortal(
           <div
             className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
             style={{ left: contextMenu.x, top: contextMenu.y }}
@@ -397,12 +399,13 @@ export function WorkspacePanel({
               <Trash2 className="h-3.5 w-3.5" />
               Delete workspace
             </button>
-          </div>
+          </div>,
+          document.body
         )
       })()}
 
       {generalContextMenu && (() => {
-        return (
+        return createPortal(
           <div
             className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
             style={{ left: generalContextMenu.x, top: generalContextMenu.y }}
@@ -423,7 +426,8 @@ export function WorkspacePanel({
               <Settings className="h-3.5 w-3.5" />
               Settings
             </button>
-          </div>
+          </div>,
+          document.body
         )
       })()}
 
