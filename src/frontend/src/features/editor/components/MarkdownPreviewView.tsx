@@ -68,7 +68,9 @@ export function MarkdownPreviewView({ content, filePath, cwd, onOpenFile }: Mark
   const customization = getCustomization()
   const isDark = customization.editor.theme === 'dark'
   const colors = isDark ? customization.colors.dark : customization.colors.light
-  const tokens = customization.editor.tokenColors
+  const tokens = isDark
+    ? customization.editor.tokenColors
+    : (customization.editor.tokenColorsLight ?? customization.editor.tokenColors)
   const background = colors['editor.background'] || (isDark ? '#000000' : '#FFFFFF')
   const foreground = colors['editor.foreground'] || (isDark ? '#F0F0F0' : '#111111')
 

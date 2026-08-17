@@ -23,6 +23,7 @@ export interface CustomizationState {
     fontSize: number
     minimap: boolean
     tokenColors: Record<string, string>
+    tokenColorsLight?: Record<string, string>
   }
   terminal: { theme: 'dark' | 'light'; fontSize: number; background: TerminalBackground }
   layout: { sidebarOrder: SidebarOrder }
@@ -104,20 +105,40 @@ const MONACO_COLORS: Record<string, string> = {
   'scrollbarSlider.activeBackground': '#BFBFBF66',
 }
 
+// Catppuccin Mocha — dark syntax palette tuned for the pure black editor
+// background, mirroring the canonical catppuccin/vscode token scopes.
 const MONACO_TOKEN_COLORS: Record<string, string> = {
-  comment: '#6A9955',
-  string: '#CE9178',
-  keyword: '#C586C0',
-  number: '#B5CEA8',
-  regexp: '#D16969',
-  type: '#4EC9B0',
-  class: '#4EC9B0',
-  function: '#DCDCAA',
-  variable: '#9CDCFE',
-  constant: '#4FC1FF',
-  delimiter: '#D4D4D4',
-  tag: '#569CD6',
-  attribute: '#9CDCFE',
+  comment: '#9399B2',
+  string: '#A6E3A1',
+  keyword: '#CBA6F7',
+  number: '#FAB387',
+  regexp: '#F5C2E7',
+  type: '#F9E2AF',
+  class: '#F9E2AF',
+  function: '#89B4FA',
+  variable: '#CDD6F4',
+  constant: '#FAB387',
+  delimiter: '#9399B2',
+  tag: '#89B4FA',
+  attribute: '#F9E2AF',
+}
+
+// Catppuccin Latte — light syntax palette tuned for the pure white editor
+// background, mirroring the canonical catppuccin/vscode token scopes.
+const LIGHT_MONACO_TOKEN_COLORS: Record<string, string> = {
+  comment: '#7C7F93',
+  string: '#40A02B',
+  keyword: '#8839EF',
+  number: '#FE640B',
+  regexp: '#EA76CB',
+  type: '#DF8E1D',
+  class: '#DF8E1D',
+  function: '#1E66F5',
+  variable: '#4C4F69',
+  constant: '#FE640B',
+  delimiter: '#7C7F93',
+  tag: '#1E66F5',
+  attribute: '#DF8E1D',
 }
 
 const TERMINAL_COLORS: TerminalTheme = {
@@ -167,7 +188,7 @@ export const DEFAULT_CUSTOMIZATION: CustomizationState = {
   version: 1,
   uiTheme: 'Caw Dark',
   colors: DEFAULT_COLOR_SCHEMES,
-  editor: { theme: 'dark', fontSize: 12, minimap: true, tokenColors: MONACO_TOKEN_COLORS },
+  editor: { theme: 'dark', fontSize: 12, minimap: true, tokenColors: MONACO_TOKEN_COLORS, tokenColorsLight: LIGHT_MONACO_TOKEN_COLORS },
   terminal: {
     theme: 'dark',
     fontSize: 13,
@@ -185,7 +206,7 @@ export function bundledTheme(name: 'Caw Dark' | 'Caw Light'): CustomizationState
         dark: { ...DEFAULT_CUSTOMIZATION.colors.dark },
         light: { ...DEFAULT_CUSTOMIZATION.colors.light },
       },
-      editor: { ...DEFAULT_CUSTOMIZATION.editor, theme: 'light', tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors } },
+      editor: { ...DEFAULT_CUSTOMIZATION.editor, theme: 'light', tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors }, tokenColorsLight: { ...DEFAULT_CUSTOMIZATION.editor.tokenColorsLight } },
       terminal: { ...DEFAULT_CUSTOMIZATION.terminal, theme: 'light', background: { ...DEFAULT_CUSTOMIZATION.terminal.background } },
       layout: { ...DEFAULT_CUSTOMIZATION.layout },
     }
@@ -197,7 +218,7 @@ export function bundledTheme(name: 'Caw Dark' | 'Caw Light'): CustomizationState
       dark: { ...DEFAULT_CUSTOMIZATION.colors.dark },
       light: { ...DEFAULT_CUSTOMIZATION.colors.light },
     },
-    editor: { ...DEFAULT_CUSTOMIZATION.editor, tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors } },
+    editor: { ...DEFAULT_CUSTOMIZATION.editor, tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors }, tokenColorsLight: { ...DEFAULT_CUSTOMIZATION.editor.tokenColorsLight } },
     terminal: { ...DEFAULT_CUSTOMIZATION.terminal, background: { ...DEFAULT_CUSTOMIZATION.terminal.background } },
     layout: { ...DEFAULT_CUSTOMIZATION.layout },
   }
@@ -222,6 +243,7 @@ export function normalizeCustomization(value: Partial<CustomizationState> | unde
       ...DEFAULT_CUSTOMIZATION.editor,
       ...v.editor,
       tokenColors: { ...DEFAULT_CUSTOMIZATION.editor.tokenColors, ...v.editor?.tokenColors },
+      tokenColorsLight: { ...(DEFAULT_CUSTOMIZATION.editor.tokenColorsLight ?? DEFAULT_CUSTOMIZATION.editor.tokenColors), ...v.editor?.tokenColorsLight },
     },
     terminal: {
       ...DEFAULT_CUSTOMIZATION.terminal,
@@ -263,7 +285,10 @@ export function monacoTheme(value: CustomizationState) {
   const dark = value.editor.theme === 'dark'
   const colors = dark ? value.colors.dark : value.colors.light
   const fallback = dark ? MONACO_COLORS : LIGHT_MONACO_COLORS
-  const tokens = value.editor.tokenColors
+  const tokens = dark
+    ? value.editor.tokenColors
+    : (value.editor.tokenColorsLight ?? value.editor.tokenColors)
+  const fallbackTokens = dark ? MONACO_TOKEN_COLORS : LIGHT_MONACO_TOKEN_COLORS
   const rules = Object.entries(tokens).map(([token, foreground]) => ({
     token,
     foreground: foreground.replace(/^#/, ''),
@@ -281,7 +306,7 @@ export function monacoTheme(value: CustomizationState) {
     ['delimiter.comma.json', 'delimiter'],
   ].map(([token, color]) => ({
     token,
-    foreground: (tokens[color] || MONACO_TOKEN_COLORS[color]).replace(/^#/, ''),
+    foreground: (tokens[color] || fallbackTokens[color]).replace(/^#/, ''),
   }))
   return {
     base: dark ? 'vs-dark' : 'vs',
@@ -298,7 +323,10 @@ export function monacoTheme(value: CustomizationState) {
 export function terminalTheme(value: CustomizationState, transparentBackground = false): TerminalTheme {
   const dark = value.terminal.theme === 'dark'
   const colors = dark ? value.colors.dark : value.colors.light
-  const tokens = value.editor.tokenColors
+  const tokens =
+    value.terminal.theme === 'dark'
+      ? value.editor.tokenColors
+      : (value.editor.tokenColorsLight ?? value.editor.tokenColors)
   const get = (name: string, fallback: string) => colors[`terminal.${name}`] || fallback
   const background = transparentBackground
     ? '#00000000'
