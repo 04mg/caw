@@ -157,11 +157,30 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
+				// Prefer the exact conversation id persisted for this leaf by
+				// a previous Caw process so a reopened pane follows its own
+				// conversation when several panes share a cwd.
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+					if exactPath := antigravityTranscriptForConversation(dir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, cwd, exactPath, sessionID) {
+						watchedFilePath = exactPath
+						lastFileSize = 0
+						lastCheck = time.Now()
+						if info, err := os.Stat(watchedFilePath); err == nil {
+							lastActivity = info.ModTime()
+						}
+						silentTicks = 0
+						if notifyCh != nil {
+							notifier.Watch(watchedFilePath)
+						}
+						agent.RecordExternalSession(sessionID, exact)
+					}
+				}
+				if watchedFilePath == "" {
 				// Search for the most recently modified unclaimed transcript.jsonl.
 				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
 				if err == nil && len(candidates) > 0 {
 					for _, c := range candidates {
-						if ClaimSession(agentID, cwd, c) {
+						if ClaimSessionForLeaf(agentID, cwd, c, sessionID) {
 							watchedFilePath = c
 							lastFileSize = 0
 							lastCheck = time.Now()
@@ -172,9 +191,13 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 							if notifyCh != nil {
 								notifier.Watch(watchedFilePath)
 							}
+							if conv := antigravityConversationIDForTranscript(dir, c); conv != "" {
+								agent.RecordExternalSession(sessionID, conv)
+							}
 							break
 						}
 					}
+				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -200,7 +223,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						}
 						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSession(agentID, cwd, newKey) {
+							if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
 								UnclaimSession(agentID, cwd, watchedFilePath)
 								watchedFilePath = newKey
 								lastFileSize = 0
@@ -209,6 +232,9 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 								if notifyCh != nil {
 									notifier.Watch(watchedFilePath)
 								}
+								if conv := antigravityConversationIDForTranscript(dir, newKey); conv != "" {
+									agent.RecordExternalSession(sessionID, conv)
+								}
 							}
 						}
 					}
@@ -216,6 +242,37 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 			}
 		}
 	}
+}
+
+// antigravityConversationIDForTranscript returns the conversation id (the
+// immediate subdirectory under the brain dir) that owns the given transcript,
+// or "" when it cannot be determined.
+func antigravityConversationIDForTranscript(brainDir, transcriptPath string) string {
+	if brainDir == "" || transcriptPath == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(brainDir, transcriptPath)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) == 0 || parts[0] == "" || parts[0] == "." || strings.HasPrefix(parts[0], "..") {
+		return ""
+	}
+	return parts[0]
+}
+
+// antigravityTranscriptForConversation returns the transcript.jsonl path for
+// the given conversation id, or "" if it does not exist.
+func antigravityTranscriptForConversation(brainDir, convID string) string {
+	if convID == "" {
+		return ""
+	}
+	p := filepath.Join(brainDir, convID, ".system_generated", "logs", "transcript.jsonl")
+	if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		return p
+	}
+	return ""
 }
 
 // findAntigravityTranscripts walks the brain directory looking for the most

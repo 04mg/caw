@@ -254,6 +254,22 @@ func UnclaimSession(agentID, cwd, key string) {
 	}
 }
 
+// ClaimedBy returns the leaf that currently owns the given claim, or "" when
+// the key is unclaimed (or the claim was made without a leaf owner). Used by
+// watchers and tests to verify ownership before attempting a rebind.
+func ClaimedBy(agentID, cwd, key string) string {
+	if key == "" {
+		return ""
+	}
+	group := agentID + "::" + cwd
+	claimsMu.Lock()
+	defer claimsMu.Unlock()
+	if c, ok := claims[group][key]; ok {
+		return c.leaf
+	}
+	return ""
+}
+
 // ----- fsnotify-based file change notifier ---------------------------------
 //
 // FileChangeNotifier wraps an fsnotify.Watcher to deliver immediate,

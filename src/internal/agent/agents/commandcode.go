@@ -235,6 +235,28 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
+				// Prefer the exact transcript path persisted for this leaf by
+				// a previous Caw process so a reopened pane resumes its own
+				// session when several Command Code panes share a cwd.
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+					if isCommandCodeTranscript(exact) && matchesCwd(exact, cwd) {
+						if ClaimSessionForLeaf(agentID, claimCwd, exact, sessionID) {
+							watchedFilePath = exact
+							lastFileSize = 0
+							transcriptMessageCount = 0
+							lastCheck = time.Now()
+							if info, err := os.Stat(exact); err == nil {
+								lastActivity = info.ModTime()
+							}
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
+							agent.RecordExternalSession(sessionID, exact)
+						}
+					}
+				}
+				if watchedFilePath == "" {
 				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
 				if err != nil {
 					continue
@@ -243,7 +265,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 					if !isCommandCodeTranscript(c.Path) || !matchesCwd(c.Path, cwd) {
 						continue
 					}
-					if ClaimSession(agentID, claimCwd, c.Path) {
+					if ClaimSessionForLeaf(agentID, claimCwd, c.Path, sessionID) {
 						watchedFilePath = c.Path
 						lastFileSize = 0
 						transcriptMessageCount = 0
@@ -253,8 +275,10 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						if notifyCh != nil {
 							notifier.Watch(watchedFilePath)
 						}
+						agent.RecordExternalSession(sessionID, c.Path)
 						break
 					}
+				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -333,7 +357,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						}
 						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSession(agentID, claimCwd, newKey) {
+							if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
 								UnclaimSession(agentID, claimCwd, watchedFilePath)
 								watchedFilePath = newKey
 								lastFileSize = 0
@@ -343,6 +367,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 								if notifyCh != nil {
 									notifier.Watch(watchedFilePath)
 								}
+								agent.RecordExternalSession(sessionID, newKey)
 							}
 						}
 					}

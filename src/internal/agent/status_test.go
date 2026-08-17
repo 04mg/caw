@@ -126,3 +126,26 @@ func TestUpdateStatusUnknownRetainsExternalSessionAndSource(t *testing.T) {
 		t.Fatalf("explain source = %q, want watchdog", found.Source)
 	}
 }
+
+func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  []string
+		want bool
+	}{
+		{"continue flag", []string{"opencode", "--continue"}, true},
+		{"short continue", []string{"claude", "-c"}, true},
+		{"resume flag", []string{"hermes", "--resume"}, true},
+		{"last flag", []string{"codex", "--last"}, true},
+		{"opencode exact session -s", []string{"opencode", "-s", "ses_abc"}, true},
+		{"opencode exact session --session", []string{"opencode", "--session", "ses_abc"}, true},
+		{"codex resume subcommand", []string{"codex", "resume", "uuid-123"}, true},
+		{"plain launch", []string{"opencode"}, false},
+		{"flag without value is not resume", []string{"opencode", "-s"}, false},
+	}
+	for _, c := range cases {
+		if got := isResumeCmd(c.cmd); got != c.want {
+			t.Errorf("%s: isResumeCmd(%v) = %v, want %v", c.name, c.cmd, got, c.want)
+		}
+	}
+}

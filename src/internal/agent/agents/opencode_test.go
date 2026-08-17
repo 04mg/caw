@@ -671,3 +671,46 @@ func TestOpenCodeSessionNotLeakedAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("watcher in %q should claim its own session, got %q", otherCwd, got2)
 	}
 }
+
+// TestOpenCodeExactSessionClaimOwnership verifies that once a leaf claims its
+// exact native session id, a sibling leaf sharing the same cwd cannot steal it,
+// and that a persisted id is validated against existence + directory before it
+// is claimed. This is the ownership guarantee that prevents two OpenCode panes
+// in one workspace from swapping their bound sessions on reopen.
+func TestOpenCodeExactSessionClaimOwnership(t *testing.T) {
+	resetClaimRegistry()
+	dbPath, cleanup := setupOpenCodeDB(t, []struct {
+		id              string
+		directory       string
+		timeCreatedMs   int64
+		timeUpdatedMs   int64
+		parentID        string
+	}{
+		{oldSession, testCwd, oldTimeMs, oldTimeMs, ""},
+		{newSession, testCwd, freshTimeMs(), freshTimeMs(), ""},
+	})
+	defer cleanup()
+
+	// The exact id must exist in the same directory before it can be restored.
+	if !openCodeSessionExists(dbPath, oldSession, testCwd) {
+		t.Fatal("existing same-cwd session should be accepted")
+	}
+	if openCodeSessionExists(dbPath, oldSession, "/home/user/other") {
+		t.Fatal("session in a different directory must be rejected")
+	}
+	if openCodeSessionExists(dbPath, "does-not-exist", testCwd) {
+		t.Fatal("non-existent session must be rejected")
+	}
+
+	// A restored leaf binds its exact session.
+	if !ClaimSessionForLeaf(testAgent, testCwd, oldSession, "leaf-restored") {
+		t.Fatal("restored leaf should claim its exact session")
+	}
+	// A sibling leaf must NOT be able to steal the restored exact session.
+	if ClaimSessionForLeaf(testAgent, testCwd, oldSession, "leaf-sibling") {
+		t.Fatal("sibling leaf must not steal an owned exact session")
+	}
+	if ClaimedBy(testAgent, testCwd, oldSession) != "leaf-restored" {
+		t.Fatal("ownership must report the restored leaf")
+	}
+}
