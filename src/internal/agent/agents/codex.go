@@ -32,6 +32,29 @@ func codexSessionIDFromPath(path string) string {
 	return codexUUIDRe.FindString(filepath.Base(path))
 }
 
+// codexTranscriptForUUID returns the rollout transcript path whose filename
+// contains the given session UUID, or "" if none exists. Used to bind a
+// reopened pane to its exact prior session (persisted as the rollout UUID)
+// instead of scanning the shared tree heuristically.
+func codexTranscriptForUUID(dir, sessionID, cwd string) string {
+	if sessionID == "" {
+		return ""
+	}
+	// codex resume --last (no exact id) is handled by the caller with a scan.
+	var match string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".jsonl") && codexSessionIDFromPath(path) == sessionID {
+			match = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return match
+}
+
 type CodexLogLine struct {
 	Type    string        `json:"type"`
 	Payload *CodexPayload `json:"payload,omitempty"`
@@ -144,26 +167,45 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 		case <-ticker.C:
 			heartbeat()
 			if watchedFilePath == "" {
-				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
-				if err != nil {
-					continue
-				}
-			for _, c := range candidates {
-				if ClaimSession(agentID, claimCwd, c.Path) {
-					watchedFilePath = c.Path
-					lastFileSize = 0
-					lastCheck = time.Now()
-					lastActivity = c.ModTime
-					silentTicks = 0
-					if notifyCh != nil {
-						notifier.Watch(watchedFilePath)
+				// A reopened pane must resume tracking its exact prior session
+				// (set by resumeCmdForAgent via `codex resume <uuid>`). Bind
+				// to the persisted UUID's transcript first, never a heuristic
+				// scan over the shared rollout tree.
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+					if exactPath := codexTranscriptForUUID(dir, exact, cwd); exactPath != "" && ClaimSessionForLeaf(agentID, claimCwd, exactPath, sessionID) {
+						watchedFilePath = exactPath
+						lastFileSize = 0
+						lastCheck = time.Now()
+						lastActivity = time.Now()
+						silentTicks = 0
+						if notifyCh != nil {
+							notifier.Watch(watchedFilePath)
+						}
+						agent.RecordExternalSession(sessionID, exact)
 					}
-					if sid := codexSessionIDFromPath(c.Path); sid != "" {
-						agent.RecordExternalSession(sessionID, sid)
-					}
-					break
 				}
-			}
+				if watchedFilePath == "" {
+					candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
+					if err != nil {
+						continue
+					}
+					for _, c := range candidates {
+						if ClaimSessionForLeaf(agentID, claimCwd, c.Path, sessionID) {
+							watchedFilePath = c.Path
+							lastFileSize = 0
+							lastCheck = time.Now()
+							lastActivity = c.ModTime
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
+							if sid := codexSessionIDFromPath(c.Path); sid != "" {
+								agent.RecordExternalSession(sessionID, sid)
+							}
+							break
+						}
+					}
+				}
 			}
 			if watchedFilePath != "" {
 				if !readWatched() {
@@ -188,7 +230,7 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 					}
 					newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 					if newKey != "" && newKey != watchedFilePath {
-						if ClaimSession(agentID, claimCwd, newKey) {
+						if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
 							UnclaimSession(agentID, claimCwd, watchedFilePath)
 							watchedFilePath = newKey
 							lastFileSize = 0

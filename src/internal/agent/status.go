@@ -21,9 +21,13 @@ type AgentStatus struct {
 	AgentID   string `json:"agentId"`
 	Cwd       string `json:"cwd,omitempty"`
 	// Status is the live state: "thinking", "executing", "waiting_input",
-	// "idle", "interrupted", "tool_failed". "interrupted" means the user
-	// cancelled the in-flight turn (e.g. pressed ESC twice) — the agent is no
-	// longer working but the card stays where it was with a red dot and no
+	// "idle", "unknown", "interrupted", "tool_failed". "unknown" means the
+	// agent process exists but Caw cannot safely classify its lifecycle — e.g.
+	// the stale watchdog could not confirm the agent is still working and the
+	// pane is neither producing PTY output nor focused. It is NOT "idle": the
+	// agent may still be working, just not observably. "interrupted" means the
+	// user cancelled the in-flight turn (e.g. pressed ESC twice) — the agent is
+	// no longer working but the card stays where it was with a red dot and no
 	// push notification. "tool_failed" means the agent's last tool call
 	// failed — the agent keeps running, but the failure is surfaced with a
 	// red dot and the error text in Details (still in the working column).
@@ -50,6 +54,17 @@ type AgentStatus struct {
 	// (one of "working", "needs_input", "idle") so the Kanban board can keep
 	// the crashed card in the column the user last saw it in.
 	LastColumn string `json:"lastColumn,omitempty"`
+	// ExternalSessionID is the agent's own internal session id/path that the
+	// watcher is currently bound to (OpenCode session row id, Codex rollout
+	// UUID, Hermes session id, ...). Empty means the watcher has not bound to
+	// a native session yet. Exposed to the "agent explain" endpoint for
+	// diagnostics; the normal Kanban cards key off SessionID (the leaf id)
+	// and do not surface this.
+	ExternalSessionID string `json:"-"`
+	// Source records the status authority behind the current status: "watcher"
+	// for the per-agent transcript/DB watchers, "watchdog" for the stale-state
+	// revert. Used by "agent explain".
+	Source string `json:"-"`
 }
 
 // Event represents a WebSocket event message
@@ -105,6 +120,14 @@ var (
 	statusHub      = ws.NewHub()
 	watchers       = make(map[string]StatusWatcher)
 	watchersMu     sync.Mutex
+	// externalSessions tracks the agent's own internal session id/path bound to
+	// each leaf (OpenCode session row, Codex rollout UUID, ...). It lives
+	// independently of statuses because a watcher binds a native session before
+	// it necessarily produces a visible status update, and the explain endpoint
+	// must report the binding even then. Updated by RecordExternalSession and
+	// read by updateStatus (to preserve it) and ExplainStatuses.
+	externalSessions   = make(map[string]string)
+	externalSessionsMu sync.RWMutex
 	// statusSeq is a monotonic counter used to assign a stable opening-order
 	// sequence to each agent session. It is only mutated under statusesMu.
 	statusSeq int64
@@ -175,10 +198,78 @@ func SetStateStore(s *state.Store) { stateStore = s }
 // exact session instead of "--continue"/"--last", so multiple agent panes
 // sharing a cwd each resume their own conversation.
 func RecordExternalSession(sessionID, externalSessionID string) {
-	if stateStore == nil || sessionID == "" || externalSessionID == "" {
+	if sessionID == "" || externalSessionID == "" {
+		return
+	}
+	// Track the binding in-memory so the "agent explain" diagnostic can
+	// report which native session each leaf is bound to, and updateStatus can
+	// preserve it on the card entry. Kept separate from statuses so a binding
+	// that happens before the first status broadcast is still captured.
+	externalSessionsMu.Lock()
+	externalSessions[sessionID] = externalSessionID
+	externalSessionsMu.Unlock()
+
+	if stateStore == nil {
 		return
 	}
 	stateStore.SetExternalSessionID(sessionID, externalSessionID)
+}
+
+// BoundExternalSession returns the agent's own internal session id/path
+// currently recorded for the given leaf, or "" if none has been bound yet.
+func BoundExternalSession(sessionID string) string {
+	externalSessionsMu.RLock()
+	defer externalSessionsMu.RUnlock()
+	return externalSessions[sessionID]
+}
+
+// PersistedExternalSession returns the agent's own internal session id/path
+// persisted for the given leaf by a previous Caw process, or "" if none.
+// Watchers call this at startup so a reopened pane resumes tracking the exact
+// native session it was running (via resumeCmdForAgent) instead of re-running
+// a heuristic candidate scan that can mis-associate a sibling session sharing
+// the same cwd.
+func PersistedExternalSession(leafID string) string {
+	if stateStore == nil || leafID == "" {
+		return ""
+	}
+	return stateStore.GetExternalSessionID(leafID)
+}
+
+// ReportAgentState applies a lifecycle/session report from an agent hook or
+// plugin for an active terminal leaf. This is the additive "report-agent"
+// authority (mirroring Herdr's pane.report_agent): official integrations can
+// push semantic state and native session identity out-of-band, which is more
+// robust than polling the agent's store. Reports only affect a leaf that is
+// currently running an agent (verified against activeSessions), so a spoofed
+// or stale report can never create a card or drive a session the platform no
+// longer owns.
+//
+// status must be one of the known lifecycle states ("thinking", "executing",
+// "waiting_input", "idle", "unknown", "interrupted", "tool_failed") or "" to
+// report session identity only. externalSessionID, when non-empty, records the
+// agent's own native session id/path so a reopen resumes the exact session.
+// source labels the reporter (e.g. "opencode-plugin") for the explain endpoint.
+func ReportAgentState(sessionID, agentID, status, tool, details, title, externalSessionID, source string) bool {
+	activeSesMu.Lock()
+	wCtx, active := activeSessions[sessionID]
+	activeSesMu.Unlock()
+	if !active {
+		return false
+	}
+	if externalSessionID != "" {
+		RecordExternalSession(sessionID, externalSessionID)
+	}
+	if status == "" {
+		return true
+	}
+	switch status {
+	case "thinking", "executing", "waiting_input", "idle", "unknown", "interrupted", "tool_failed":
+	default:
+		return false
+	}
+	updateStatus(sessionID, agentID, wCtx.cwd, status, tool, details, title, source)
+	return true
 }
 
 func init() {
@@ -245,6 +336,48 @@ func handlePtyInput(id string, data string) {
 // Only a standalone 0x1b counts as ESC: escape sequences (arrow keys,
 // function keys, cursor-position reports) also begin with 0x1b but carry
 // trailing bytes, and must not be treated as an interrupt.
+// ExplainStatuses returns a diagnostic snapshot of every tracked agent session,
+// including the evidence that produced the current status. Unlike ListStatuses
+// (which only carries the visible card fields), each entry also exposes the
+// bound native session id, the status authority source, and the leaf's PTY
+// activity/focus/interrupt evidence. It is the "agent explain" endpoint's data
+// source so misclassifications (wrong session bound to a leaf, false idle,
+// stale state) can be diagnosed from concrete data.
+func ExplainStatuses() []ExplainStatus {
+	statusesMu.RLock()
+	out := make([]ExplainStatus, 0, len(statuses))
+	for _, s := range statuses {
+		out = append(out, ExplainStatus{
+			SessionID:         s.SessionID,
+			AgentID:           s.AgentID,
+			Cwd:               s.Cwd,
+			Status:            s.Status,
+			Tool:              s.Tool,
+			Details:           s.Details,
+			Title:             s.Title,
+			Sequence:          s.Sequence,
+			ExternalSessionID: BoundExternalSession(s.SessionID),
+			Source:            s.Source,
+			Timestamp:         s.Timestamp.UTC().Format(time.RFC3339),
+		})
+	}
+	statusesMu.RUnlock()
+
+	// Attach PTY evidence for each leaf outside the statuses lock to avoid
+	// holding the global map lock while reading the smaller PTY maps.
+	for i := range out {
+		id := out[i].SessionID
+		if p := LastPtyActivity(id); !p.IsZero() {
+			out[i].LastPtyActivity = p.UTC().Format(time.RFC3339)
+		}
+		out[i].Focused = IsPtyFocused(id)
+		if p := LastPtyInterrupt(id); !p.IsZero() {
+			out[i].LastPtyInterrupt = p.UTC().Format(time.RFC3339)
+		}
+	}
+	return out
+}
+
 func isInterruptInput(data string) bool {
 	if strings.Contains(data, "\x03") {
 		return true
@@ -391,7 +524,7 @@ func broadcastEvent(ev Event) {
 	statusHub.Broadcast(websocket.TextMessage, msg)
 }
 
-func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) {
+func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source string) {
 	// Strip markdown formatting from user-visible text so the Kanban card
 	// Info line renders as clean plain text regardless of which agent
 	// produced it. Titles are already cleaned by CleanPrompt upstream, but
@@ -422,16 +555,22 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 		seq = statusSeq
 	}
 
+	// Preserve the bound native session id across status updates (set via
+	// RecordExternalSession) and record the status authority so "agent
+	// explain" can attribute the current state.
+	extID := BoundExternalSession(sessionID)
 	s := AgentStatus{
-		SessionID: sessionID,
-		AgentID:   agentID,
-		Cwd:       cwd,
-		Status:    status,
-		Tool:      tool,
-		Details:   details,
-		Title:     title,
-		Timestamp: now,
-		Sequence:  seq,
+		SessionID:         sessionID,
+		AgentID:           agentID,
+		Cwd:               cwd,
+		Status:            status,
+		Tool:              tool,
+		Details:           details,
+		Title:             title,
+		Timestamp:         now,
+		Sequence:          seq,
+		ExternalSessionID: extID,
+		Source:            source,
 	}
 	statuses[sessionID] = s
 	statusesMu.Unlock()
@@ -464,7 +603,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title string) 
 			// running. Cancel any pending "finished" notification so a
 			// transition into these states from working doesn't fire one.
 			push.CancelFinishedDebounced(sessionID)
-		case "idle", "stopped":
+		case "idle", "stopped", "unknown":
 			// Suppress the "finished" notification when the agent was running
 			// a background task or subagent — the agent is still working, it
 			// just completed a sub-task. A "finished" notification here would
@@ -535,7 +674,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		Timestamp: time.Now(),
 	})
 
-	updateStatus(id, agentID, cwd, "idle", "", "", "")
+	updateStatus(id, agentID, cwd, "idle", "", "", "", "watcher")
 
 	go watchAgent(ctx, wCtx)
 }
@@ -671,7 +810,8 @@ func lastColumnForStatus(liveStatus string) string {
 	case "waiting_input":
 		return "needs_input"
 	default:
-		// "idle" and "interrupted": an interrupted turn is no longer
+		// "idle", "unknown", and "interrupted": an interrupted turn is no
+		// longer working, and an unknown/stale state cannot be confirmed as
 		// working, so it sits in idle.
 		return "idle"
 	}
@@ -882,8 +1022,12 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 					// and they're not transient "working" states. Only
 					// revert transient "working" states (thinking/executing)
 					// that have stalled.
-					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "waiting_input" && s.Status != "crashed" && s.Status != "interrupted" && s.Status != "tool_failed" {
-						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "idle", "", "", s.Title)
+					if exists && s.Status != "idle" && s.Status != "stopped" && s.Status != "unknown" && s.Status != "waiting_input" && s.Status != "crashed" && s.Status != "interrupted" && s.Status != "tool_failed" {
+						// A stale working state means the agent MAY still be
+						// running, just not observably. Revert to "unknown"
+						// rather than "idle" so the card does not falsely
+						// claim the agent is finished and waiting for input.
+						updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, "unknown", "", "", s.Title, "watchdog")
 					}
 				}
 			}
@@ -893,7 +1037,7 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
 		lastActivity = time.Now()
 		lastHeartbeat = time.Now()
-		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title)
+		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title, "watcher")
 	}, func() {
 		lastHeartbeat = time.Now()
 	})
@@ -915,16 +1059,23 @@ func isSubagentTool(tool string) bool {
 // continue flag, indicating the agent will reattach to a pre-existing
 // internal session rather than starting a new one. This is set by
 // terminal.resumeCmdForAgent on reopen.
+//
+// It recognizes every resume form across the supported agents:
+//   - --continue / -c / --resume / --last (claude, pi, omp, copilot, agy)
+//   - -s <id> / --session <id> (opencode exact-session resume)
+//   - resume <id> / resume --last (codex subcommand)
 func isResumeCmd(cmd []string) bool {
-	for _, a := range cmd {
+	for i, a := range cmd {
 		switch a {
 		case "--continue", "-c", "--resume", "--last":
 			return true
-		}
-	}
-	// codex uses "resume" as a subcommand
-	for _, a := range cmd {
-		if a == "resume" {
+		case "-s", "--session":
+			// opencode -s <session-id> | opencode --session <session-id>
+			if i+1 < len(cmd) && cmd[i+1] != "" {
+				return true
+			}
+		case "resume":
+			// codex resume <session-id> | codex resume --last
 			return true
 		}
 	}
