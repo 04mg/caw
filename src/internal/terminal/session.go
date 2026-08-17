@@ -238,6 +238,9 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter, force bool) {
 		if !force && !firstResize && s.cols == cols && s.rows == rows {
 			return
 		}
+		if force && !firstResize && s.cols == cols && s.rows == rows {
+			s.nudgePTYResize(cols, rows)
+		}
 		s.cols = cols
 		s.rows = rows
 		_ = s.Pty.ptmx.Resize(cols, rows)
@@ -261,11 +264,31 @@ func (s *Session) resizePTY(cols, rows int, source *connWriter, force bool) {
 		return
 	}
 	if s.cols != minCols || s.rows != minRows || firstResize || force {
+		if force && !firstResize && s.cols == minCols && s.rows == minRows {
+			s.nudgePTYResize(minCols, minRows)
+		}
 		s.cols = minCols
 		s.rows = minRows
 		_ = s.Pty.ptmx.Resize(minCols, minRows)
 	}
 	s.broadcastResize(source)
+}
+
+// nudgePTYResize recreates the shrink-and-grow sequence from a manual
+// terminal resize. A same-sized Resize call alone does not reliably prompt
+// terminal applications to redraw.
+func (s *Session) nudgePTYResize(cols, rows int) {
+	nudgeCols, nudgeRows := cols, rows
+	if nudgeCols > 1 {
+		nudgeCols--
+	}
+	if nudgeRows > 1 {
+		nudgeRows--
+	}
+	if nudgeCols == cols && nudgeRows == rows {
+		return
+	}
+	_ = s.Pty.ptmx.Resize(nudgeCols, nudgeRows)
 }
 
 // smallestViewerSize returns the minimum cols and rows across all
