@@ -1,8 +1,66 @@
 package terminal
 
 import (
+	"context"
 	"testing"
+
+	"github.com/aymanbagabas/go-pty"
 )
+
+func TestNudgePTYResizeShrinksDimensions(t *testing.T) {
+	tests := []struct {
+		name       string
+		cols, rows int
+		wantCols   int
+		wantRows   int
+		wantResize bool
+	}{
+		{name: "normal terminal", cols: 80, rows: 24, wantCols: 79, wantRows: 23, wantResize: true},
+		{name: "single column", cols: 1, rows: 24, wantCols: 1, wantRows: 23, wantResize: true},
+		{name: "single row", cols: 80, rows: 1, wantCols: 79, wantRows: 1, wantResize: true},
+		{name: "minimum dimensions", cols: 1, rows: 1, wantResize: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotCols, gotRows int
+			resized := false
+			s := Session{Pty: &Pty{ptmx: resizeSpy(func(cols, rows int) {
+				gotCols, gotRows = cols, rows
+				resized = true
+			})}}
+
+			s.nudgePTYResize(tt.cols, tt.rows)
+
+			if resized != tt.wantResize {
+				t.Fatalf("resize called = %t, want %t", resized, tt.wantResize)
+			}
+			if gotCols != tt.wantCols || gotRows != tt.wantRows {
+				t.Fatalf("nudge resize = %dx%d, want %dx%d", gotCols, gotRows, tt.wantCols, tt.wantRows)
+			}
+		})
+	}
+}
+
+type resizeSpy func(cols, rows int)
+
+func (resizeSpy) Read([]byte) (int, error)  { return 0, nil }
+func (resizeSpy) Write([]byte) (int, error) { return 0, nil }
+func (resizeSpy) Close() error              { return nil }
+func (resizeSpy) Name() string              { return "resize-spy" }
+func (resizeSpy) Command(string, ...string) *pty.Cmd {
+	return nil
+}
+func (resizeSpy) CommandContext(context.Context, string, ...string) *pty.Cmd {
+	return nil
+}
+func (s resizeSpy) Resize(cols, rows int) error {
+	s(cols, rows)
+	return nil
+}
+func (resizeSpy) Fd() uintptr { return 0 }
+
+var _ pty.Pty = resizeSpy(nil)
 
 // TestUpdateModesTracksAltScreen verifies that updateModes keeps s.altScreen
 // in sync with the running program's last alternate-screen enter/leave
