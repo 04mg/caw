@@ -587,7 +587,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									}}
 									data-testid="status-bar-quota-overview"
 									className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
-									title="Usage Limits Overview"
+									title="Limits Overview"
 								>
 									<SquareArrowOutUpLeft className="h-3 w-3" />
 								</button>
