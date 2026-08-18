@@ -587,3 +587,30 @@ export function deserializeQuotaSelection(raw: string | null | undefined): Quota
   }
   return null
 }
+
+export function formatQuotaValue(used: number, limit: number, unit?: string): { text: string, percentage: number } {
+  if (unit === 'info') {
+    return { text: '', percentage: 0 }
+  }
+  if (unit === 'percentage' || !unit) {
+    return { text: `${used}%`, percentage: used }
+  }
+  const pct = limit > 0 ? Math.round((used / limit) * 100) : 0
+  if (unit === 'currency') {
+    return { text: `${used}$ / ${limit}$`, percentage: pct }
+  }
+  return { text: `${used}/${limit}`, percentage: pct }
+}
+
+export function formatResetTime(iso: string): string {
+  const then = new Date(iso).getTime()
+  if (isNaN(then)) return iso
+  const diff = then - Date.now()
+  if (diff <= 0) return 'soon'
+  const days = Math.floor(diff / 86400000)
+  const hours = Math.floor((diff % 86400000) / 3600000)
+  const minutes = Math.floor((diff % 3600000) / 60000)
+  if (days >= 1) return `${days}d ${hours}h`
+  if (hours >= 1) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}

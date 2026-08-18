@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic, SquareArrowOutUpLeft } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
@@ -76,6 +76,7 @@ interface StatusBarProps {
 	agentBoardOpen?: boolean
 	onToggleAgentBoard?: () => void
 	onOpenSettings: (section?: string) => void
+	onOpenOverview?: () => void
 	hideControlCenter?: boolean
 	controlCenterButtonRef?: React.Ref<HTMLButtonElement>
 	onSendText?: (text: string) => void
@@ -86,13 +87,14 @@ function renderProviderIcon(providerId: QuotaProviderId) {
 	return <Icon className="h-3.5 w-3.5 shrink-0" />
 }
 
-export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, onOpenOverview, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<Record<string, unknown> | null>(null)
 	const [settingsPayload, setSettingsPayload] = useState<unknown>({})
 	const [disabledProviders, setDisabledProviders] = useState<string[]>(getDisabledProviders())
 	const [isLoading, setIsLoading] = useState(false)
 	const [selectedView, setSelectedView] = useState<string>('')
 	const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+	const [menuOpen, setMenuOpen] = useState(false)
 	const voice = useVoiceMode()
 
 	const settings = useMemo(() => normalizeQuotaSettingsPayload(settingsPayload).providers, [settingsPayload])
@@ -555,7 +557,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 					</>
 				)}
 
-				<DropdownMenu>
+				<DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
 					<DropdownMenuTrigger asChild>
 						<button data-testid="status-bar-quota-trigger" className={cn('flex items-center gap-1.5 py-1 rounded hover:bg-accent/40 hover:text-foreground transition-all cursor-pointer', !isMobile && 'px-2')}>
 							{isLoading ? (
@@ -578,7 +580,20 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 					<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none font-sans">
 						<div className="flex items-center justify-between px-2 py-1.5">
-							<span className="text-xs font-semibold text-foreground">Usage limits</span>
+							<div className="flex items-center gap-1.5">
+								<button
+									onClick={() => {
+										setMenuOpen(false)
+										onOpenOverview?.()
+									}}
+									data-testid="status-bar-quota-overview"
+									className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer flex items-center justify-center shrink-0"
+									title="Limits Overview"
+								>
+									<SquareArrowOutUpLeft className="h-3.5 w-3.5" />
+								</button>
+								<span className="text-xs font-semibold text-foreground leading-none">Usage limits</span>
+							</div>
 							<button
 								onClick={(e) => {
 									e.stopPropagation()
@@ -586,7 +601,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								}}
 								disabled={isLoading}
 								data-testid="status-bar-quota-refresh"
-								className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+								className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer flex items-center justify-center"
 								title="Refresh Limits"
 							>
 								<RefreshCw className={cn('h-3 w-3', isLoading && 'animate-spin')} />
@@ -601,6 +616,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 									No providers configured.
 									<button
 										onClick={() => {
+											setMenuOpen(false)
 											onOpenSettings('limits')
 										}}
 										data-testid="quota-configure-providers"
@@ -633,6 +649,7 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								<div className="px-1 py-1">
 									<button
 										onClick={() => {
+											setMenuOpen(false)
 											onOpenSettings('limits')
 										}}
 										data-testid="quota-configure-providers"
