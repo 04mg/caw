@@ -37,7 +37,7 @@ export function ConflictDialog({
   const operation = target?.operation || 'rename'
   return (
     <Dialog open={!!target} onOpenChange={(open) => { if (!open) onCancel() }}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm gap-4">
         <DialogHeader>
           <DialogTitle>{titles[operation]}</DialogTitle>
           <DialogDescription>
