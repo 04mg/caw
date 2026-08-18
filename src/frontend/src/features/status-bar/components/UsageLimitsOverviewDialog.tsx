@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, type ElementType } from 'react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/dialog'
-import { ChevronDown, Layers } from 'lucide-react'
+import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
+import { ChevronDown, Layers, X } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
@@ -176,13 +176,18 @@ export function UsageLimitsOverviewDialog({ open, onOpenChange }: UsageLimitsOve
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
+				hideClose
 				data-testid="usage-limits-overview-dialog"
 				className="w-full max-w-2xl max-h-[85vh] p-0 flex flex-col overflow-hidden bg-background border border-border shadow-2xl rounded-xl font-sans select-none"
 			>
 				<div className="flex items-center justify-between px-6 py-4 border-b border-border/80 bg-secondary/15">
 					<DialogTitle className="text-sm font-semibold text-foreground tracking-tight">
-						Usage Limits Overview
+						Limits Overview
 					</DialogTitle>
+					<DialogClose className="p-1 -mr-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer outline-none">
+						<X className="h-4 w-4" />
+						<span className="sr-only">Close</span>
+					</DialogClose>
 				</div>
 
 				<div className="p-6 overflow-y-auto thin-scroll flex flex-col gap-4 flex-1" style={{ scrollbarWidth: 'thin' }}>
