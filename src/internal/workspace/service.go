@@ -519,13 +519,23 @@ func (s *Service) Paste(req PasteRequest) error {
 		return err
 	}
 	srcName := filepath.Base(absSrc)
-	destPath := uniquePath(filepath.Join(absTarget, srcName))
+	destPath := filepath.Join(absTarget, srcName)
+	if !req.Overwrite {
+		destPath = uniquePath(destPath)
+	} else if destPath == absSrc {
+		return nil
+	}
 
 	info, err := os.Stat(absSrc)
 	if err != nil {
 		return err
 	}
 	isDir := info.IsDir()
+	if req.Overwrite {
+		if err := os.RemoveAll(destPath); err != nil {
+			return err
+		}
+	}
 	if isDir {
 		if err := os.MkdirAll(destPath, 0755); err != nil {
 			return err
@@ -548,7 +558,7 @@ func (s *Service) Paste(req PasteRequest) error {
 	return nil
 }
 
-func (s *Service) Undo() error  { return s.history.Undo() }
+func (s *Service) Undo() error { return s.history.Undo() }
 func (s *Service) Redo() error { return s.history.Redo() }
 
 func containsFold(s, substr string) bool {
