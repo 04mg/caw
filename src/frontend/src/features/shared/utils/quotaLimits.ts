@@ -101,16 +101,16 @@ export const QUOTA_WINDOW_LABELS: Record<QuotaProviderId, Partial<Record<QuotaMe
     weekly: 'Weekly Limit',
   },
   copilot: {
-    fiveHour: 'Premium Interactions',
+    fiveHour: 'AI Credits',
     weekly: 'Chat Limit',
   },
   antigravity: {
-    fiveHour: '5h Rolling Limit',
+    fiveHour: '5h Limit',
     weekly: 'Weekly Limit',
     monthly: 'Monthly Limit',
   },
   opencode: {
-    fiveHour: '5h Rolling Limit',
+    fiveHour: '5h Limit',
     weekly: 'Weekly Limit',
     monthly: 'Monthly Limit',
   },
