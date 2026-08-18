@@ -34,6 +34,7 @@ type CreateRequest struct {
 type PasteRequest struct {
 	SourcePath string `json:"sourcePath"`
 	TargetDir  string `json:"targetDir"`
+	Overwrite  bool   `json:"overwrite"`
 }
 
 type MultiDownloadRequest struct {

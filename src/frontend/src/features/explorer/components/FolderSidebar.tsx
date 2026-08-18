@@ -724,7 +724,7 @@ export function FolderSidebar({
             fetch('/api/workspaces/files', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sourcePath: conflictState.sourcePath, targetDir: conflictState.targetDir }),
+              body: JSON.stringify({ sourcePath: conflictState.sourcePath, targetDir: conflictState.targetDir, overwrite: true }),
             }).catch(() => {}).finally(() => {
               triggerRefresh()
               onRefresh()
