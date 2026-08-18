@@ -184,7 +184,7 @@ export function UsageLimitsOverviewDialog({ open, onOpenChange }: UsageLimitsOve
 					<DialogTitle className="text-sm font-semibold text-foreground tracking-tight">
 						Limits Overview
 					</DialogTitle>
-					<DialogClose className="p-1 -mr-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer outline-none">
+					<DialogClose className="p-1 -mr-1 text-muted-foreground hover:text-white transition-colors cursor-pointer outline-none">
 						<X className="h-4 w-4" />
 						<span className="sr-only">Close</span>
 					</DialogClose>
