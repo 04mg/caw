@@ -36,6 +36,7 @@ import { FolderSidebar } from '@/features/explorer/components/FolderSidebar'
 import { SettingsDialog } from '@/features/settings/components/SettingsDialog'
 import { CommandPalette } from '@/features/command-palette/components/CommandPalette'
 import { StatusBar } from '@/features/status-bar/components/StatusBar'
+import { UsageLimitsOverviewDialog } from '@/features/status-bar/components/UsageLimitsOverviewDialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/dialog'
 import { Checkbox } from '@/components/checkbox'
 import { TerminalPanel } from '@/features/terminal/components/TerminalPanel'
@@ -118,6 +119,7 @@ export function AppLayout() {
   const [searchPanelMode, setSearchPanelMode] = useState<'find' | 'replace'>('find')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
+  const [limitsOverviewOpen, setLimitsOverviewOpen] = useState(false)
   const [gitStatuses, setGitStatuses] = useState<Record<string, string>>({})
   const [gitIgnored, setGitIgnored] = useState<Record<string, boolean>>({})
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -2072,6 +2074,7 @@ export function AppLayout() {
               setSettingsSection(section)
               setSettingsOpen(true)
             }}
+            onOpenOverview={() => setLimitsOverviewOpen(true)}
             hideControlCenter
             onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
           />
@@ -2282,6 +2285,7 @@ export function AppLayout() {
               setSettingsSection(section)
               setSettingsOpen(true)
             }}
+            onOpenOverview={() => setLimitsOverviewOpen(true)}
             controlCenterButtonRef={controlCenterBtnRef}
             onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
           />
@@ -2289,6 +2293,7 @@ export function AppLayout() {
       )}
 
       <SettingsDialog open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setSettingsSection(undefined) }} initialSection={settingsSection} />
+      <UsageLimitsOverviewDialog open={limitsOverviewOpen} onOpenChange={setLimitsOverviewOpen} />
 
       <CommandPalette
         open={commandPaletteOpen}
