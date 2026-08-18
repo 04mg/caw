@@ -5,7 +5,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuSeparator,
 } from '@/components/dropdown-menu'
-import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic } from 'lucide-react'
+import { RefreshCw, Key, Check, Loader2, ChevronUp, Workflow, Folder, SquareKanban, Settings, Mic, SquareArrowOutUpLeft } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
@@ -76,6 +76,7 @@ interface StatusBarProps {
 	agentBoardOpen?: boolean
 	onToggleAgentBoard?: () => void
 	onOpenSettings: (section?: string) => void
+	onOpenOverview?: () => void
 	hideControlCenter?: boolean
 	controlCenterButtonRef?: React.Ref<HTMLButtonElement>
 	onSendText?: (text: string) => void
@@ -86,7 +87,7 @@ function renderProviderIcon(providerId: QuotaProviderId) {
 	return <Icon className="h-3.5 w-3.5 shrink-0" />
 }
 
-export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
+export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onToggleAgentBoard, onOpenSettings, onOpenOverview, hideControlCenter, controlCenterButtonRef, onSendText }: StatusBarProps) {
 	const [quotas, setQuotas] = useState<Record<string, unknown> | null>(null)
 	const [settingsPayload, setSettingsPayload] = useState<unknown>({})
 	const [disabledProviders, setDisabledProviders] = useState<string[]>(getDisabledProviders())
@@ -578,7 +579,20 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 
 					<DropdownMenuContent align="end" side="top" sideOffset={6} className="w-[320px] p-2 flex flex-col bg-popover border border-border rounded-lg shadow-lg select-none font-sans">
 						<div className="flex items-center justify-between px-2 py-1.5">
-							<span className="text-xs font-semibold text-foreground">Usage limits</span>
+							<div className="flex items-center gap-1.5">
+								<button
+									onClick={(e) => {
+										e.stopPropagation()
+										onOpenOverview?.()
+									}}
+									data-testid="status-bar-quota-overview"
+									className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-all cursor-pointer"
+									title="Usage Limits Overview"
+								>
+									<SquareArrowOutUpLeft className="h-3 w-3" />
+								</button>
+								<span className="text-xs font-semibold text-foreground">Usage limits</span>
+							</div>
 							<button
 								onClick={(e) => {
 									e.stopPropagation()
