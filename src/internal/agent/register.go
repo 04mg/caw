@@ -22,6 +22,14 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, h.svc.ListAgents())
 }
 
+// ListDesktopApps handles GET /agents/desktop. It returns the registry of
+// graphical applications that can be launched as xpra desktop sessions,
+// filtered by availability (app + xpra on PATH). The frontend uses this to
+// populate the "Desktop Apps" section of the New Tab menu.
+func (h *Handler) ListDesktopApps(w http.ResponseWriter, r *http.Request) {
+	httpx.RespondJSON(w, h.svc.ListDesktopApps())
+}
+
 func (h *Handler) SetupWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req SetupWorkspaceRequest
 	if !httpx.BindRequest(w, r, &req) {
@@ -119,6 +127,7 @@ func (h *Handler) ReportStatus(w http.ResponseWriter, r *http.Request) {
 func Register(mux *http.ServeMux) {
 	h := NewHandler(NewService())
 	mux.HandleFunc("GET /agents", h.ListAgents)
+	mux.HandleFunc("GET /agents/desktop", h.ListDesktopApps)
 	mux.HandleFunc("POST /agents", h.SetupWorkspace)
 	mux.HandleFunc("GET /agents/changes", h.CheckChanges)
 	mux.HandleFunc("GET /agents/statuses", h.ListStatuses)

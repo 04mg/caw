@@ -135,6 +135,10 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_enabled INTEGER NOT NULL DEFAULT 0")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_needs_input INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_finished INTEGER NOT NULL DEFAULT 1")
+	// View column: discriminates terminal/editor/desktop leaf rendering.
+	// Existing leaves default to "" which loadLayoutTree normalizes to the
+	// legacy terminal/editor heuristic (isDiff/filePath => editor).
+	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN view TEXT DEFAULT ''")
 	s.migrateQuotaAccounts()
 }
 
@@ -203,17 +207,17 @@ func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	var row *sql.Row
 	if isRoot {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
 			tabID,
 		)
 	} else {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug FROM layout_nodes WHERE tab_id = ? AND id = ?",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view FROM layout_nodes WHERE tab_id = ? AND id = ?",
 			tabID, nodeID,
 		)
 	}
 
-	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch, &ln.PetSlug)
+	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch, &ln.PetSlug, &ln.View)
 	if err != nil {
 		ln.Type = "empty"
 		return ln
@@ -221,6 +225,16 @@ func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	ln.IsDiff = isDiff != 0
 	_ = json.Unmarshal([]byte(cmdJSON), &ln.Cmd)
 	_ = json.Unmarshal([]byte(sizesJSON), &ln.Sizes)
+	// Normalize legacy leaves with no explicit view: editor leaves
+	// (filePath or isDiff) become "editor", everything else "terminal".
+	// "desktop" leaves only exist when explicitly set by the frontend.
+	if ln.View == "" {
+		if ln.FilePath != "" || ln.IsDiff {
+			ln.View = "editor"
+		} else {
+			ln.View = "terminal"
+		}
+	}
 
 	// Load children
 	childRows, err := s.db.Query(
@@ -268,6 +282,7 @@ func (s *Store) Set(as AppState) {
 		"vapid_public_key", "vapid_private_key",
 		"pref_default_new_agent", "pref_disabled_agents", "pref_disabled_providers", "pref_agent_cmds",
 		"pref_default_shell", "pref_parked_terminals", "pref_hotkeys", "pref_pets", "pref_customization",
+		"pref_desktop_apps",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {
@@ -327,9 +342,9 @@ func (s *Store) saveLayoutTree(tx *sql.Tx, tabID, parentID string, ln LayoutNode
 	}
 
 	tx.Exec(
-		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff, ln.AgentBranch, ln.BaseBranch, ln.PetSlug,
+		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff, ln.AgentBranch, ln.BaseBranch, ln.PetSlug, ln.View,
 	)
 
 	if ln.Children == nil {

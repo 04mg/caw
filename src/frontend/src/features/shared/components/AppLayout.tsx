@@ -1071,13 +1071,15 @@ export function AppLayout() {
   )
 
   const addTab = useCallback(
-    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
+    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: import('@/features/shared/utils/layout').LeafView) => {
       if (!activeWorkspace) return
       let cwd = activeWorkspace.path || ''
       let agentBranch: string | undefined = undefined
       let baseBranch: string | undefined = undefined
 
-      if (agentId) {
+      // Desktop apps don't need a git worktree (they're graphical apps, not
+      // agents editing the repo), so skip the workspace setup call.
+      if (agentId && view !== 'desktop') {
         try {
           const res = await fetch('/api/agents', {
             method: 'POST',
@@ -1115,6 +1117,7 @@ export function AppLayout() {
           agentId,
           agentBranch,
           baseBranch,
+          view,
         },
       }
       patchWorkspace(activeWorkspace.id, (ws) => {

@@ -36,6 +36,35 @@ func (s *Service) ListAgents() []Info {
 	return available
 }
 
+// ListDesktopApps returns the hardcoded registry of graphical applications
+// Caw can launch inside an xpra desktop session, filtered by availability:
+// both the app binary and xpra must be on PATH. The set is intentionally
+// small and generic (a browser, the ZCode and DeepSeek Harness editors,
+// and the Unity game editor); user-defined apps can be added via the
+// DesktopApps preference (mirrors AgentCmds).
+func (s *Service) ListDesktopApps() []DesktopApp {
+	apps := []DesktopApp{
+		{ID: "browser", Label: "Browser", Cmd: []string{"xpra-browser", "--new-window"}},
+		{ID: "zcode", Label: "ZCode", Cmd: []string{"zcode"}},
+		{ID: "deepseek-harness", Label: "DeepSeek Harness", Cmd: []string{"deepseek-harness"}},
+		{ID: "unity", Label: "Unity", Cmd: []string{"unity-editor"}},
+	}
+	available := []DesktopApp{}
+	for _, a := range apps {
+		if _, err := exec.LookPath(a.Cmd[0]); err == nil {
+			available = append(available, a)
+		}
+	}
+	// Only show desktop apps if xpra itself is installed; otherwise the
+	// menu entry would launch a desktop session that can never start.
+	if len(available) > 0 {
+		if _, err := exec.LookPath("xpra"); err != nil {
+			return []DesktopApp{}
+		}
+	}
+	return available
+}
+
 func (s *Service) SetupWorkspace(req SetupWorkspaceRequest) (*SetupWorkspaceResponse, error) {
 	if req.ProjectPath == "" {
 		return nil, ErrProjectPathRequired

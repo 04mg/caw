@@ -1,18 +1,21 @@
 import { useState, useEffect, type ReactNode } from 'react'
-import { Terminal, Plus, Workflow } from 'lucide-react'
+import { Terminal, Plus, Workflow, Globe } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
+import { desktopAppTypes } from '@/features/agents/services/desktopAppTypes'
+import { type LeafView } from '@/features/shared/utils/layout'
+import { getEffectiveAgentCmd, getDisabledAgents, getDesktopApps } from '@/features/prefs/stores/prefsStore'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from '@/components/dropdown-menu'
 import { Checkbox } from '@/components/checkbox'
 
 interface NewTabMenuProps {
-  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][]) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][], view?: LeafView) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   children?: ReactNode
@@ -31,8 +34,9 @@ export function NewTabMenu({
   className,
   triggerClassName,
   triggerTitle = 'New tab/agent',
-}: NewTabMenuProps) {
+}: NewTabMenuProps): ReactNode {
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
+  const [availableDesktopApps, setAvailableDesktopApps] = useState<any[]>([])
 
   useEffect(() => {
     fetch('/api/agents')
@@ -44,7 +48,27 @@ export function NewTabMenu({
         }
       })
       .catch(() => {})
+    fetch('/api/agents/desktop')
+      .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
+      .then((json) => {
+        const data = json?.data
+        if (Array.isArray(data)) {
+          setAvailableDesktopApps(data)
+        }
+      })
+      .catch(() => {})
   }, [])
+
+  // Merge user-defined desktop apps from prefs into the list shown in the
+  // menu. They appear after the hardcoded defaults and use the Globe icon
+  // when no matching desktopAppTypes entry exists.
+  const userDesktopApps = getDesktopApps()
+  const mergedDesktopApps = [
+    ...availableDesktopApps,
+    ...userDesktopApps
+      .filter((u) => !availableDesktopApps.some((a) => a.id === u.id))
+      .map((u) => ({ id: u.id, label: u.label, cmd: u.cmd, env: u.env })),
+  ]
 
   return (
     <DropdownMenu>
@@ -88,6 +112,25 @@ export function NewTabMenu({
             </>
           )
         })()}
+        {mergedDesktopApps.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Desktop Apps</DropdownMenuLabel>
+            {mergedDesktopApps.map((appInfo) => {
+              const app = desktopAppTypes[appInfo.id]
+              const IconComponent = app?.icon || Globe
+              return (
+                <DropdownMenuItem
+                  key={appInfo.id}
+                  onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, appInfo.env, 'desktop')}
+                >
+                  <IconComponent size={16} className="h-4 w-4" />
+                  <span>{appInfo.label}</span>
+                </DropdownMenuItem>
+              )
+            })}
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={(e) => {

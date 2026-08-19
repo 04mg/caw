@@ -51,3 +51,14 @@ export interface AgentType {
   env?: [string, string][] // [key, value] pairs injected into the PTY environment
   icon: any
 }
+
+// DesktopAppType describes a graphical application launchable as an xpra
+// desktop session. Mirrors DesktopApp on the backend (agent/desktop.go);
+// the cmd becomes xpra's --start-child.
+export interface DesktopAppType {
+  id: string
+  label: string
+  cmd: string[]
+  env?: [string, string][] // [key, value] pairs injected into the start-child environment
+  icon: any
+}

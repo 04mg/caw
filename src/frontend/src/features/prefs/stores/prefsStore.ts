@@ -13,6 +13,13 @@ export interface PetsConfig {
   uniquePerAgent?: boolean
 }
 
+export interface DesktopAppPref {
+  id: string
+  label: string
+  cmd: string[]
+  env?: [string, string][]
+}
+
 export interface PrefsState {
   defaultNewAgent: string
   disabledAgents: string[]
@@ -23,6 +30,7 @@ export interface PrefsState {
   hotkeys: Record<string, string>
   pets: PetsConfig
   customization: CustomizationState
+  desktopApps: DesktopAppPref[]
 }
 
 export const DEFAULT_PARKED_TERMINALS = 6
@@ -73,6 +81,7 @@ let cache: PrefsState = {
   hotkeys: { ...DEFAULT_HOTKEYS },
   pets: { ...DEFAULT_PETS, agentPins: {} },
   customization: DEFAULT_CUSTOMIZATION,
+  desktopApps: [],
 }
 
 let loaded = false
@@ -143,6 +152,10 @@ export function getEffectiveAgentCmd(agentId: string, defaultCmd: string[]): str
   const override = cache.agentCmds[agentId]
   if (override && Array.isArray(override) && override.length > 0) return override
   return defaultCmd
+}
+
+export function getDesktopApps(): DesktopAppPref[] {
+  return cache.desktopApps ?? []
 }
 
 export function getDefaultShell(): string {

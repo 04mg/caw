@@ -14,6 +14,13 @@ type LayoutNode struct {
 	AgentBranch string       `json:"agentBranch,omitempty"`
 	BaseBranch  string       `json:"baseBranch,omitempty"`
 	PetSlug     string       `json:"petSlug,omitempty"`
+	// View discriminates how the frontend renders a leaf: "terminal"
+	// (default; xterm.js over the PTY WS), "editor" (Monaco diff/file
+	// view), or "desktop" (an xpra-forwarded graphical app in an iframe).
+	// Existing leaves with a filePath/isDiff normalize to "editor"; all
+	// others default to "terminal". "desktop" leaves spawn an xpra
+	// server per pane via the desktop package instead of a PTY.
+	View string `json:"view,omitempty"`
 }
 
 type TabLayout struct {

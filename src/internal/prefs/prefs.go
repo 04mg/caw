@@ -80,6 +80,17 @@ type CustomizationState struct {
 	} `json:"layout"`
 }
 
+// DesktopAppUser is a user-defined graphical app entry, mirroring the
+// AgentCmds override pattern: users can add custom desktop apps (any
+// graphical X11 command) without code changes. The id is the menu label
+// key; cmd is the xpra --start-child command.
+type DesktopAppUser struct {
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Cmd   []string `json:"cmd"`
+	Env   [][]string `json:"env,omitempty"`
+}
+
 // PrefsState holds the user's work preferences shared across all devices.
 type PrefsState struct {
 	DefaultNewAgent   string              `json:"defaultNewAgent"`
@@ -94,6 +105,11 @@ type PrefsState struct {
 	Hotkeys         map[string]string  `json:"hotkeys"`
 	Pets            PetsConfig         `json:"pets"`
 	Customization   CustomizationState `json:"customization"`
+	// DesktopApps holds user-defined graphical applications that appear in
+	// the New Tab menu's "Desktop Apps" section alongside the hardcoded
+	// defaults. Each entry launches as an xpra --start-child in a desktop
+	// leaf. Mirrors the AgentCmds override pattern.
+	DesktopApps []DesktopAppUser `json:"desktopApps"`
 }
 
 const (
@@ -106,6 +122,7 @@ const (
 	keyHotkeys             = "pref_hotkeys"
 	keyPets                = "pref_pets"
 	keyCustomization       = "pref_customization"
+	keyDesktopApps         = "pref_desktop_apps"
 	defaultParkedTerminals = 6
 )
 
@@ -231,6 +248,12 @@ func GetPrefs(store *state.Store) PrefsState {
 			p.Customization = customization
 		}
 	}
+	if v, err := store.GetSetting(keyDesktopApps); err == nil && v != "" {
+		var apps []DesktopAppUser
+		if json.Unmarshal([]byte(v), &apps) == nil {
+			p.DesktopApps = apps
+		}
+	}
 
 	return p
 }
@@ -268,6 +291,10 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 	}
 	customizationJSON, _ := json.Marshal(p.Customization)
 	if err := store.SetSetting(keyCustomization, string(customizationJSON)); err != nil {
+		return err
+	}
+	desktopAppsJSON, _ := json.Marshal(p.DesktopApps)
+	if err := store.SetSetting(keyDesktopApps, string(desktopAppsJSON)); err != nil {
 		return err
 	}
 	return nil
