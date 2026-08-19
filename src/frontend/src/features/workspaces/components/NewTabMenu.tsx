@@ -15,7 +15,7 @@ import {
 import { Checkbox } from '@/components/checkbox'
 
 interface NewTabMenuProps {
-  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][], view?: LeafView) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: LeafView) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   children?: ReactNode
@@ -102,7 +102,7 @@ export function NewTabMenu({
                 return (
                   <DropdownMenuItem
                     key={agentInfo.id}
-                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, agent?.env)}
+                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, undefined, agent?.env)}
                   >
                     <IconComponent size={16} className="h-4 w-4" />
                     <span>{agentInfo.label}</span>
@@ -122,7 +122,7 @@ export function NewTabMenu({
               return (
                 <DropdownMenuItem
                   key={appInfo.id}
-                  onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, appInfo.env, 'desktop')}
+                  onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
                 >
                   <IconComponent size={16} className="h-4 w-4" />
                   <span>{appInfo.label}</span>

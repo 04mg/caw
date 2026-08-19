@@ -1993,7 +1993,7 @@ export function AppLayout() {
                     })}
                     {/* Add button reusing the desktop dropdown menu */}
                     <NewTabMenu
-                      onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                      onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                       enableWorktrees={activeWorkspace.enableWorktrees}
                       onToggleWorktrees={toggleWorktrees}
                       triggerClassName="h-[36px] px-2 border-r-0"
@@ -2025,7 +2025,7 @@ export function AppLayout() {
                         </span>
                       </div>
                       <NewTabMenu
-                        onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                        onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                         enableWorktrees={activeWorkspace?.enableWorktrees}
                         onToggleWorktrees={toggleWorktrees}
                         align="center"
@@ -2180,7 +2180,7 @@ export function AppLayout() {
                         )}
                         <div className="flex flex-1 h-full">
                           <NewTabMenu
-                            onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                            onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
                             triggerClassName="h-[33px] px-2 border-r border-border"
