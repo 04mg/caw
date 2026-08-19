@@ -43,11 +43,38 @@ func (s *Service) ListAgents() []Info {
 // and the Unity game editor); user-defined apps can be added via the
 // DesktopApps preference (mirrors AgentCmds).
 func (s *Service) ListDesktopApps() []DesktopApp {
-	apps := []DesktopApp{
-		{ID: "browser", Label: "Browser", Cmd: []string{"xpra-browser", "--new-window"}},
+	// Try common browsers in order of preference.
+	browserCandidates := []struct {
+		Bin string
+		Arg []string
+	}{
+		{"firefox-esr", []string{"--new-window"}},
+		{"firefox", []string{"--new-window"}},
+		{"chromium", []string{}},
+		{"chromium-browser", []string{}},
+		{"xterm", []string{}},
+	}
+	var browserCmd []string
+	for _, c := range browserCandidates {
+		if _, err := exec.LookPath(c.Bin); err == nil {
+			browserCmd = append([]string{c.Bin}, c.Arg...)
+			break
+		}
+	}
+	apps := []DesktopApp{}
+	if browserCmd != nil {
+		apps = append(apps, DesktopApp{ID: "browser", Label: "Browser", Cmd: browserCmd})
+	}
+	// Optional apps — only shown when installed.
+	for _, extra := range []DesktopApp{
+		{ID: "xterm", Label: "XTerm", Cmd: []string{"xterm"}},
 		{ID: "zcode", Label: "ZCode", Cmd: []string{"zcode"}},
 		{ID: "deepseek-harness", Label: "DeepSeek Harness", Cmd: []string{"deepseek-harness"}},
 		{ID: "unity", Label: "Unity", Cmd: []string{"unity-editor"}},
+	} {
+		if _, err := exec.LookPath(extra.Cmd[0]); err == nil {
+			apps = append(apps, extra)
+		}
 	}
 	available := []DesktopApp{}
 	for _, a := range apps {

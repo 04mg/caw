@@ -1,4 +1,4 @@
-import { Globe, Monitor, Gamepad2, Cpu } from 'lucide-react'
+import { Globe, Monitor, Gamepad2, Cpu, Terminal } from 'lucide-react'
 import { type DesktopAppType } from '../types'
 
 // desktopAppTypes is the client-side registry of graphical applications
@@ -11,8 +11,14 @@ export const desktopAppTypes: Record<string, DesktopAppType> = {
   browser: {
     id: 'browser',
     label: 'Browser',
-    cmd: ['xpra-browser', '--new-window'],
+    cmd: ['firefox-esr', '--new-window'],
     icon: Globe,
+  },
+  xterm: {
+    id: 'xterm',
+    label: 'XTerm',
+    cmd: ['xterm'],
+    icon: Terminal,
   },
   zcode: {
     id: 'zcode',
