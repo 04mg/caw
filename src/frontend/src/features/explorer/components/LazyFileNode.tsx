@@ -262,6 +262,9 @@ export function LazyFileNode({
         draggable
         onDragStart={(e) => {
           e.stopPropagation()
+          const inSelection = selectedPaths?.some((p) => normalizePath(p) === normalizePath(path))
+          const dragPaths = inSelection ? selectedPaths! : [path]
+          e.dataTransfer.setData('application/x-caw-paths', dragPaths.join('\n'))
           e.dataTransfer.setData('application/x-caw-path', path)
           e.dataTransfer.effectAllowed = 'move'
         }}
