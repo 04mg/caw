@@ -648,6 +648,8 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		agentID = "hermes"
 	case "command-code", "commandcode":
 		agentID = "commandcode"
+	case "fx":
+		agentID = "fx"
 	default:
 		return
 	}

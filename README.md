@@ -121,7 +121,8 @@ Caw launches any CLI coding agent that runs in a terminal. These are detected on
   <img src="assets/icons/commandcode.svg" width="18" alt="Command Code" /> <b>Command Code</b> &nbsp;&nbsp;
   <img src="assets/icons/pi.svg" width="18" alt="Pi" /> <b>Pi</b> <br>
   <img src="assets/icons/omp.svg" width="18" alt="Oh My Pi" /> <b>Oh My Pi</b> &nbsp;&nbsp;
-  <img src="assets/icons/hermes.svg" width="18" alt="Hermes" /> <b>Hermes</b>
+  <img src="assets/icons/hermes.svg" width="18" alt="Hermes" /> <b>Hermes</b> <br>
+  <img src="assets/icons/fx.svg" width="18" alt="Fx" /> <b>Fx</b>
 </p>
 
 ### Usage quota providers
