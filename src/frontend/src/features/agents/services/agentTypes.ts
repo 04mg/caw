@@ -72,7 +72,7 @@ export const agentTypes: Record<string, AgentType> = {
   fx: {
     id: 'fx',
     label: 'Fx',
-    cmd: ['fx', '--yolo'],
+    cmd: ['fx'],
     icon: FxIcon,
   },
 }
