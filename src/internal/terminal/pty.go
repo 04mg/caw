@@ -30,6 +30,13 @@ func startPty(cwd string, cmdArgs []string, extraEnv [][]string) (*Pty, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Ensure the PTY has a valid size before the child starts. Caw's first
+	// viewer resize (resizePTY) arrives via WebSocket only after the process
+	// is already running. Starting at 0x0 causes some TUIs (notably fx) to
+	// fail with "UnableToReadTerminalSize" and exit immediately as
+	// interrupted. Seed with a sensible default; the real viewer size takes
+	// over moments later via SIGWINCH.
+	_ = ptmx.Resize(80, 24)
 
 	var c *pty.Cmd
 	if len(cmdArgs) > 0 {
