@@ -30,11 +30,28 @@ func (s *Service) ListAgents() []Info {
 	}
 	available := []Info{}
 	for _, a := range agentsList {
-		if _, err := exec.LookPath(a.Cmd[0]); err == nil {
+		if isAgentAvailable(a.Cmd[0]) {
 			available = append(available, a)
 		}
 	}
 	return available
+}
+
+func isAgentAvailable(name string) bool {
+	if _, err := exec.LookPath(name); err == nil {
+		return true
+	}
+	// Also check user-local bin dirs — fx installs to ~/.local/bin by default
+	// and the caw systemd PATH may not include it.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if _, err := os.Stat(filepath.Join(home, ".local", "bin", name)); err == nil {
+			return true
+		}
+	}
+	if _, err := os.Stat(filepath.Join("/root/.local/bin", name)); err == nil {
+		return true
+	}
+	return false
 }
 
 func (s *Service) SetupWorkspace(req SetupWorkspaceRequest) (*SetupWorkspaceResponse, error) {
