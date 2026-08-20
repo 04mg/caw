@@ -72,10 +72,34 @@ export function FolderSidebar({
     | { operation: 'create'; name: string; parentPath: string; type: 'file' | 'dir' }
     | { operation: 'paste'; name: string; sourcePath: string; targetDir: string }
     | { operation: 'move'; name: string; oldPath: string; newPath: string; targetDir: string }
+    | {
+        operation: 'batchMove'
+        targetDir: string
+        moves: Array<{ name: string; oldPath: string; newPath: string }>
+        conflicts: Array<{ name: string; oldPath: string; newPath: string }>
+      }
+    | {
+        operation: 'batchPaste'
+        targetDir: string
+        pastes: Array<{ name: string; sourcePath: string }>
+        conflicts: Array<{ name: string; sourcePath: string }>
+      }
   const [conflictState, setConflictState] = useState<ConflictState | null>(null)
 
   const conflictTarget: ConflictTarget | null = conflictState
-    ? { name: conflictState.name, operation: conflictState.operation }
+    ? {
+        name: conflictState.operation === 'batchMove'
+          ? `${conflictState.conflicts.length} item(s)`
+          : conflictState.operation === 'batchPaste'
+            ? `${conflictState.conflicts.length} item(s)`
+            : conflictState.name,
+        operation: conflictState.operation === 'batchMove' ? 'batchMove' : conflictState.operation === 'batchPaste' ? 'batchPaste' : conflictState.operation,
+        conflictNames: conflictState.operation === 'batchMove'
+          ? conflictState.conflicts.map((c) => c.name)
+          : conflictState.operation === 'batchPaste'
+            ? conflictState.conflicts.map((c) => c.name)
+            : undefined,
+      }
     : null
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [refreshCounter, setRefreshCounter] = useState(0)
@@ -93,17 +117,6 @@ export function FolderSidebar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [contextMenu])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'F2' || !hoveredPath || editingPath) return
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
-      event.preventDefault()
-      setEditingPath(hoveredPath)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [hoveredPath, editingPath])
 
   const clearSelection = useCallback(() => {
     setSelectedPaths([])
@@ -326,24 +339,29 @@ export function FolderSidebar({
     if (!srcs || srcs.length === 0) return
     setContextMenu(null)
 
+    const sep = targetDir.includes('\\') ? '\\' : '/'
+    const pastes: Array<{ name: string; sourcePath: string }> = srcs.map((src) => {
+      const srcSep = src.includes('\\') ? '\\' : '/'
+      const srcName = src.substring(src.lastIndexOf(srcSep) + 1)
+      return { name: srcName, sourcePath: src }
+    })
+
     setBusy(true)
+    const checkResults = await Promise.all(
+      pastes.map((p) => fetch(`/api/workspaces/files?path=${encodeURIComponent(targetDir + sep + p.name)}`).then((r) => r.ok).catch(() => false)),
+    )
+    const conflicts = pastes.filter((_, i) => checkResults[i])
+    if (conflicts.length > 0) {
+      setConflictState({ operation: 'batchPaste', targetDir, pastes, conflicts })
+      setBusy(false)
+      return
+    }
     try {
-      for (const src of srcs) {
-        const sep = src.includes('\\') ? '\\' : '/'
-        const srcName = src.substring(src.lastIndexOf(sep) + 1)
-        const destPath = targetDir + sep + srcName
-
-        const checkRes = await fetch(`/api/workspaces/files?path=${encodeURIComponent(destPath)}`)
-        if (checkRes.ok) {
-          setConflictState({ operation: 'paste', name: srcName, sourcePath: src, targetDir })
-          setBusy(false)
-          return
-        }
-
+      for (const p of pastes) {
         await fetch('/api/workspaces/files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourcePath: src, targetDir }),
+          body: JSON.stringify({ sourcePath: p.sourcePath, targetDir }),
         })
       }
     } catch { /* ignore */ }
@@ -351,6 +369,41 @@ export function FolderSidebar({
     onRefresh()
     setBusy(false)
   }, [clipboard, triggerRefresh, onRefresh])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      const isInSidebar = sidebarRef.current?.contains(event.target as Node)
+      if (!isInSidebar) return
+      const mod = event.ctrlKey || event.metaKey
+      if (mod && (event.key === 'c' || event.key === 'C')) {
+        if (selectedPaths.length > 0) {
+          event.preventDefault()
+          handleCopy(selectedPaths)
+        }
+      } else if (mod && (event.key === 'v' || event.key === 'V')) {
+        if (clipboard && clipboard.paths.length > 0) {
+          event.preventDefault()
+          const hoverIsDir = hoveredPath && hoveredPath !== workspacePath
+          handlePaste(hoverIsDir ? hoveredPath! : workspacePath)
+        }
+      } else if (mod && (event.key === 'a' || event.key === 'A')) {
+        event.preventDefault()
+        const visible = getVisiblePaths()
+        if (visible.length > 0) {
+          setSelectedPaths(visible)
+          setAnchorPath(visible[visible.length - 1])
+        }
+      } else if (event.key !== 'F2' || !hoveredPath || editingPath) {
+        return
+      } else {
+        event.preventDefault()
+        setEditingPath(hoveredPath)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [hoveredPath, editingPath, selectedPaths, clipboard, handleCopy, handlePaste, getVisiblePaths, workspacePath])
 
   const handleUpload = useCallback(async (targetDir: string, files: FileList) => {
     setBusy(true)
@@ -384,6 +437,23 @@ export function FolderSidebar({
     setBusy(false)
   }, [triggerRefresh, onRefresh])
 
+  const executeBatchMoves = useCallback(async (moves: Array<{ oldPath: string; newPath: string }>) => {
+    setBusy(true)
+    try {
+      await Promise.all(moves.map((m) =>
+        fetch('/api/workspaces/files', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldPath: m.oldPath, newPath: m.newPath }),
+        }),
+      ))
+    } catch { /* ignore */ }
+    setConflictState(null)
+    triggerRefresh()
+    onRefresh()
+    setBusy(false)
+  }, [triggerRefresh, onRefresh])
+
   const handleDragOver = useCallback((e: React.DragEvent, path: string) => {
     e.preventDefault()
     e.stopPropagation()
@@ -402,29 +472,39 @@ export function FolderSidebar({
       handleUpload(targetDir, e.dataTransfer.files)
       return
     }
-    const srcPath = e.dataTransfer.getData('application/x-caw-path')
-    if (!srcPath) return
-    // Do not allow dropping a path into itself or its descendant
-    const normSrc = srcPath.replace(/\\/g, '/')
-    const normTarget = targetDir.replace(/\\/g, '/')
-    if (normSrc === normTarget) return
-    if (normTarget.startsWith(normSrc + '/')) return
-    const sep = srcPath.includes('\\') ? '\\' : '/'
-    const srcName = srcPath.substring(srcPath.lastIndexOf(sep) + 1)
-    const newPath = targetDir + sep + srcName
-    if (newPath === srcPath) return
+    const raw = e.dataTransfer.getData('application/x-caw-paths') || e.dataTransfer.getData('application/x-caw-path')
+    if (!raw) return
+    const srcPaths = raw.split('\n').map((p) => p.trim()).filter(Boolean)
+    if (srcPaths.length === 0) return
+    const sep = targetDir.includes('\\') ? '\\' : '/'
+    // Resolve the full set of moves, skipping invalid targets (self,
+    // descendant, or the same destination path).
+    const moves: Array<{ name: string; oldPath: string; newPath: string }> = []
+    for (const srcPath of srcPaths) {
+      const normSrc = srcPath.replace(/\\/g, '/')
+      const normTarget = targetDir.replace(/\\/g, '/')
+      if (normSrc === normTarget) continue
+      if (normTarget.startsWith(normSrc + '/')) continue
+      const srcSep = srcPath.includes('\\') ? '\\' : '/'
+      const srcName = srcPath.substring(srcPath.lastIndexOf(srcSep) + 1)
+      const newPath = targetDir + sep + srcName
+      if (newPath === srcPath) continue
+      moves.push({ name: srcName, oldPath: srcPath, newPath })
+    }
+    if (moves.length === 0) return
     setBusy(true)
-    fetch(`/api/workspaces/files?path=${encodeURIComponent(newPath)}`)
-      .then((checkRes) => {
-        if (checkRes.ok) {
-          setConflictState({ operation: 'move', name: srcName, oldPath: srcPath, newPath, targetDir })
+    Promise.all(moves.map((m) => fetch(`/api/workspaces/files?path=${encodeURIComponent(m.newPath)}`)))
+      .then((responses) => {
+        const conflicts = moves.filter((_, i) => responses[i].ok)
+        if (conflicts.length > 0) {
+          setConflictState({ operation: 'batchMove', targetDir, moves, conflicts })
           setBusy(false)
         } else {
-          executeMove(srcPath, newPath)
+          executeBatchMoves(moves)
         }
       })
-      .catch(() => executeMove(srcPath, newPath))
-  }, [handleUpload, executeMove])
+      .catch(() => executeBatchMoves(moves))
+  }, [handleUpload, executeBatchMoves])
 
   const showContextMenu = useCallback((path: string, name: string, isDir: boolean, x: number, y: number) => {
     setContextMenu({ x, y, path, name, isDir })
@@ -705,6 +785,28 @@ export function FolderSidebar({
             executeRename(conflictState.oldPath, conflictState.newPath)
           } else if (conflictState.operation === 'move') {
             executeMove(conflictState.oldPath, conflictState.newPath)
+          } else if (conflictState.operation === 'batchMove') {
+            executeBatchMoves(conflictState.moves)
+          } else if (conflictState.operation === 'batchPaste') {
+            setConflictState(null)
+            setBusy(true)
+            Promise.all(
+              conflictState.pastes.map((p) =>
+                fetch('/api/workspaces/files', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sourcePath: p.sourcePath,
+                    targetDir: conflictState.targetDir,
+                    overwrite: true,
+                  }),
+                }),
+              ),
+            ).catch(() => {}).finally(() => {
+              triggerRefresh()
+              onRefresh()
+              setBusy(false)
+            })
           } else if (conflictState.operation === 'create') {
             const sep = conflictState.parentPath.includes('\\') ? '\\' : '/'
             const newPath = conflictState.parentPath + sep + conflictState.name
