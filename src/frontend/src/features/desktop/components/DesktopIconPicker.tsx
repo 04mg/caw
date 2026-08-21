@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { ImageUp, Monitor, X } from 'lucide-react'
 import {
   DropdownMenu,

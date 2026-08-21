@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ExternalLink, Monitor, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ColorPicker } from '@/components/color-picker'
@@ -30,6 +30,19 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
   const [status, setStatus] = useState<XpraStatus | null>(null)
   const [apps, setApps] = useState<DesktopAppPref[]>(() => getDesktopApps())
   const [stream, setStream] = useState<DesktopStreamPrefs>(() => getDesktopStream())
+  // Raw command-line drafts per app id. Editing the cmd as an array means
+  // join(' ')/split(' ') normalization on every keystroke eats spaces and
+  // moves the caret; the draft keeps the raw text while typing.
+  const [cmdDrafts, setCmdDrafts] = useState<Record<string, string>>({})
+
+  // Editing is local-first: keystrokes update React state immediately and
+  // persistence is debounced + serialized. The prefs subscription must not
+  // clobber unsaved local edits — server echoes arriving mid-typing would
+  // revert characters the user just typed.
+  const appsRef = useRef(apps)
+  const dirtyRef = useRef(false)
+  const timerRef = useRef<number | null>(null)
+  const queueRef = useRef<Promise<boolean>>(Promise.resolve(true))
 
   useEffect(() => {
     let cancelled = false
@@ -43,16 +56,45 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
   }, [])
 
   useEffect(() => {
-    return subscribePrefs(() => {
-      setApps(getDesktopApps())
+    const unsubscribe = subscribePrefs(() => {
+      if (!dirtyRef.current) setApps(getDesktopApps())
       setStream(getDesktopStream())
     })
+    return () => {
+      unsubscribe()
+      if (timerRef.current != null) window.clearTimeout(timerRef.current)
+      // Flush unsaved edits so closing settings right after typing doesn't
+      // silently drop them.
+      if (dirtyRef.current) void setDesktopApps(appsRef.current)
+    }
   }, [])
 
-  const save = async (next: DesktopAppPref[]) => {
-    const ok = await setDesktopApps(next)
-    onSaveStatusChange?.(ok ? 'success' : 'error')
-  }
+  const persistApps = useCallback((next: DesktopAppPref[], immediate = false) => {
+    appsRef.current = next
+    dirtyRef.current = true
+    setApps(next)
+    if (timerRef.current != null) window.clearTimeout(timerRef.current)
+    const flush = () => {
+      timerRef.current = null
+      const payload = appsRef.current
+      queueRef.current = queueRef.current
+        .then(async () => {
+          const ok = await setDesktopApps(payload)
+          // Stay dirty when a newer edit landed during the request; its own
+          // flush will clear the flag.
+          if (payload === appsRef.current) dirtyRef.current = false
+          onSaveStatusChange?.(ok ? 'success' : 'error')
+          return ok
+        })
+        .catch(() => false)
+    }
+    if (immediate) flush()
+    else timerRef.current = window.setTimeout(flush, 400)
+  }, [onSaveStatusChange])
+
+  const updateApps = useCallback((fn: (prev: DesktopAppPref[]) => DesktopAppPref[], immediate = false) => {
+    persistApps(fn(appsRef.current), immediate)
+  }, [persistApps])
 
   const saveStream = async (next: DesktopStreamPrefs) => {
     setStream(next)
@@ -60,24 +102,31 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
     onSaveStatusChange?.(ok ? 'success' : 'error')
   }
 
-  const updateApp = (idx: number, patch: Partial<DesktopAppPref>) => {
-    void save(apps.map((a, i) => (i === idx ? { ...a, ...patch } : a)))
-  }
+  const updateApp = useCallback((idx: number, patch: Partial<DesktopAppPref>) => {
+    updateApps((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)))
+  }, [updateApps])
 
   const removeApp = (idx: number) => {
-    void save(apps.filter((_, i) => i !== idx))
+    updateApps((prev) => prev.filter((_, i) => i !== idx), true)
   }
 
   const addApp = () => {
     const id = `app-${Date.now().toString(36)}`
-    void save([...apps, { id, label: '', cmd: [] }])
+    updateApps((prev) => [...prev, { id, label: '', cmd: [] }], true)
   }
 
-  const setCmd = (idx: number, raw: string) => {
-    // Split on whitespace; keep empty array while the user types nothing so
-    // the entry stays editable without becoming invalid.
-    const parts = raw.trim().length === 0 ? [] : raw.trim().split(/\s+/)
-    updateApp(idx, { cmd: parts })
+  const handleCmdChange = (idx: number, appId: string, raw: string) => {
+    setCmdDrafts((d) => ({ ...d, [appId]: raw }))
+    updateApp(idx, { cmd: splitCmd(raw) })
+  }
+
+  const clearCmdDraft = (appId: string) => {
+    setCmdDrafts((d) => {
+      if (!(appId in d)) return d
+      const next = { ...d }
+      delete next[appId]
+      return next
+    })
   }
 
   const installed = status?.xpraInstalled === true
@@ -167,8 +216,9 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
                   </div>
                   <input
                     type="text"
-                    value={app.cmd.join(' ')}
-                    onChange={(e) => setCmd(idx, e.target.value)}
+                    value={cmdDrafts[app.id] ?? app.cmd.join(' ')}
+                    onChange={(e) => handleCmdChange(idx, app.id, e.target.value)}
+                    onBlur={() => clearCmdDraft(app.id)}
                     placeholder="Command (e.g. firefox-esr --new-window)"
                     className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
                   />
@@ -265,4 +315,11 @@ function brandHexLabel(icon: string | undefined): string | undefined {
 // fall back to their official color, generic glyphs to the theme color.
 function resetLabel(icon: string | undefined): string {
   return icon?.startsWith('si:') ? 'Brand default' : 'Default'
+}
+
+// splitCmd parses a raw command line into argv. An all-whitespace input
+// yields an empty argv so the entry stays editable without going invalid.
+function splitCmd(raw: string): string[] {
+  const trimmed = raw.trim()
+  return trimmed.length === 0 ? [] : trimmed.split(/\s+/)
 }

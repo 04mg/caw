@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { Monitor, Globe, Gamepad2, AppWindow, Box, Code2, Terminal, Database, Layers, Music, Video, MessageSquare, type LucideIcon } from 'lucide-react'
+import { DESKTOP_BRAND_ICON_BY_SLUG } from '../constants/desktopBrandIcons'
 import { resolveDesktopIconFill } from '../constants/desktopIconFill'
 
 // Generic lucide glyphs offered in the picker, keyed by their 'lucide:' ref.

@@ -1285,7 +1285,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
-          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePetsSaveStatus} />}
+          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePanelSaveStatus} />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">
