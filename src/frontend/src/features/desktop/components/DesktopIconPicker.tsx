@@ -1,11 +1,13 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, useState } from 'react'
 import { ImageUp, Monitor, X } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
 } from '@/components/dropdown-menu'
-import { DesktopAppIcon, resolveDesktopIconFill } from './DesktopAppIcon'
+import { DesktopAppIcon } from './DesktopAppIcon'
+import { IconTile } from './IconTile'
+import { resolveDesktopIconFill } from '../constants/desktopIconFill'
 import { DESKTOP_BRAND_ICONS } from '../constants/desktopBrandIcons'
 
 const LUCIDE_CHOICES: { ref: string; label: string }[] = [
@@ -41,8 +43,13 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
   const [open, setOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const isVector = (r: string | undefined) => !!r && (r.startsWith('si:') || r.startsWith('lucide:'))
+
   const pick = (ref: string | undefined) => {
-    onChange(ref, ref === icon ? iconColor : undefined)
+    // Keep the custom tint when swapping between vector icons; anything
+    // else (default Monitor, uploads) starts from its own default look.
+    const keepColor = isVector(ref) && isVector(icon)
+    onChange(ref, keepColor ? iconColor : undefined)
     setOpen(false)
   }
 
@@ -77,9 +84,15 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
               selected={icon === c.ref}
               title={c.label}
               onClick={() => pick(c.ref)}
-              fill={resolveDesktopIconFill(c.ref, iconColor)}
             >
-              <DesktopAppIcon appId={`${appId}-${c.ref}`} icon={c.ref} size={16} />
+              {/* Only the selected tile reflects the custom color; the rest
+                  keep their own default so the grid stays a neutral palette. */}
+              <DesktopAppIcon
+                appId={`${appId}-${c.ref}`}
+                icon={c.ref}
+                iconColor={icon === c.ref ? iconColor : undefined}
+                size={16}
+              />
             </IconTile>
           ))}
         </div>
@@ -87,19 +100,23 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
         {/* Brand icons */}
         <div className="mt-2 mb-1 text-[10px] font-medium text-muted-foreground">Brands</div>
         <div className="grid grid-cols-6 gap-1 max-h-44 overflow-y-auto">
-          {DESKTOP_BRAND_ICONS.map((b) => (
-            <IconTile
-              key={b.slug}
-              selected={icon === `si:${b.slug}`}
-              title={b.title}
-              onClick={() => pick(`si:${b.slug}`)}
-              fill={resolveDesktopIconFill(`si:${b.slug}`, iconColor)}
-            >
-              <svg role="img" viewBox="0 0 24 24" width={16} height={16}>
-                <path d={b.path} fill={resolveDesktopIconFill(`si:${b.slug}`, iconColor)} />
-              </svg>
-            </IconTile>
-          ))}
+          {DESKTOP_BRAND_ICONS.map((b) => {
+            const ref = `si:${b.slug}`
+            const selected = icon === ref
+            return (
+              <IconTile
+                key={b.slug}
+                selected={selected}
+                title={b.title}
+                onClick={() => pick(ref)}
+                fill={resolveDesktopIconFill(ref, selected ? iconColor : undefined)}
+              >
+                <svg role="img" viewBox="0 0 24 24" width={16} height={16}>
+                  <path d={b.path} fill={resolveDesktopIconFill(ref, selected ? iconColor : undefined)} />
+                </svg>
+              </IconTile>
+            )
+          })}
         </div>
 
         {/* Upload */}
@@ -134,30 +151,6 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-function IconTile({ children, selected, title, onClick, fill }: {
-  children: ReactNode
-  selected?: boolean
-  title: string
-  onClick: () => void
-  fill?: string
-}): ReactNode {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={fill ? { color: fill } : undefined}
-      className={`cursor-pointer flex items-center justify-center h-8 w-8 rounded-md border transition-colors ${
-        selected
-          ? 'border-ring bg-accent/50 text-foreground'
-          : 'border-transparent text-muted-foreground hover:border-border hover:text-foreground hover:bg-accent/30'
-      }`}
-    >
-      {children}
-    </button>
   )
 }
 

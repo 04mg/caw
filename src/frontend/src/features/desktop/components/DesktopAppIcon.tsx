@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import { Monitor, Globe, Gamepad2, AppWindow, Box, Code2, Terminal, Database, Layers, Music, Video, MessageSquare, type LucideIcon } from 'lucide-react'
-import { DESKTOP_BRAND_ICON_BY_SLUG } from '../constants/desktopBrandIcons'
+import { resolveDesktopIconFill } from '../constants/desktopIconFill'
 
 // Generic lucide glyphs offered in the picker, keyed by their 'lucide:' ref.
 const LUCIDE_ICONS: Record<string, LucideIcon> = {
@@ -22,16 +22,6 @@ const LUCIDE_ICONS: Record<string, LucideIcon> = {
 //   'lucide:<Name>'          — generic lucide-react glyph
 //   'data:image/...;base64,' — user-uploaded image
 // Anything else (undefined included) falls back to the generic Monitor icon.
-export function resolveDesktopIconFill(icon: string | undefined, iconColor: string | undefined): string {
-  if (iconColor) return iconColor
-  if (icon?.startsWith('si:')) {
-    const brand = DESKTOP_BRAND_ICON_BY_SLUG[icon.slice(3)]
-    // White brand marks are invisible on light backgrounds — fall back to
-    // the surrounding text color so they adapt to the theme.
-    if (brand && brand.hex.toUpperCase() !== 'FFFFFF') return `#${brand.hex}`
-  }
-  return 'currentColor'
-}
 
 interface DesktopAppIconProps {
   appId: string

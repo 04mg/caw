@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink, Monitor, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/button'
+import { ColorPicker } from '@/components/color-picker'
 import { DesktopIconPicker } from '@/features/desktop/components/DesktopIconPicker'
-import { resolveDesktopIconFill } from '@/features/desktop/components/DesktopAppIcon'
+import { resolveDesktopIconFill } from '@/features/desktop/constants/desktopIconFill'
 import { DESKTOP_BRAND_ICON_BY_SLUG } from '@/features/desktop/constants/desktopBrandIcons'
 import {
   getDesktopApps,
@@ -174,20 +175,19 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
                   {isVector && (
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-muted-foreground">Icon color</span>
-                      <input
-                        type="color"
-                        value={/^#[0-9a-fA-F]{6}$/.test(effectiveColor) ? effectiveColor : '#000000'}
-                        onChange={(e) => updateApp(idx, { iconColor: e.target.value.toUpperCase() })}
-                        className="cursor-pointer h-6 w-8 rounded border border-input bg-background p-0.5"
-                        title="Icon color"
+                      <ColorPicker
+                        value={app.iconColor}
+                        fallbackColor={effectiveColor}
+                        resetLabel={resetLabel(app.icon)}
+                        onChange={(color) => updateApp(idx, { iconColor: color })}
                       />
                       <button
                         type="button"
                         onClick={() => updateApp(idx, { iconColor: undefined })}
                         className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
-                        title="Use the brand's default color"
+                        title="Use the icon's default color"
                       >
-                        Brand default{!app.iconColor && brandHexLabel(app.icon) ? ` (#${brandHexLabel(app.icon)})` : ''}
+                        {resetLabel(app.icon)}{!app.iconColor && brandHexLabel(app.icon) ? ` (#${brandHexLabel(app.icon)})` : ''}
                       </button>
                     </div>
                   )}
@@ -205,7 +205,7 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
       )}
 
       {/* Streaming quality */}
-      <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
+      <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <label className="text-xs font-medium">Streaming quality</label>
           <p className="text-[10px] text-muted-foreground">
@@ -259,4 +259,10 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
 function brandHexLabel(icon: string | undefined): string | undefined {
   if (!icon?.startsWith('si:')) return undefined
   return DESKTOP_BRAND_ICON_BY_SLUG[icon.slice(3)]?.hex
+}
+
+// resetLabel names the color reset action for the icon kind: brand marks
+// fall back to their official color, generic glyphs to the theme color.
+function resetLabel(icon: string | undefined): string {
+  return icon?.startsWith('si:') ? 'Brand default' : 'Default'
 }

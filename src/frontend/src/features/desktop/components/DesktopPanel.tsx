@@ -219,8 +219,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   }, [])
 
   useEffect(() => {
+    const wrapper = wrapperRef.current
     const onFsChange = () => {
-      const wrapper = wrapperRef.current
       if (document.fullscreenElement && document.fullscreenElement === wrapper) {
         void (navigator as KeyboardApi).keyboard?.lock?.().catch(() => {})
       } else {
@@ -230,7 +230,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
     document.addEventListener('fullscreenchange', onFsChange)
     return () => {
       document.removeEventListener('fullscreenchange', onFsChange)
-      if (document.fullscreenElement === wrapperRef.current) void document.exitFullscreen().catch(() => {})
+      if (document.fullscreenElement === wrapper) void document.exitFullscreen().catch(() => {})
       ;(navigator as KeyboardApi).keyboard?.unlock?.()
     }
   }, [])

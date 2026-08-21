@@ -700,9 +700,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
   }
 
-  // PetsSettingsPanel reports its own save outcomes through this callback so
-  // all settings sections share the same floating save toast.
-  const handlePetsSaveStatus = (status: 'idle' | 'success' | 'error') => {
+  // Panels that save through their own stores (pets, desktop) report their
+  // save outcomes through this callback so all settings sections share the
+  // same floating save toast.
+  const handlePanelSaveStatus = (status: 'idle' | 'success' | 'error') => {
     setSaveStatus(status)
     if (status !== 'idle') {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -1209,7 +1210,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           )}
 
           {activeSection === 'desktop' && (
-            <DesktopSettingsPanel />
+            <DesktopSettingsPanel onSaveStatusChange={handlePanelSaveStatus} />
           )}
 
           {activeSection === 'hotkeys' && (
