@@ -68,11 +68,15 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
     ? `/desktop/${encodeURIComponent(leafId)}/?action=connect&exit_with_children=1&submit=Connect&floating_menu=false&autohide=true&printing=false&file_transfer=false&sound=false&path=${encodeURIComponent(`/ws/desktop/${encodeURIComponent(leafId)}`)}`
     : ''
 
-  // Inject CSS into the iframe document (same-origin via the Caw proxy) to
-  // hide any remaining xpra chrome: the floating menu button, window
-  // borders/shadows and title bars drawn by the HTML5 client, and page
-  // margins so the app fills the pane edge-to-edge.
-  const injectChromeCss = () => {
+  // Inject CSS + JS into the iframe document (same-origin via the Caw
+  // proxy) to strip the remaining xpra chrome and start the app maximized:
+  // - hide the floating menu, window borders/shadows and title bars drawn by
+  //   the HTML5 client, and page margins so the app fills the pane edge-to-edge;
+  // - hide the #progress overlay (the "Opening WebSocket connection…" text);
+  // - maximize each window via the client's set_maximized() — the same code
+  //   path as the native maximize button, which resizes the display to match
+  //   the pane correctly (unlike --desktop-fullscreen, which only scales).
+  const injectChrome = () => {
     const doc = iframeRef.current?.contentDocument
     if (!doc) return
     const style = doc.createElement('style')
@@ -80,9 +84,35 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
       #float_menu, #float_menu_button, #float_tray { display: none !important; }
       .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
       .windowhead { display: none !important; }
+      #progress { display: none !important; }
       html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
     `
     doc.head.appendChild(style)
+    const script = doc.createElement('script')
+    script.textContent = `
+      (function () {
+        var maximized = {};
+        var attempts = 0;
+        var timer = setInterval(function () {
+          attempts += 1;
+          var client = window.client;
+          if (!client || !client.id_to_window) {
+            if (attempts > 100) clearInterval(timer);
+            return;
+          }
+          var any = false;
+          for (var wid in client.id_to_window) {
+            any = true;
+            if (!maximized[wid]) {
+              maximized[wid] = true;
+              try { client.id_to_window[wid].set_maximized(true); } catch (e) {}
+            }
+          }
+          if (any && attempts > 100) clearInterval(timer);
+        }, 200);
+      })();
+    `
+    doc.head.appendChild(script)
   }
 
   if (failed) {
@@ -120,7 +150,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
           title="Desktop"
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
           allow="clipboard-read; clipboard-write; fullscreen"
-          onLoad={injectChromeCss}
+          onLoad={injectChrome}
         />
       )}
     </div>

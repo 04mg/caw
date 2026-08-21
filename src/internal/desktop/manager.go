@@ -138,12 +138,12 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		"--systemd-run=no",
 		// Chrome-free embedding: no xpra-drawn window borders, no tray,
 		// and the virtual display resizes to match the client pane. The
-		// app window starts fullscreen so it fills the pane immediately.
+		// app window is maximized client-side (see DesktopPanel) so it
+		// fills the pane immediately while still resizing correctly.
 		"--border=off",
 		"--tray=no",
 		"--system-tray=no",
 		"--resize-display=yes",
-		"--desktop-fullscreen=yes",
 	}
 
 	cmd := exec.Command(xpraBinary, args...)
