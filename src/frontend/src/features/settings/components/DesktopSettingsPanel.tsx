@@ -3,6 +3,7 @@ import { ExternalLink, Monitor, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ColorPicker } from '@/components/color-picker'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
+import { Slider } from '@/components/slider'
 import { DesktopIconPicker } from '@/features/desktop/components/DesktopIconPicker'
 import { resolveDesktopIconFill } from '@/features/desktop/constants/desktopIconFill'
 import { DESKTOP_BRAND_ICON_BY_SLUG } from '@/features/desktop/constants/desktopBrandIcons'
@@ -258,40 +259,39 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
           </Select>
         </div>
         {/* Sliders update their thumb locally while dragging but only
-            persist when the interaction ends (pointer/keyboard release). */}
+            persist when the interaction ends (onValueCommit fires on
+            pointer release / keyboard commit). */}
         <div className="flex items-center gap-2">
           <span className="w-16 text-[10px] text-muted-foreground">Quality</span>
-          <input
-            type="range"
+          <Slider
             min={1}
             max={100}
-            value={stream.quality}
-            onChange={(e) => {
-              const next = { ...streamRef.current, quality: Number(e.target.value) }
+            step={1}
+            value={[stream.quality]}
+            onValueChange={([quality]) => {
+              const next = { ...streamRef.current, quality }
               streamRef.current = next
               setStream(next)
             }}
-            onPointerUp={() => void saveStream()}
-            onKeyUp={() => void saveStream()}
-            className="flex-1 accent-primary cursor-pointer"
+            onValueCommit={() => void saveStream()}
+            className="flex-1 cursor-pointer"
           />
           <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.quality}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-16 text-[10px] text-muted-foreground">Speed</span>
-          <input
-            type="range"
+          <Slider
             min={1}
             max={100}
-            value={stream.speed}
-            onChange={(e) => {
-              const next = { ...streamRef.current, speed: Number(e.target.value) }
+            step={1}
+            value={[stream.speed]}
+            onValueChange={([speed]) => {
+              const next = { ...streamRef.current, speed }
               streamRef.current = next
               setStream(next)
             }}
-            onPointerUp={() => void saveStream()}
-            onKeyUp={() => void saveStream()}
-            className="flex-1 accent-primary cursor-pointer"
+            onValueCommit={() => void saveStream()}
+            className="flex-1 cursor-pointer"
           />
           <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.speed}</span>
         </div>
