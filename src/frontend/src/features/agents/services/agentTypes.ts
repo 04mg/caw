@@ -4,6 +4,7 @@ import { type AgentType } from '../types'
 import { PiIcon } from '../components/PiIcon'
 import { OmpIcon } from '../components/OmpIcon'
 import { CommandCodeIcon } from '../components/CommandCodeIcon'
+import { FxIcon } from '../components/FxIcon'
 
 export const agentTypes: Record<string, AgentType> = {
   terminal: {
@@ -67,5 +68,11 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Command Code',
     cmd: ['command-code', '--yolo'],
     icon: CommandCodeIcon,
+  },
+  fx: {
+    id: 'fx',
+    label: 'Fx',
+    cmd: ['fx'],
+    icon: FxIcon,
   },
 }

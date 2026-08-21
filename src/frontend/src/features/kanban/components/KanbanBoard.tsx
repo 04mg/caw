@@ -87,28 +87,14 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
   // layoutId per sessionId lets cards glide smoothly across columns when
   // their status changes, instead of snapping as they unmount/remount.
 
-  // Detect when a column transitions from having agents to being empty,
-  // so the "No agents" placeholder only appears after the exit animation
-  // completes (200ms) rather than overlapping with the departing card.
+  // Track when each column transitions from non-empty to empty so the
+  // "No agents" placeholder only appears after the card's exit animation
+  // (400ms, matching the layout animation) completes, avoiding an overlap
+  // with the departing card. `colExiting` gates the placeholder while a
+  // card is still animating out.
   const prevEmptyRef = useRef<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
-  const [showEmpty, setShowEmpty] = useState<Record<ColumnId, boolean>>({ idle: true, working: true, needs_input: true })
   const [colExiting, setColExiting] = useState<Record<ColumnId, boolean>>({ idle: false, working: false, needs_input: false })
   const colExitingTimers = useRef<Record<ColumnId, ReturnType<typeof setTimeout> | null>>({ idle: null, working: null, needs_input: null })
-
-  const agentsEmpty = useCallback((colId: ColumnId, count: number) => {
-    const wasEmpty = prevEmptyRef.current[colId]
-    const nowEmpty = count === 0
-    prevEmptyRef.current[colId] = nowEmpty
-    if (wasEmpty && !nowEmpty) {
-      setShowEmpty(prev => ({ ...prev, [colId]: false }))
-    } else if (!wasEmpty && nowEmpty) {
-      const timer = setTimeout(() => {
-        setShowEmpty(prev => ({ ...prev, [colId]: true }))
-      }, 200)
-      return () => clearTimeout(timer)
-    }
-    return undefined
-  }, [])
 
   // Resolve a card to the workspace pane it should open.
   // Prefer the exact session id, then fall back to matching the agent cwd
@@ -265,13 +251,6 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     groupedAgents[colId].sort(byStableOrder)
   })
 
-  // Track when each column transitions from non-empty to empty so the
-  // "No agents" placeholder only appears after the card exit animation
-  // (200ms) completes, avoiding an overlap with the departing card.
-  useEffect(() => { return agentsEmpty('idle', groupedAgents.idle.length) }, [agentsEmpty, groupedAgents.idle.length])
-  useEffect(() => { return agentsEmpty('working', groupedAgents.working.length) }, [agentsEmpty, groupedAgents.working.length])
-  useEffect(() => { return agentsEmpty('needs_input', groupedAgents.needs_input.length) }, [agentsEmpty, groupedAgents.needs_input.length])
-
   // Track when a column transitions from non-empty to empty so we can suppress
   // the "No agents" placeholder while the layout animation (400ms) is still
   // in progress. Without this the empty state and the departing card overlap.
@@ -279,7 +258,9 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     const LAYOUT_ANIM_MS = 400
     ;(Object.keys(groupedAgents) as ColumnId[]).forEach((colId) => {
       const wasEmpty = prevEmptyRef.current[colId]
-      if (!wasEmpty && groupedAgents[colId].length === 0) {
+      const nowEmpty = groupedAgents[colId].length === 0
+      prevEmptyRef.current[colId] = nowEmpty
+      if (!wasEmpty && nowEmpty) {
         if (colExitingTimers.current[colId]) clearTimeout(colExitingTimers.current[colId]!)
         setColExiting(prev => ({ ...prev, [colId]: true }))
         colExitingTimers.current[colId] = setTimeout(() => {
@@ -343,15 +324,13 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
         data-testid="kanban-card"
         data-crashed={isCrashed ? 'true' : undefined}
         onClick={handleCardClick}
-        initial={{ opacity: 0, scale: 0.92 }}
-        animate={{ opacity: isCrashed ? 0.55 : 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: isCrashed ? 0.55 : 1 }}
+        exit={{ opacity: 0 }}
         transition={{
           layout: { duration: 0.4, ease: [0.25, 0.8, 0.25, 1] },
           opacity: { duration: 0.2 },
-          scale: { duration: 0.2 },
         }}
-        className={`group relative overflow-hidden rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 transition-all duration-300 select-none flex flex-col gap-3.5 shadow-sm ${
+        className={`group relative overflow-hidden rounded-xl border border-border/50 bg-secondary/15 backdrop-blur-md p-4 select-none flex flex-col gap-3.5 shadow-sm ${
           isCrashed
             ? 'cursor-default border-red-500/30'
             : isErrorState
@@ -554,7 +533,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     }
     return (
       <LayoutGroup>
-        <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 kanban-scroll">
+        <motion.div layoutScroll data-testid="kanban-board" className="flex flex-col h-full w-full overflow-y-auto p-4 gap-6 kanban-scroll">
         {MOBILE_COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
@@ -568,11 +547,11 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   {agents.length}
                 </span>
               </div>
-              <div className="flex flex-col gap-2">
-                <AnimatePresence initial={false}>
+              <motion.div layout className="relative flex flex-col gap-2">
+                <AnimatePresence initial={false} mode="popLayout">
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
+                ) : hydrated && !colExiting[col.id] ? (
                   <div className="flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-4 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[60px]">
                     <div className="p-2 rounded-full bg-muted/40">
                       <span className="block w-3.5 h-3.5" />
@@ -581,11 +560,11 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
                   </div>
                 ) : null}
                 </AnimatePresence>
-              </div>
+              </motion.div>
             </div>
           )
         })}
-      </div>
+      </motion.div>
       </LayoutGroup>
     )
   }
@@ -594,7 +573,7 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
     <LayoutGroup>
     <div data-testid="kanban-board" className="flex flex-col h-full w-full overflow-hidden p-6 gap-6">
       {/* Kanban Board Columns */}
-      <div className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2 kanban-scroll">
+      <motion.div layoutScroll className="flex-1 min-h-0 flex gap-4 overflow-x-auto pb-2 kanban-scroll">
         {COLUMNS.map((col) => {
           const agents = groupedAgents[col.id]
 
@@ -615,21 +594,21 @@ export function KanbanBoard({ workspaces, onNavigateToWorkspace }: KanbanBoardPr
               </div>
 
               {/* Card List */}
-              <div className="flex-1 overflow-y-auto pr-0.5 space-y-1.5 kanban-scroll">
-                <AnimatePresence initial={false}>
+              <motion.div layout className="relative flex-1 overflow-y-auto pr-0.5 space-y-1.5 kanban-scroll">
+                <AnimatePresence initial={false} mode="popLayout">
                 {agents.length > 0 ? (
                   agents.map(renderCard)
-                ) : hydrated && showEmpty[col.id] && !colExiting[col.id] ? (
+                ) : hydrated && !colExiting[col.id] ? (
                   <div className="h-full flex flex-col items-center justify-center border border-dashed border-border/20 rounded-xl p-6 text-center text-xs text-muted-foreground/60 italic gap-2 min-h-[150px]">
                     <span>No agents in {col.title}</span>
                   </div>
                 ) : null}
                 </AnimatePresence>
-              </div>
+              </motion.div>
             </div>
           )
         })}
-      </div>
+      </motion.div>
     </div>
     </LayoutGroup>
   )

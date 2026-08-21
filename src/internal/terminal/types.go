@@ -29,6 +29,13 @@ var (
 	// when multiple agents of the same type run in the same cwd.
 	OnPtyActivity func(id string, n int)
 	OnPtyInput    func(id string, data string)
+	// OnPtyOutput is invoked (from ReadLoop) with the raw output chunk every
+	// time bytes are read from the PTY. Unlike OnPtyActivity (which only
+	// carries the byte count), it exposes the content so the agent status
+	// layer can detect TUI-rendered interactive prompts (e.g. Fx's question
+	// and permission screens) that are never written to the agent's on-disk
+	// transcript while they are pending.
+	OnPtyOutput func(id string, data string)
 	// OnPtyFocus is invoked when a terminal pane gains or loses the user's
 	// focus. The focused flag is true when the pane becomes the active pane
 	// the user is interacting with, false when it loses that status. Used by
