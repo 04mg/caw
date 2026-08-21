@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/scroll-area'
 import { WorkspacePickerDialog } from './WorkspacePickerDialog'
 import { WorkspaceEditDialog } from './WorkspaceEditDialog'
 import { WorkspaceMenu } from './WorkspaceMenu'
+import { WorkspacePreview, type PreviewAnchor } from './WorkspacePreview'
 import { type Workspace } from '@/features/workspaces/types'
 import { collectLeafIds } from '@/features/shared/utils/layout'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
@@ -15,6 +16,13 @@ import { type AgentStatus } from '@/features/agents/types'
 
 
 const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '🎨', '💡', '📁', '🔧', '📊', '🎮', '🤖', '🛠️', '📦', '🔬', '🎪', '🏗️', '🧩', '🎭', '📡', '🔍', '💎', '🌿', '🍀', '🎵', '📚', '⚙️', '🧪']
+
+// Hover-preview timing: the first hover waits this long before popping the
+// thumbnail; while a preview is already visible, moving to another row swaps
+// it instantly (quick browsing). Leaving the rows hides it after a short
+// grace period so brief mouse exits don't flicker.
+const PREVIEW_HOVER_DELAY_MS = 1000
+const PREVIEW_HIDE_GRACE_MS = 150
 
 function getIsMobile() {
   return window.innerWidth < 768
@@ -65,6 +73,15 @@ export function WorkspacePanel({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
   const [generalContextMenu, setGeneralContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isMobile, setIsMobile] = useState(getIsMobile)
+
+  // Hover-preview state: which workspace's thumbnail is showing and where it
+  // is anchored. previewVisibleRef mirrors previewWsId for synchronous checks
+  // inside the hover handlers (state updates are async).
+  const [previewWsId, setPreviewWsId] = useState<string | null>(null)
+  const [previewAnchor, setPreviewAnchor] = useState<PreviewAnchor | null>(null)
+  const previewVisibleRef = useRef(false)
+  const previewShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Subscribe to live agent statuses so the per-workspace roll-up status dot
   // in the sidebar stays in sync with the tab-panes dots.
@@ -157,6 +174,98 @@ export function WorkspacePanel({
     [dragIndex, dragOverIndex, onReorderWorkspaces],
   )
 
+  const clearPreviewTimers = useCallback(() => {
+    if (previewShowTimer.current) {
+      clearTimeout(previewShowTimer.current)
+      previewShowTimer.current = null
+    }
+    if (previewHideTimer.current) {
+      clearTimeout(previewHideTimer.current)
+      previewHideTimer.current = null
+    }
+  }, [])
+
+  useEffect(() => clearPreviewTimers, [clearPreviewTimers])
+
+  const hidePreview = useCallback((immediate = false) => {
+    if (previewShowTimer.current) {
+      clearTimeout(previewShowTimer.current)
+      previewShowTimer.current = null
+    }
+    if (!previewVisibleRef.current) return
+    if (immediate) {
+      if (previewHideTimer.current) {
+        clearTimeout(previewHideTimer.current)
+        previewHideTimer.current = null
+      }
+      previewVisibleRef.current = false
+      setPreviewWsId(null)
+      setPreviewAnchor(null)
+      return
+    }
+    if (previewHideTimer.current) return
+    previewHideTimer.current = setTimeout(() => {
+      previewHideTimer.current = null
+      previewVisibleRef.current = false
+      setPreviewWsId(null)
+      setPreviewAnchor(null)
+    }, PREVIEW_HIDE_GRACE_MS)
+  }, [])
+
+  const showPreview = useCallback((wsId: string, rowEl: HTMLElement | null) => {
+    if (previewHideTimer.current) {
+      clearTimeout(previewHideTimer.current)
+      previewHideTimer.current = null
+    }
+    const rect = rowEl?.getBoundingClientRect()
+    setPreviewAnchor({
+      top: rect?.top ?? 0,
+      edge: rect ? (isRight ? rect.left : rect.right) : 0,
+      side: isRight ? 'left' : 'right',
+    })
+    setPreviewWsId(wsId)
+    previewVisibleRef.current = true
+  }, [isRight])
+
+  // Rows the preview must not trigger for: mobile (no hover) and while a
+  // drag-reorder or context menu is active. The active workspace previews
+  // too — as a static image snapshot instead of a second live terminal grid.
+  const previewSuppressed = isMobile || dragIndex !== null || !!contextMenu || !!generalContextMenu
+
+  const handleRowMouseEnter = useCallback(
+    (wsId: string, rowEl: HTMLElement | null) => {
+      if (previewSuppressed) return
+      if (previewVisibleRef.current) {
+        // A thumbnail is already up — browsing across rows swaps it
+        // instantly instead of waiting for the hover delay again.
+        if (previewShowTimer.current) {
+          clearTimeout(previewShowTimer.current)
+          previewShowTimer.current = null
+        }
+        showPreview(wsId, rowEl)
+        return
+      }
+      if (previewShowTimer.current) clearTimeout(previewShowTimer.current)
+      previewShowTimer.current = setTimeout(() => {
+        previewShowTimer.current = null
+        showPreview(wsId, rowEl)
+      }, PREVIEW_HOVER_DELAY_MS)
+    },
+    [previewSuppressed, showPreview],
+  )
+
+  const handleRowsMouseLeave = useCallback(() => {
+    hidePreview()
+  }, [hidePreview])
+
+  const handleRowSelect = useCallback(
+    (wsId: string) => {
+      hidePreview(true)
+      onSelectWorkspace(wsId)
+    },
+    [hidePreview, onSelectWorkspace],
+  )
+
   if (collapsed) {
     return (
       <div
@@ -177,23 +286,23 @@ export function WorkspacePanel({
             {isRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelLeft className="h-3.5 w-3.5" />}
           </Button>
         </div>
-        <div className="flex flex-col items-center flex-1 overflow-y-auto">
+        <div className="flex flex-col items-center flex-1 overflow-y-auto" onMouseLeave={handleRowsMouseLeave}>
           {workspaces.map((ws, i) => (
             <div
               key={ws.id}
               className={`flex items-center ${isRight ? 'flex-row-reverse' : ''} h-[33px] w-full transition-colors ${
                 ws.id === activeWorkspaceId ? 'bg-accent/70' : 'hover:bg-accent/40'
               }`}
+              onMouseEnter={(e) => handleRowMouseEnter(ws.id, e.currentTarget)}
             >
               <button
-                onClick={() => onSelectWorkspace(ws.id)}
+                onClick={() => handleRowSelect(ws.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: ws.id })
                 }}
                 className="flex items-center justify-center flex-1 text-base"
-                title={ws.name || ws.path || 'Workspace'}
               >
                 {ws.emoji || commonEmojis[i % commonEmojis.length]}
               </button>
@@ -238,8 +347,23 @@ export function WorkspacePanel({
             </div>,
             document.body
           )
+        })(        )}
+        {previewWsId && previewAnchor && (() => {
+          const ws = workspaces.find((w) => w.id === previewWsId)
+          if (!ws) return null
+          const idx = workspaces.indexOf(ws)
+          return (
+            <WorkspacePreview
+              workspace={ws}
+              isActive={ws.id === activeWorkspaceId}
+              emoji={ws.emoji || commonEmojis[idx % commonEmojis.length]}
+              title={ws.name || ws.path || 'Workspace'}
+              anchor={previewAnchor}
+            />
+          )
         })()}
-        <WorkspacePickerDialog open={pickerOpen} onOpenChange={setPickerOpen} onChoose={handleChoose} />
+
+      <WorkspacePickerDialog open={pickerOpen} onOpenChange={setPickerOpen} onChoose={handleChoose} />
         {editTarget && (
           <WorkspaceEditDialog
             open={true}
@@ -293,7 +417,7 @@ export function WorkspacePanel({
         </div>
       ) : (
         <ScrollArea className="flex-1">
-          <div>
+          <div onMouseLeave={handleRowsMouseLeave}>
             {workspaces.map((ws, i) => {
               const isActive = ws.id === activeWorkspaceId
               const label = ws.name || ws.path || 'Workspace'
@@ -315,13 +439,14 @@ export function WorkspacePanel({
                 <div
                   key={ws.id}
                   ref={(el) => { itemRefs.current[i] = el }}
-                  onClick={() => onSelectWorkspace(ws.id)}
+                  onClick={() => handleRowSelect(ws.id)}
+                  onMouseEnter={(e) => handleRowMouseEnter(ws.id, e.currentTarget)}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
                     setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: ws.id })
                   }}
-                  onPointerDown={(e) => onPointerDown(e, i)}
+                  onPointerDown={(e) => { hidePreview(true); onPointerDown(e, i) }}
                   onPointerMove={(e) => onPointerMove(e, i)}
                   onPointerUp={(e) => onPointerUp(e)}
                   className={`group flex items-center gap-1.5 pl-2 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
@@ -337,7 +462,7 @@ export function WorkspacePanel({
                   }}
                 >
                   <span className="text-base leading-none shrink-0">{ws.emoji || commonEmojis[i % commonEmojis.length]}</span>
-                  <span className="truncate flex-1" title={ws.path}>{label}</span>
+                  <span className="truncate flex-1">{label}</span>
                   {/* Status dot + three-dots share the exact same 20x20 slot.
                       On hover the dot fades out and the kebab fades in, both
                       pinned to the right edge so they stay aligned with the
@@ -347,7 +472,6 @@ export function WorkspacePanel({
                       className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${
                         isMobile ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
                       }`}
-                      title={strongest ? strongest.status : undefined}
                     >
                       {dotColors ? (
                         <span className="relative flex" style={{ height: 7, width: 7 }}>
@@ -428,6 +552,21 @@ export function WorkspacePanel({
             </button>
           </div>,
           document.body
+        )
+      })()}
+
+      {previewWsId && previewAnchor && (() => {
+        const ws = workspaces.find((w) => w.id === previewWsId)
+        if (!ws) return null
+        const idx = workspaces.indexOf(ws)
+        return (
+          <WorkspacePreview
+            workspace={ws}
+            isActive={ws.id === activeWorkspaceId}
+            emoji={ws.emoji || commonEmojis[idx % commonEmojis.length]}
+            title={ws.name || ws.path || 'Workspace'}
+            anchor={previewAnchor}
+          />
         )
       })()}
 

@@ -5,9 +5,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/checkbox'
 
 import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus, Monitor } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
+import { ClaudeIcon } from '@/features/agents/components/ClaudeIcon'
+import { CodexIcon } from '@/features/agents/components/CodexIcon'
+import { GithubCopilotIcon } from '@/features/agents/components/GithubCopilotIcon'
+import { AntigravityIcon } from '@/features/agents/components/AntigravityIcon'
+import { OpenCodeIcon } from '@/features/agents/components/OpenCodeIcon'
+import { OllamaIcon } from '@/features/agents/components/OllamaIcon'
+import { OpenRouterIcon } from '@/features/agents/components/OpenRouterIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { applyCustomization, bundledTheme, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
@@ -1596,13 +1602,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
               <div className="grid grid-cols-1 gap-2.5 mt-2 pb-4">
                 {[
-                  { id: 'claude', label: 'Claude', icon: Claude.Color, show: claudeInstalled },
-                  { id: 'codex', label: 'Codex', icon: Codex.Color, show: codexInstalled },
-                  { id: 'copilot', label: 'GitHub Copilot', icon: GithubCopilot, show: true },
-                  { id: 'antigravity', label: 'Antigravity', icon: Antigravity.Color, show: agyInstalled },
-                  { id: 'opencode', label: 'OpenCode Go', icon: OpenCode, show: true },
-                  { id: 'ollama', label: 'Ollama', icon: Ollama, show: true },
-                  { id: 'openrouter', label: 'OpenRouter', icon: OpenRouter, show: true },
+                  { id: 'claude', label: 'Claude', icon: ClaudeIcon, show: claudeInstalled },
+                  { id: 'codex', label: 'Codex', icon: CodexIcon, show: codexInstalled },
+                  { id: 'copilot', label: 'GitHub Copilot', icon: GithubCopilotIcon, show: true },
+                  { id: 'antigravity', label: 'Antigravity', icon: AntigravityIcon, show: agyInstalled },
+                  { id: 'opencode', label: 'OpenCode Go', icon: OpenCodeIcon, show: true },
+                  { id: 'ollama', label: 'Ollama', icon: OllamaIcon, show: true },
+                  { id: 'openrouter', label: 'OpenRouter', icon: OpenRouterIcon, show: true },
                   { id: 'commandcode', label: 'Command Code', icon: CommandCodeIcon, show: true },
                   { id: 'zed', label: 'Zed', icon: ZedIcon, show: true },
                 ].filter(p => p.show && !disabledProviders.includes(p.id)).map((prov) => {

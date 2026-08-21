@@ -127,8 +127,66 @@ func TestUpdateStatusUnknownRetainsExternalSessionAndSource(t *testing.T) {
 	}
 }
 
-func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {
-	cases := []struct {
+func TestContainsPtyPromptMarker(t *testing.T) {
+	markers := []string{
+		"1–7 Choose now    ↑↓ Options    Tab Questions    Enter Answer    Esc Cancel",
+		"2 Choose    Enter Confirm    Esc Cancel",
+		"3 Choose now    Enter Confirm    Esc Cancel",
+		"Options    Tab Amend    Enter Confirm    Esc Cancel",
+	}
+	for _, m := range markers {
+		if !containsPtyPromptMarker(m) {
+			t.Fatalf("expected marker detection for %q", m)
+		}
+	}
+	nonMarkers := []string{
+		"",
+		"Thinking (0s) ┃ auto · glm-5.2",
+		"ls\r\n",
+		"some random terminal output",
+	}
+	for _, m := range nonMarkers {
+		if containsPtyPromptMarker(m) {
+			t.Fatalf("unexpected marker detection for %q", m)
+		}
+	}
+}
+
+func TestHandlePtyOutputRecordsAndClearsPendingInput(t *testing.T) {
+	const id = "pending-input-leaf"
+	ClearPtyPendingInput(id)
+	if !LastPtyPendingInput(id).IsZero() {
+		t.Fatal("expected zero time for unknown session")
+	}
+
+	// A prompt footer in the output stream records a sighting.
+	handlePtyOutput(id, "1–7 Choose now    Enter Answer    Esc Cancel")
+	if got := LastPtyPendingInput(id); got.IsZero() {
+		t.Fatal("expected pending-input sighting to be recorded")
+	}
+
+	// A marker split across two chunks is still detected via the tail carry.
+	ClearPtyPendingInput(id)
+	handlePtyOutput(id, "Options    Tab Ques")
+	handlePtyOutput(id, "tions    Enter Answer    Esc Cancel")
+	if got := LastPtyPendingInput(id); got.IsZero() {
+		t.Fatal("expected split marker to be detected")
+	}
+
+	// Non-marker output does not record a sighting.
+	ClearPtyPendingInput(id)
+	handlePtyOutput(id, "Thinking (0s) ┃ auto · glm-5.2")
+	if !LastPtyPendingInput(id).IsZero() {
+		t.Fatal("expected no sighting for non-marker output")
+	}
+
+	ClearPtyPendingInput(id)
+	if !LastPtyPendingInput(id).IsZero() {
+		t.Fatal("expected zero time after clearing")
+	}
+}
+
+func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struct {
 		name string
 		cmd  []string
 		want bool

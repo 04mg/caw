@@ -3,6 +3,7 @@ package terminal
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/aymanbagabas/go-pty"
@@ -29,13 +30,17 @@ func startPty(cwd string, cmdArgs []string, extraEnv [][]string) (*Pty, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Ensure the PTY has a valid size before the child starts. Caw's first
+	// viewer resize (resizePTY) arrives via WebSocket only after the process
+	// is already running. Starting at 0x0 causes some TUIs (notably fx) to
+	// fail with "UnableToReadTerminalSize" and exit immediately as
+	// interrupted. Seed with a sensible default; the real viewer size takes
+	// over moments later via SIGWINCH.
+	_ = ptmx.Resize(80, 24)
 
 	var c *pty.Cmd
 	if len(cmdArgs) > 0 {
-		name := cmdArgs[0]
-		if path, err := exec.LookPath(name); err == nil {
-			name = path
-		}
+		name := resolveAgentBinary(cmdArgs[0])
 		c = ptmx.Command(name, cmdArgs[1:]...)
 	} else {
 		shell := getShell()
@@ -83,4 +88,29 @@ func getShell() string {
 		return path
 	}
 	return "/bin/bash"
+}
+
+func resolveAgentBinary(name string) string {
+	if path, err := exec.LookPath(name); err == nil {
+		return path
+	}
+	// Fallback for user-local installs (e.g. fx → ~/.local/bin/fx) when
+	// the caw service PATH doesn't include ~/.local/bin.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if p := filepath.Join(home, ".local", "bin", name); isExecutable(p) {
+			return p
+		}
+	}
+	if p := filepath.Join("/root/.local/bin", name); isExecutable(p) {
+		return p
+	}
+	return name
+}
+
+func isExecutable(p string) bool {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	return !fi.IsDir() && fi.Mode().Perm()&0111 != 0
 }
