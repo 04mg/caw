@@ -167,6 +167,9 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
           overflow: visible !important;
           border: none !important;
           box-shadow: none !important;
+          /* Always the lowest window: popups/dialogs must never get lost
+             underneath it. */
+          z-index: -1 !important;
         }
         .windowhead:not(#head1) {
           height: 30px !important;
@@ -181,6 +184,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
           top: 0 !important;
           height: 30px !important;
           line-height: 30px !important;
+          padding: 0 64px !important;
           text-align: center !important;
           font: 500 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
           color: rgba(255, 255, 255, 0.85) !important;
@@ -192,7 +196,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
         .windowhead:not(#head1) .windowbuttons img { display: none !important; }
         .windowhead:not(#head1) .windowbuttons {
           position: absolute !important;
-          left: 12px !important;
+          right: 12px !important;
+          left: auto !important;
           top: 0 !important;
           height: 30px !important;
           display: flex !important;
