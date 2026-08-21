@@ -18,6 +18,7 @@ import {
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
+  setLeafFile,
   cyclePane,
 } from '@/features/shared/utils/layout'
 import {
@@ -1259,6 +1260,44 @@ export function AppLayout() {
             detail: { paneId: existing.layout.id, line, column: column ?? 0 },
           }))
         }
+        return
+      }
+
+      // VS Code parity: when the focused pane is a plain file editor with no
+      // unsaved edits, reuse it — swap the file it shows instead of stacking
+      // yet another tab. Dirty editors (and non-editor panes like terminals
+      // or diffs) still cause a new tab to open.
+      const activeTab = activeWorkspace.layouts[activeWorkspace.activeTabIndex]
+      const reuseLeaf = activeTab
+        ? (findActiveLeaf(activeTab.layout, activeWorkspace.activePaneId) || findFirstLeaf(activeTab.layout))
+        : null
+      if (
+        activeTab &&
+        reuseLeaf &&
+        reuseLeaf.type === 'leaf' &&
+        reuseLeaf.filePath &&
+        !reuseLeaf.isDiff &&
+        !isFileDirty(reuseLeaf.filePath)
+      ) {
+        const tabId = activeTab.id
+        const leafId = reuseLeaf.id
+        patchWorkspace(activeWorkspace.id, (ws) => {
+          const layouts = ws.layouts.map((t) =>
+            t.id === tabId
+              ? { ...t, name, layout: setLeafFile(t.layout, leafId, { filePath, cwd, revealLine: line, revealColumn: column ?? 0 }) }
+              : t,
+          )
+          const { tree } = ensureTabGroups({ ...ws, layouts })
+          const group = findGroupWithTab(tree, tabId)
+          return {
+            ...ws,
+            layouts,
+            tabGroups: tree,
+            activeGroupId: group ? group.id : ws.activeGroupId,
+            activeTabIndex: ws.activeTabIndex,
+            activePaneId: leafId,
+          }
+        })
         return
       }
 
