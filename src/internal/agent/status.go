@@ -173,6 +173,19 @@ var (
 	// ptyEscapePending delays a standalone ESC long enough to distinguish it
 	// from the first byte of a fragmented terminal escape sequence.
 	ptyEscapePending = make(map[string]*time.Timer)
+	// ptyPendingInput records the last time a leaf's PTY output showed an
+	// interactive prompt footer (question / permission / confirm screen).
+	// Some agents (Fx) render these prompts only in the TUI and write nothing
+	// to their on-disk transcript while the prompt is pending, so the PTY
+	// stream is the only signal that the agent is blocked waiting for user
+	// input. Read by watchers via LastPtyPendingInput; cleared when the
+	// agent's transcript advances past the prompt.
+	ptyPendingInput   = make(map[string]time.Time)
+	ptyPendingInputMu sync.RWMutex
+	// ptyOutputTail carries the last few output bytes per leaf between
+	// ReadLoop chunks so a prompt footer marker split across two chunks is
+	// still detected. Guarded by ptyPendingInputMu.
+	ptyOutputTail = make(map[string]string)
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -278,6 +291,7 @@ func init() {
 	terminal.OnPtyActivity = handlePtyActivity
 	terminal.OnPtyInput = handlePtyInput
 	terminal.OnPtyFocus = handlePtyFocus
+	terminal.OnPtyOutput = handlePtyOutput
 }
 
 // handlePtyInput detects when the user sends the interrupt key sequence
@@ -433,6 +447,69 @@ func LastPtyActivity(sessionID string) time.Time {
 	return ptyActivity[sessionID]
 }
 
+// ptyTailKeep is how many trailing output bytes are carried between ReadLoop
+// chunks for prompt-marker detection. It only needs to cover the longest
+// marker string plus slack, not a full frame.
+const ptyTailKeep = 64
+
+// fxPromptMarkers are substrings of Fx's TUI prompt footers. When one of them
+// appears in the PTY output stream, Fx has rendered an interactive screen that
+// blocks on user input:
+//   - "Enter Answer" / "Tab Questions": the ask_user_question screen.
+//   - "Enter Confirm" / "Tab Amend": permission (allow/deny) and confirmation
+//     screens.
+//   - "Choose now": the option-picker footer shared by those screens.
+//
+// Fx writes nothing to its event log while such a screen is pending, so this
+// is the only ask-time signal available to the status watcher.
+func containsPtyPromptMarker(s string) bool {
+	return strings.Contains(s, "Enter Answer") ||
+		strings.Contains(s, "Tab Questions") ||
+		strings.Contains(s, "Enter Confirm") ||
+		strings.Contains(s, "Tab Amend") ||
+		strings.Contains(s, "Choose now")
+}
+
+// handlePtyOutput scans raw PTY output for interactive prompt footers and
+// records the sighting time per leaf. Called from terminal.ReadLoop on every
+// read. A small tail of the previous chunk is prepended so a footer split
+// across two reads is still detected.
+func handlePtyOutput(id string, data string) {
+	ptyPendingInputMu.Lock()
+	defer ptyPendingInputMu.Unlock()
+	search := ptyOutputTail[id] + data
+	if len(search) > ptyTailKeep {
+		ptyOutputTail[id] = search[len(search)-ptyTailKeep:]
+	} else {
+		ptyOutputTail[id] = search
+	}
+	if containsPtyPromptMarker(search) {
+		ptyPendingInput[id] = time.Now()
+	}
+}
+
+// LastPtyPendingInput returns the time an interactive prompt footer was last
+// seen in the given leaf's PTY output, or the zero time if none was seen.
+// Watchers combine this with their transcript's last-write time: a prompt
+// seen after the transcript last advanced means the agent is blocked waiting
+// for user input.
+func LastPtyPendingInput(sessionID string) time.Time {
+	ptyPendingInputMu.RLock()
+	defer ptyPendingInputMu.RUnlock()
+	return ptyPendingInput[sessionID]
+}
+
+// ClearPtyPendingInput drops the recorded prompt-footer sighting for the
+// given leaf. Watchers call it once their transcript has advanced past the
+// prompt (the agent's answer/decision was persisted), so a stale marker can
+// never re-assert "waiting for input" after the session moved on.
+func ClearPtyPendingInput(sessionID string) {
+	ptyPendingInputMu.Lock()
+	delete(ptyPendingInput, sessionID)
+	delete(ptyOutputTail, sessionID)
+	ptyPendingInputMu.Unlock()
+}
+
 // IsPtyFocused reports whether the given leaf/session id currently has the
 // user's focus (i.e. is the active terminal pane the user is typing into).
 // Used by watchers and the idle-timeout watchdog to bias the heuristics
@@ -499,6 +576,19 @@ func SetPtyInterruptForTest(sessionID string, at time.Time) {
 		ptyInterrupt[sessionID] = at
 	}
 	ptyInterruptMu.Unlock()
+}
+
+// SetPtyPendingInputForTest records (or clears) the last prompt-footer
+// sighting for a leaf/session id. It is intended only for tests; production
+// code drives ptyPendingInput via terminal.OnPtyOutput (wired in init()).
+func SetPtyPendingInputForTest(sessionID string, at time.Time) {
+	ptyPendingInputMu.Lock()
+	if at.IsZero() {
+		delete(ptyPendingInput, sessionID)
+	} else {
+		ptyPendingInput[sessionID] = at
+	}
+	ptyPendingInputMu.Unlock()
 }
 
 // RegisterStatusWatcher allows status providers to register themselves
@@ -740,6 +830,8 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	ptyFocusMu.Lock()
 	delete(ptyFocus, id)
 	ptyFocusMu.Unlock()
+
+	ClearPtyPendingInput(id)
 
 	if !crashed {
 		// Clean exit or user kill: card simply leaves the board, as before.

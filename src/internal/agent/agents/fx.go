@@ -130,6 +130,10 @@ func (w *FxWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 		lastFileSize = info.Size()
 		lastActivity = info.ModTime()
 		silentTicks = 0
+		// The event log advanced, so Fx is no longer blocked on whatever
+		// interactive prompt (question / permission) the PTY footer marker
+		// saw — drop it so it can't re-assert waiting_input later.
+		agent.ClearPtyPendingInput(sessionID)
 		return true
 	}
 
@@ -184,12 +188,22 @@ func (w *FxWatcher) Watch(ctx context.Context, sessionID string, cwd string, res
 					}
 				}
 			}
-			if watchedFilePath != "" {
-				if !readWatched() {
-					silentTicks++
+		if watchedFilePath != "" {
+			if !readWatched() {
+				silentTicks++
+				// Fx writes nothing to its event log while it is blocked on
+				// an interactive prompt (ask_user_question, permission
+				// allow/deny): the prompt exists only in the TUI until the
+				// user answers. If a prompt footer was seen in the PTY
+				// output after the last event-log write, Fx is waiting for
+				// user input — surface that instead of staying in the stale
+				// working state.
+				if pt := agent.LastPtyPendingInput(sessionID); pt.After(lastActivity) {
+					callback("waiting_input", "", "", sessionTitle)
 				}
+			}
 
-				if silentTicks >= rebindSilenceTicks {
+			if silentTicks >= rebindSilenceTicks {
 					focused := agent.IsPtyFocused(sessionID)
 					lastPtyOut := agent.LastPtyActivity(sessionID)
 					if time.Since(lastPtyOut) < 3*time.Second || focused {

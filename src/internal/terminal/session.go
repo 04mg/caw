@@ -632,6 +632,9 @@ func (s *Session) ReadLoop() {
 			if OnPtyActivity != nil {
 				OnPtyActivity(s.ID, n)
 			}
+			if OnPtyOutput != nil {
+				OnPtyOutput(s.ID, string(data))
+			}
 			s.mu.Lock()
 			// Track mode state from the raw stream before anything else:
 			// this runs on every live chunk, so the 256KiB ring trim below
