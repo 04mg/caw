@@ -103,16 +103,20 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
           {DESKTOP_BRAND_ICONS.map((b) => {
             const ref = `si:${b.slug}`
             const selected = icon === ref
+            // Unselected tiles render in the same neutral default as lucide
+            // tiles (currentColor); only the selected tile reveals the brand's
+            // official color (or the user's custom tint).
+            const tileFill = selected ? resolveDesktopIconFill(ref, iconColor) : undefined
             return (
               <IconTile
                 key={b.slug}
                 selected={selected}
                 title={b.title}
                 onClick={() => pick(ref)}
-                fill={resolveDesktopIconFill(ref, selected ? iconColor : undefined)}
+                fill={tileFill}
               >
                 <svg role="img" viewBox="0 0 24 24" width={16} height={16}>
-                  <path d={b.path} fill={resolveDesktopIconFill(ref, selected ? iconColor : undefined)} />
+                  <path d={b.path} fill={tileFill ?? 'currentColor'} />
                 </svg>
               </IconTile>
             )
@@ -126,7 +130,7 @@ export function DesktopIconPicker({ appId, icon, iconColor, onChange }: DesktopI
           className="cursor-pointer mt-2 w-full flex items-center gap-2 rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
         >
           <ImageUp className="h-3.5 w-3.5" />
-          Upload image (PNG/SVG, resized to 64px)
+          Upload
         </button>
         <input
           ref={fileRef}
