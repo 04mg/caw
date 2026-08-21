@@ -83,7 +83,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
     style.textContent = `
       #float_menu, #float_menu_button, #float_tray { display: none !important; }
       .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
-      .windowhead { display: none !important; }
+      .windowhead { display: none !important; height: 0 !important; }
       #progress { display: none !important; }
       html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
     `

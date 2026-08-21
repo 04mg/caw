@@ -29,6 +29,7 @@ import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
+import { destroyDesktop, setOnDesktopExit, isDesktopExited } from '@/features/desktop/services/desktopRegistry'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -1490,6 +1491,7 @@ export function AppLayout() {
   const forceClosePane = useCallback(
     (id: string, deleteBranch?: boolean) => {
       destroyTerminal(id, deleteBranch)
+      destroyDesktop(id)
       if (!activeWorkspace || !activeTab) return
       const newLayout = removeLeaf(activeTab.layout, id)
       const remaining = collectLeafIds(newLayout)
@@ -1526,7 +1528,7 @@ export function AppLayout() {
       // If the terminal process has already exited (e.g. the agent crashed),
       // skip all confirmation dialogs and close the pane immediately —
       // there's nothing to save and the pane is just showing a dead terminal.
-      if (isTerminalExited(id)) {
+      if (isTerminalExited(id) || isDesktopExited(id)) {
         forceClosePane(id)
         return
       }
@@ -1712,6 +1714,11 @@ export function AppLayout() {
   useEffect(() => {
     setOnTerminalExit((leafId) => handleClosePane(leafId))
     return () => setOnTerminalExit(null)
+  }, [handleClosePane])
+
+  useEffect(() => {
+    setOnDesktopExit((leafId) => handleClosePane(leafId))
+    return () => setOnDesktopExit(null)
   }, [handleClosePane])
 
   if (!loaded) {

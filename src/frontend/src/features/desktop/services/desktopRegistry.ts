@@ -84,3 +84,11 @@ export function markDesktopExited(leafId: string): void {
 export function getDesktopSession(leafId: string): DesktopSession | undefined {
   return registry.get(leafId)
 }
+
+// isDesktopExited reports whether the desktop session for this leaf has
+// already exited (the xpra server / app closed). Used by handleClosePane to
+// close the pane immediately when the app is gone.
+export function isDesktopExited(leafId: string): boolean {
+  const inst = registry.get(leafId)
+  return !!inst?.exited
+}
