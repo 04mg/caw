@@ -2412,6 +2412,12 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           // (icon picker, color picker, encoding select, …).
           if ((e.target as HTMLElement).closest('[data-radix-popper-content-wrapper]')) e.preventDefault()
         }}
+        onFocusOutside={(e) => {
+          // Same portals, focus flavor: clicking a button inside a picker
+          // moves focus out of the dialog, which Radix treats as an
+          // outside interaction and would dismiss the whole modal.
+          if ((e.target as HTMLElement).closest('[data-radix-popper-content-wrapper]')) e.preventDefault()
+        }}
         style={
           isMobile
             ? undefined
