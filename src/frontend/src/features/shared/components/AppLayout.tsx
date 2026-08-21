@@ -2296,6 +2296,7 @@ export function AppLayout() {
         onOpenFile={openFile}
         onAddTerminal={addTab}
         onAddAgent={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+        onAddDesktopApp={(cmd, appId, label, env) => addTab(cmd, appId, label, undefined, env, 'desktop')}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
         enableWorktrees={activeWorkspace?.enableWorktrees ?? false}
         onToggleWorktrees={toggleWorktrees}
