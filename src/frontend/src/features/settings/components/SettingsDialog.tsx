@@ -2405,19 +2405,6 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       <DialogContent
         hideClose={isMobile}
         data-testid="settings-dialog"
-        onPointerDownOutside={(e) => {
-          // Radix renders select/dropdown menu content into a body-level
-          // portal, so those clicks count as "outside" the dialog. Never
-          // close the settings modal for interactions inside such a portal
-          // (icon picker, color picker, encoding select, …).
-          if ((e.target as HTMLElement).closest('[data-radix-popper-content-wrapper]')) e.preventDefault()
-        }}
-        onFocusOutside={(e) => {
-          // Same portals, focus flavor: clicking a button inside a picker
-          // moves focus out of the dialog, which Radix treats as an
-          // outside interaction and would dismiss the whole modal.
-          if ((e.target as HTMLElement).closest('[data-radix-popper-content-wrapper]')) e.preventDefault()
-        }}
         style={
           isMobile
             ? undefined

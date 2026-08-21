@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
 import { WorkspaceEmptyState } from '@/features/shared/components/WorkspaceEmptyState'
 import { countLeaves } from '@/features/shared/utils/layout'
-import { getSurface } from '@/features/desktop/services/desktopSurface'
 import { ensureTabGroups, findGroupById, collectGroups } from '../utils/tabGroups'
 import { type Workspace } from '../types'
 
@@ -48,83 +47,102 @@ interface WorkspacePreviewProps {
   anchor: PreviewAnchor
 }
 
+interface CaptureSource {
+  rect: DOMRect
+  canvases: HTMLCanvasElement[]
+}
+
 /**
- * Composite every visible live terminal canvas in the main content area into
- * a single static image. Panes are located via their `data-pane-id` wrappers;
- * anything inside a hover-preview portal is excluded so we never capture our
- * own output. Desktop panes contribute their xpra client canvases, read
- * same-origin out of the session surface's iframe. Returns a PNG data URL,
- * or null when nothing is rendered.
+ * Composite the live main-area content into a single static image:
+ * terminal panes contribute their painted xterm canvases; desktop sessions
+ * contribute the xpra client's canvases read same-origin out of the surface
+ * layer's iframes. Anything inside a hover-preview portal is excluded so we
+ * never capture our own output. Returns a PNG data URL, or null when
+ * nothing is rendered. A single broken canvas must never lose the whole
+ * capture — every draw is isolated.
  */
 function captureActiveWorkspaceSnapshot(): string | null {
+  try {
+    const sources = collectCaptureSources()
+    if (!sources.length) return null
+
+    let left = Infinity
+    let top = Infinity
+    let right = -Infinity
+    let bottom = -Infinity
+    for (const s of sources) {
+      left = Math.min(left, s.rect.left)
+      top = Math.min(top, s.rect.top)
+      right = Math.max(right, s.rect.right)
+      bottom = Math.max(bottom, s.rect.bottom)
+    }
+    const width = right - left
+    const height = bottom - top
+
+    const out = document.createElement('canvas')
+    const dpr = window.devicePixelRatio || 1
+    out.width = Math.max(1, Math.round(width * dpr))
+    out.height = Math.max(1, Math.round(height * dpr))
+    const ctx = out.getContext('2d')
+    if (!ctx) return null
+    ctx.scale(dpr, dpr)
+
+    const bg = getComputedStyle(document.body).backgroundColor
+    ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#000000'
+    ctx.fillRect(0, 0, width, height)
+
+    for (const source of sources) {
+      for (const canvas of source.canvases) {
+        try {
+          // Zero-intrinsic-size canvases (xterm/xpra scratch buffers with
+          // layout size but no pixels) make drawImage throw.
+          if (canvas.width === 0 || canvas.height === 0) continue
+          const rect = canvas.getBoundingClientRect()
+          if (rect.width === 0 || rect.height === 0) continue
+          ctx.drawImage(canvas, rect.left - left, rect.top - top, rect.width, rect.height)
+        } catch {
+          // Skip canvases that cannot be drawn (cross-origin or detached).
+        }
+      }
+    }
+    return out.toDataURL('image/png')
+  } catch (err) {
+    console.error('workspace snapshot failed:', err)
+    return null
+  }
+}
+
+// Gather everything worth capturing. Terminal/editor panes are found via
+// their data-pane-id wrappers; desktop surfaces via the body-level layer,
+// whose visible wrappers are pinned exactly over their pane rects (so
+// coordinates inside an iframe viewport match the top-level viewport).
+function collectCaptureSources(): CaptureSource[] {
+  const sources: CaptureSource[] = []
   const previewRoots = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-preview"]'))
-  const panes = Array.from(document.querySelectorAll<HTMLElement>('div[data-pane-id]'))
-  // Deduplicate nested wrappers (TerminalGrid leaf + DesktopPanel root share
-  // the same data-pane-id) so panes aren't visited twice.
-  const unique = panes.filter((p) => !panes.some((other) => other !== p && other.contains(p)))
-  const visible: DOMRect[] = []
-  for (const pane of unique) {
+
+  for (const pane of document.querySelectorAll<HTMLElement>('div[data-pane-id]')) {
     if (previewRoots.some((root) => root.contains(pane))) continue
+    const canvases = Array.from(pane.querySelectorAll<HTMLCanvasElement>('.xterm-screen canvas'))
+    if (!canvases.length) continue
     const rect = pane.getBoundingClientRect()
     if (rect.width < 2 || rect.height < 2) continue
-    if (!hasRenderableContent(pane)) continue
-    visible.push(rect)
+    sources.push({ rect, canvases })
   }
-  if (!visible.length) return null
 
-  let left = Infinity
-  let top = Infinity
-  let right = -Infinity
-  let bottom = -Infinity
-  for (const rect of visible) {
-    left = Math.min(left, rect.left)
-    top = Math.min(top, rect.top)
-    right = Math.max(right, rect.right)
-    bottom = Math.max(bottom, rect.bottom)
+  for (const wrapper of document.querySelectorAll<HTMLElement>('#caw-desktop-surface-layer [data-leaf-id]')) {
+    if (wrapper.style.visibility !== 'visible') continue
+    const doc = wrapper.querySelector('iframe')?.contentDocument
+    if (!doc) continue
+    const canvases = Array.from(doc.querySelectorAll<HTMLCanvasElement>('canvas')).filter(
+      (c) => c.width > 0 && c.height > 0,
+    )
+    if (!canvases.length) continue
+    const rect = wrapper.getBoundingClientRect()
+    if (rect.width < 2 || rect.height < 2) continue
+    sources.push({ rect, canvases })
   }
-  const width = right - left
-  const height = bottom - top
 
-  const out = document.createElement('canvas')
-  const dpr = window.devicePixelRatio || 1
-  out.width = Math.max(1, Math.round(width * dpr))
-  out.height = Math.max(1, Math.round(height * dpr))
-  const ctx = out.getContext('2d')
-  if (!ctx) return null
-  ctx.scale(dpr, dpr)
-
-  const bg = getComputedStyle(unique[0]).backgroundColor
-  ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#000000'
-  ctx.fillRect(0, 0, width, height)
-
-  for (const pane of unique) {
-    if (previewRoots.some((root) => root.contains(pane))) continue
-    for (const canvas of collectPaneCanvases(pane)) {
-      const rect = canvas.getBoundingClientRect()
-      if (rect.width === 0 || rect.height === 0) continue
-      ctx.drawImage(canvas, rect.left - left, rect.top - top, rect.width, rect.height)
-    }
-  }
-  return out.toDataURL('image/png')
-}
-
-// A pane is worth capturing when it has a painted xterm canvas or a live
-// desktop session surface whose iframe document contains canvases.
-function hasRenderableContent(pane: HTMLElement): boolean {
-  if (pane.querySelector('.xterm-screen canvas')) return true
-  const doc = getSurface(pane.dataset.paneId ?? '')?.iframe.contentDocument
-  return !!doc && !!doc.querySelector('canvas')
-}
-
-// Collect the canvases to draw for a pane: its own xterm canvases plus, for
-// desktop panes, the xpra client's canvases inside the same-origin iframe.
-// The iframe is pinned exactly over the pane rect, so coordinates inside its
-// viewport match the top-level viewport.
-function collectPaneCanvases(pane: HTMLElement): HTMLCanvasElement[] {
-  const canvases = Array.from(pane.querySelectorAll('canvas'))
-  const doc = getSurface(pane.dataset.paneId ?? '')?.iframe.contentDocument
-  if (doc) canvases.push(...Array.from(doc.querySelectorAll('canvas')))
-  return canvases
+  return sources
 }
 
 function noop() {}
@@ -179,7 +197,10 @@ export function WorkspacePreview({ workspace, isActive, emoji, title, anchor }: 
             isEmpty ? (
               <WorkspaceEmptyState />
             ) : snapshot ? (
-              <img src={snapshot} alt="" className="h-full w-full object-cover" draggable={false} />
+              /* object-contain letterboxes the snapshot instead of cropping
+                 it — object-cover made workspaces look zoomed-in whenever
+                 their aspect ratio didn't match the thumbnail. */
+              <img src={snapshot} alt="" className="h-full w-full bg-black object-contain" draggable={false} />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
                 <p className="text-sm text-muted-foreground italic">No preview</p>
