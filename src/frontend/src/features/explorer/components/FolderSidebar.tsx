@@ -689,22 +689,22 @@ export function FolderSidebar({
             </>
           )}
           {!contextMenu.isRoot && !isMultiAction && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-                Rename
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); handleCopy(actionPaths) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <Copy className="h-3.5 w-3.5" />
-                Copy{isMultiAction ? ` (${actionPaths.length})` : ''}
-              </button>
-            </>
+            <button
+              onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Rename
+            </button>
+          )}
+          {!contextMenu.isRoot && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleCopy(actionPaths) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy{isMultiAction ? ` (${actionPaths.length})` : ''}
+            </button>
           )}
           {!isWorktree && !contextMenu.isRoot && (
             <button
