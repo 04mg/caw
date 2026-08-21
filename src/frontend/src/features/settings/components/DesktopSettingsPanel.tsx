@@ -118,11 +118,8 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
           </div>
           <div className="flex flex-col gap-1.5">
             <p className="text-[10px] text-muted-foreground">
-              Caw uses Xpra to stream desktop apps into a pane. Install it on this device to enable desktop apps:
+              Caw uses Xpra to stream desktop apps into a pane.
             </p>
-            <code className="rounded bg-muted/50 px-2 py-1 text-[10px] font-mono text-foreground/80 select-all">
-              sudo apt-get install xpra xpra-x11
-            </code>
             <div className="flex items-center gap-3 text-[10px]">
               <a href="https://xpra.org/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
                 xpra.org <ExternalLink className="h-3 w-3" />
