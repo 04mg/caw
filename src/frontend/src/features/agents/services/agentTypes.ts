@@ -1,10 +1,15 @@
-import { OpenCode, Antigravity, Claude, Codex, GithubCopilot, NousResearch } from '@lobehub/icons'
 import { Terminal } from 'lucide-react'
 import { type AgentType } from '../types'
 import { PiIcon } from '../components/PiIcon'
 import { OmpIcon } from '../components/OmpIcon'
 import { CommandCodeIcon } from '../components/CommandCodeIcon'
 import { FxIcon } from '../components/FxIcon'
+import { ClaudeIcon } from '../components/ClaudeIcon'
+import { CodexIcon } from '../components/CodexIcon'
+import { GithubCopilotIcon } from '../components/GithubCopilotIcon'
+import { AntigravityIcon } from '../components/AntigravityIcon'
+import { OpenCodeIcon } from '../components/OpenCodeIcon'
+import { NousResearchIcon } from '../components/NousResearchIcon'
 
 export const agentTypes: Record<string, AgentType> = {
   terminal: {
@@ -18,31 +23,31 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Claude Code',
     cmd: ['claude', '--dangerously-skip-permissions'],
     env: [['IS_SANDBOX', '1']],
-    icon: Claude.Color,
+    icon: ClaudeIcon,
   },
   codex: {
     id: 'codex',
     label: 'Codex CLI',
     cmd: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
-    icon: Codex.Color,
+    icon: CodexIcon,
   },
   copilot: {
     id: 'copilot',
     label: 'GitHub Copilot',
     cmd: ['copilot', '--allow-all-tools', '--allow-all-paths'],
-    icon: GithubCopilot,
+    icon: GithubCopilotIcon,
   },
   agy: {
     id: 'agy',
     label: 'Antigravity',
     cmd: ['agy', '--dangerously-skip-permissions'],
-    icon: Antigravity.Color,
+    icon: AntigravityIcon,
   },
   opencode: {
     id: 'opencode',
     label: 'OpenCode',
     cmd: ['opencode', '--auto'],
-    icon: OpenCode,
+    icon: OpenCodeIcon,
   },
   pi: {
     id: 'pi',
@@ -61,7 +66,7 @@ export const agentTypes: Record<string, AgentType> = {
     label: 'Hermes',
     cmd: ['hermes', '--yolo'],
     env: [['HERMES_TUI_BACKGROUND', '#000000']],
-    icon: NousResearch,
+    icon: NousResearchIcon,
   },
   commandcode: {
     id: 'commandcode',
