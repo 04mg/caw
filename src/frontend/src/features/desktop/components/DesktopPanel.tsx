@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Loader2 } from 'lucide-react'
 import { ensureDesktop, desktopHealthCheck, markDesktopExited } from '../services/desktopRegistry'
 
 interface DesktopPanelProps {
@@ -69,8 +70,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
 
   // Inject CSS into the iframe document (same-origin via the Caw proxy) to
   // hide any remaining xpra chrome: the floating menu button, window
-  // borders/shadows drawn by the HTML5 client, and page margins so the app
-  // fills the pane edge-to-edge.
+  // borders/shadows and title bars drawn by the HTML5 client, and page
+  // margins so the app fills the pane edge-to-edge.
   const injectChromeCss = () => {
     const doc = iframeRef.current?.contentDocument
     if (!doc) return
@@ -78,6 +79,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
     style.textContent = `
       #float_menu, #float_menu_button, #float_tray { display: none !important; }
       .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
+      .windowhead { display: none !important; }
       html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
     `
     doc.head.appendChild(style)
@@ -106,8 +108,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
       data-pane-id={leafId}
     >
       {!ready && (
-        <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
-          Starting desktop session…
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/60" />
         </div>
       )}
       {ready && (

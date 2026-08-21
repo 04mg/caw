@@ -72,24 +72,17 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
         <p className="text-xs text-muted-foreground">Run graphical applications side by side with your agents.</p>
       </div>
 
-      {/* Xpra availability */}
-      <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
-        <div className="flex items-center gap-2">
-          <Monitor className="h-4 w-4 text-muted-foreground" />
-          <span className="text-xs font-medium">Xpra</span>
-          {status == null ? (
-            <span className="text-[10px] text-muted-foreground">Checking…</span>
-          ) : installed ? (
-            <span className="ml-auto inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-              Installed{status.xpraVersion ? ` · v${status.xpraVersion}` : ''}
-            </span>
-          ) : (
+      {/* Xpra availability — only shown when xpra is missing, so the user
+          knows why desktop apps are unavailable and how to install it. */}
+      {status != null && !installed && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+          <div className="flex items-center gap-2">
+            <Monitor className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs font-medium">Xpra</span>
             <span className="ml-auto inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
               Not installed
             </span>
-          )}
-        </div>
-        {status != null && !installed && (
+          </div>
           <div className="flex flex-col gap-1.5">
             <p className="text-[10px] text-muted-foreground">
               Caw uses Xpra to stream desktop apps into a pane. Install it on this device to enable desktop apps:
@@ -106,8 +99,8 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
               </a>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Configured apps */}
       <div className={`flex flex-col gap-3 ${installed ? '' : 'pointer-events-none opacity-50'}`}>
