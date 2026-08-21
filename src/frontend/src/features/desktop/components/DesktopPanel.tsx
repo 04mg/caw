@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Loader2, Maximize2 } from 'lucide-react'
-import { ensureDesktop, desktopHealthCheck, markDesktopExited } from '../services/desktopRegistry'
-import { parkIframe, takeIframe } from '../services/iframeLot'
+import { desktopHealthCheck, ensureDesktop, getDesktopSession, markDesktopExited } from '../services/desktopRegistry'
+import { acquireSurface, hideSurface, isSurfaceElement, showSurface, type DesktopSurface } from '../services/desktopSurface'
 import { getPrefs, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 
 interface DesktopPanelProps {
@@ -29,17 +29,22 @@ type KeyboardApi = Navigator & {
 // allow scripts, forms, popups and same-origin (required so the xpra
 // client's WebSocket to the Caw proxy counts as same-origin).
 //
-// The iframe element is created imperatively and parked in iframeLot when
-// the pane unmounts (tab/workspace switch), so coming back is instant —
-// moving an iframe within the same document does not reload it. When the
-// app closes or the stream dies, the pane closes itself via onClose.
+// The iframe itself lives in the persistent body-level surface layer (see
+// desktopSurface.ts) and is only positioned over this pane's rect while
+// the pane is mounted — never detached — so tab/workspace switches resume
+// instantly without reloading the stream or losing keyboard focus. When
+// the app closes or the stream dies, the pane closes itself via onClose.
 export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: DesktopPanelProps): ReactNode {
-  const [ready, setReady] = useState(false)
+  // Fast path: when the session already exists (returning to a parked
+  // pane), skip the spinner and surface it immediately.
+  const [ready, setReady] = useState(() => {
+    const s = getDesktopSession(leafId)
+    return !!s && !s.exited
+  })
   const [failed, setFailed] = useState(false)
   const [stream, setStream] = useState(() => getPrefs().desktopStream)
   const hostRef = useRef<HTMLDivElement>(null)
-  const wrapperRef = useRef<HTMLDivElement>(null)
-  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const surfaceRef = useRef<DesktopSurface | null>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
@@ -47,17 +52,12 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
 
   useEffect(() => {
     let cancelled = false
-    let spawned = false
-    setReady(false)
     setFailed(false)
 
     const boot = async () => {
       try {
         await ensureDesktop(leafId, cwd, cmd, env)
-        if (!cancelled) {
-          spawned = true
-          setReady(true)
-        }
+        if (!cancelled) setReady(true)
       } catch (err) {
         console.error('desktop session init failed:', err)
         if (!cancelled) setFailed(true)
@@ -67,12 +67,9 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
 
     return () => {
       cancelled = true
-      // Park the live iframe instead of destroying it so remounting this
-      // pane (tab/workspace switch) resumes instantly. Only park sessions
-      // that were actually running; a failed spawn has nothing to keep.
-      const iframe = iframeRef.current
-      iframeRef.current = null
-      if (iframe && spawned) parkIframe(leafId, iframe)
+      // The iframe stays in the surface layer; just take it off-screen.
+      hideSurface(leafId)
+      surfaceRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leafId, cwd, cmd, env])
@@ -167,25 +164,18 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
     }
   }, [])
 
-  // Mount/unmount the iframe element into the host div. Reuses a parked
-  // iframe when one exists for this leaf (instant resume); otherwise
-  // creates a fresh one that navigates to clientUrl once ready.
+  // Acquire the persistent surface for this leaf and keep it pinned over
+  // the pane's rect with a rAF loop (cheap: one getBoundingClientRect per
+  // frame, and it stays glued during splitter drags and layout shifts).
   useEffect(() => {
     const host = hostRef.current
     if (!host || !ready) return
 
-    const parked = takeIframe(leafId)
-    const reused = !!parked
-    const iframe = parked ?? document.createElement('iframe')
+    const surface = acquireSurface(leafId, clientUrl)
+    surfaceRef.current = surface
 
-    if (!reused) {
-      iframe.title = 'Desktop'
-      iframe.className = 'h-full w-full border-0'
-      iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads')
-      iframe.allow = 'clipboard-read; clipboard-write; fullscreen'
-    }
-    const onLoadHandler = () => {
-      injectChrome(iframe)
+    const onLoad = () => {
+      injectChrome(surface.iframe)
       // A load after the initial mount usually means the xpra client lost
       // its backend (app exited/crashed) and navigated — health-check
       // immediately instead of waiting for the next poll tick, so the pane
@@ -197,23 +187,24 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
         }
       })
     }
-    iframe.addEventListener('load', onLoadHandler)
-    iframeRef.current = iframe
+    surface.iframe.addEventListener('load', onLoad)
 
-    // Navigate only when needed: re-setting src on a reused iframe would
-    // reload it and defeat the parking lot.
-    if (iframe.dataset.cawSrc !== clientUrl) {
-      iframe.dataset.cawSrc = clientUrl
-      iframe.src = clientUrl
+    let raf = 0
+    const sync = () => {
+      if (host.isConnected) {
+        const rect = host.getBoundingClientRect()
+        if (rect.width < 1 || rect.height < 1) hideSurface(leafId)
+        else showSurface(leafId, rect)
+      }
+      raf = requestAnimationFrame(sync)
     }
-
-    host.appendChild(iframe)
-    injectChrome(iframe)
+    raf = requestAnimationFrame(sync)
 
     return () => {
-      iframe.removeEventListener('load', onLoadHandler)
-      if (iframeRef.current === iframe) iframeRef.current = null
-      if (iframe.parentElement === host) host.removeChild(iframe)
+      cancelAnimationFrame(raf)
+      surface.iframe.removeEventListener('load', onLoad)
+      hideSurface(leafId)
+      surfaceRef.current = null
     }
   }, [leafId, ready, clientUrl, injectChrome])
 
@@ -222,7 +213,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   // of the browser. Requires the Keyboard Lock API (Chromium) and only
   // takes effect in fullscreen; other browsers silently ignore it.
   const enterCapture = useCallback(async () => {
-    const wrapper = wrapperRef.current
+    const wrapper = surfaceRef.current?.wrapper
     if (!wrapper) return
     try {
       if (!document.fullscreenElement) await wrapper.requestFullscreen()
@@ -233,9 +224,9 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   }, [])
 
   useEffect(() => {
-    const wrapper = wrapperRef.current
     const onFsChange = () => {
-      if (document.fullscreenElement && document.fullscreenElement === wrapper) {
+      const wrapper = surfaceRef.current?.wrapper
+      if (document.fullscreenElement && wrapper && document.fullscreenElement === wrapper) {
         void (navigator as KeyboardApi).keyboard?.lock?.().catch(() => {})
       } else {
         ;(navigator as KeyboardApi).keyboard?.unlock?.()
@@ -244,7 +235,9 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
     document.addEventListener('fullscreenchange', onFsChange)
     return () => {
       document.removeEventListener('fullscreenchange', onFsChange)
-      if (document.fullscreenElement === wrapper) void document.exitFullscreen().catch(() => {})
+      // The pane may unmount while its surface is fullscreen (tab switch
+      // via hotkey); leave fullscreen so the layer isn't stuck on top.
+      if (isSurfaceElement(document.fullscreenElement)) void document.exitFullscreen().catch(() => {})
       ;(navigator as KeyboardApi).keyboard?.unlock?.()
     }
   }, [])
@@ -267,7 +260,6 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
 
   return (
     <div
-      ref={wrapperRef}
       className="relative h-full w-full overflow-hidden bg-black"
       data-active={isActive ? 'true' : 'false'}
       data-pane-id={leafId}
