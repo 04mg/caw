@@ -61,8 +61,8 @@ func NewSessionManager() *SessionManager {
 // kernel-assigned free port; Caw reverse-proxies the browser to it. The
 // start-child inherits the session's cwd and env.
 func (m *SessionManager) Create(req CreateRequest) (string, error) {
-	if err := EnsureInstalled(); err != nil {
-		return "", err
+	if !xpraAvailable() {
+		return "", fmt.Errorf("xpra is not installed on this device; install it from https://xpra.org/ to use desktop apps")
 	}
 	cwd := req.Cwd
 	if cwd == "" {
@@ -136,6 +136,12 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		"--pulseaudio=no",
 		"--notifications=no",
 		"--systemd-run=no",
+		// Chrome-free embedding: no xpra-drawn window borders, no tray,
+		// and the virtual display resizes to match the client pane.
+		"--border=off",
+		"--tray=no",
+		"--system-tray=no",
+		"--resize-display=yes",
 	}
 
 	cmd := exec.Command(xpraBinary, args...)

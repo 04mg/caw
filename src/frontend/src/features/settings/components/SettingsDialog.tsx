@@ -4,7 +4,7 @@ import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 import { Checkbox } from '@/components/checkbox'
 
-import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus, Monitor } from 'lucide-react'
 import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
@@ -32,6 +32,7 @@ import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { SaveToast } from './SaveToast'
 import { PetsSettingsPanel } from './PetsSettingsPanel'
+import { DesktopSettingsPanel } from './DesktopSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
 import { createQuotaAccount, getSelectedQuotaAccount, normalizeQuotaSettingsPayload, serializeQuotaSettingsPayload, type QuotaProviderId, type QuotaProviderSettings, type QuotaSettingsMode } from '@/features/shared/utils/quotaLimits'
 
@@ -85,7 +86,7 @@ const BUNDLED_THEMES: ThemePreset[] = [
   { name: 'Caw Light', customization: bundledTheme('Caw Light') },
 ]
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
+type Section = 'appearance' | 'agents' | 'terminal' | 'desktop' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
@@ -763,6 +764,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
+  { id: 'desktop', label: 'Desktop', icon: Monitor, category: 'Preferences' },
     { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
@@ -1204,6 +1206,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 </div>
               </div>
             </div>
+          )}
+
+          {activeSection === 'desktop' && (
+            <DesktopSettingsPanel />
           )}
 
           {activeSection === 'hotkeys' && (

@@ -1,16 +1,14 @@
 import { useState, useEffect, type ReactNode } from 'react'
-import { Terminal, Plus, Workflow, Globe } from 'lucide-react'
+import { Terminal, Plus, Workflow, Monitor } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
-import { desktopAppTypes } from '@/features/agents/services/desktopAppTypes'
 import { type LeafView } from '@/features/shared/utils/layout'
-import { getEffectiveAgentCmd, getDisabledAgents, getDesktopApps } from '@/features/prefs/stores/prefsStore'
+import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuLabel,
 } from '@/components/dropdown-menu'
 import { Checkbox } from '@/components/checkbox'
 
@@ -59,16 +57,9 @@ export function NewTabMenu({
       .catch(() => {})
   }, [])
 
-  // Merge user-defined desktop apps from prefs into the list shown in the
-  // menu. They appear after the hardcoded defaults and use the Globe icon
-  // when no matching desktopAppTypes entry exists.
-  const userDesktopApps = getDesktopApps()
-  const mergedDesktopApps = [
-    ...availableDesktopApps,
-    ...userDesktopApps
-      .filter((u) => !availableDesktopApps.some((a) => a.id === u.id))
-      .map((u) => ({ id: u.id, label: u.label, cmd: u.cmd, env: u.env })),
-  ]
+  // The backend returns the user-configured desktop apps (Desktop settings
+  // section), already filtered by binary availability and xpra presence.
+  const desktopApps = availableDesktopApps
 
   return (
     <DropdownMenu>
@@ -112,23 +103,18 @@ export function NewTabMenu({
             </>
           )
         })()}
-        {mergedDesktopApps.length > 0 && (
+        {desktopApps.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel>Desktop Apps</DropdownMenuLabel>
-            {mergedDesktopApps.map((appInfo) => {
-              const app = desktopAppTypes[appInfo.id]
-              const IconComponent = app?.icon || Globe
-              return (
-                <DropdownMenuItem
-                  key={appInfo.id}
-                  onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
-                >
-                  <IconComponent size={16} className="h-4 w-4" />
-                  <span>{appInfo.label}</span>
-                </DropdownMenuItem>
-              )
-            })}
+            {desktopApps.map((appInfo) => (
+              <DropdownMenuItem
+                key={appInfo.id}
+                onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
+              >
+                <Monitor size={16} className="h-4 w-4" />
+                <span>{appInfo.label}</span>
+              </DropdownMenuItem>
+            ))}
           </>
         )}
         <DropdownMenuSeparator />

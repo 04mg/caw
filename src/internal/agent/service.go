@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/04mg/caw/internal/prefs"
 )
 
 type Service struct{}
@@ -36,51 +38,26 @@ func (s *Service) ListAgents() []Info {
 	return available
 }
 
-// ListDesktopApps returns the hardcoded registry of graphical applications
-// Caw can launch inside an xpra desktop session, filtered by availability:
-// both the app binary and xpra must be on PATH. The set is intentionally
-// small and generic (a browser, the ZCode and DeepSeek Harness editors,
-// and the Unity game editor); user-defined apps can be added via the
-// DesktopApps preference (mirrors AgentCmds).
+// ListDesktopApps returns the user-configured desktop applications
+// (managed in the Desktop settings section), filtered by availability:
+// both the app binary and xpra must be on PATH. Caw does not ship a
+// default registry — the Desktop settings section is the single source of
+// truth for which apps appear in the New Tab menu.
 func (s *Service) ListDesktopApps() []DesktopApp {
-	// Try common browsers in order of preference.
-	browserCandidates := []struct {
-		Bin string
-		Arg []string
-	}{
-		{"firefox-esr", []string{"--new-window"}},
-		{"firefox", []string{"--new-window"}},
-		{"chromium", []string{}},
-		{"chromium-browser", []string{}},
-		{"xterm", []string{}},
+	if stateStore == nil {
+		return []DesktopApp{}
 	}
-	var browserCmd []string
-	for _, c := range browserCandidates {
-		if _, err := exec.LookPath(c.Bin); err == nil {
-			browserCmd = append([]string{c.Bin}, c.Arg...)
-			break
-		}
-	}
-	apps := []DesktopApp{}
-	if browserCmd != nil {
-		apps = append(apps, DesktopApp{ID: "browser", Label: "Browser", Cmd: browserCmd})
-	}
-	// Optional apps — only shown when installed.
-	for _, extra := range []DesktopApp{
-		{ID: "xterm", Label: "XTerm", Cmd: []string{"xterm"}},
-		{ID: "zcode", Label: "ZCode", Cmd: []string{"zcode"}},
-		{ID: "deepseek-harness", Label: "DeepSeek Harness", Cmd: []string{"deepseek-harness"}},
-		{ID: "unity", Label: "Unity", Cmd: []string{"unity-editor"}},
-	} {
-		if _, err := exec.LookPath(extra.Cmd[0]); err == nil {
-			apps = append(apps, extra)
-		}
-	}
+	userApps := prefs.GetPrefs(stateStore).DesktopApps
 	available := []DesktopApp{}
-	for _, a := range apps {
-		if _, err := exec.LookPath(a.Cmd[0]); err == nil {
-			available = append(available, a)
+	for _, u := range userApps {
+		if len(u.Cmd) == 0 {
+			continue
 		}
+		if _, err := exec.LookPath(u.Cmd[0]); err != nil {
+			continue
+		}
+		app := DesktopApp{ID: u.ID, Label: u.Label, Cmd: u.Cmd, Env: u.Env}
+		available = append(available, app)
 	}
 	// Only show desktop apps if xpra itself is installed; otherwise the
 	// menu entry would launch a desktop session that can never start.

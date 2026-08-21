@@ -61,10 +61,27 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
   // /desktop/{id}/ (proxied to the xpra WS server's built-in HTTP). URL
   // params auto-connect the client to the proxied WS path /ws/desktop/{id}
   // without showing the connect dialog. exit_with_children=1 keeps the
-  // session alive only while the app is running.
+  // session alive only while the app is running. The floating_menu/autohide
+  // params strip the xpra chrome so only the app UI is visible.
   const clientUrl = ready
-    ? `/desktop/${encodeURIComponent(leafId)}/?action=connect&exit_with_children=1&submit=Connect&path=${encodeURIComponent(`/ws/desktop/${encodeURIComponent(leafId)}`)}`
+    ? `/desktop/${encodeURIComponent(leafId)}/?action=connect&exit_with_children=1&submit=Connect&floating_menu=false&autohide=true&printing=false&file_transfer=false&sound=false&path=${encodeURIComponent(`/ws/desktop/${encodeURIComponent(leafId)}`)}`
     : ''
+
+  // Inject CSS into the iframe document (same-origin via the Caw proxy) to
+  // hide any remaining xpra chrome: the floating menu button, window
+  // borders/shadows drawn by the HTML5 client, and page margins so the app
+  // fills the pane edge-to-edge.
+  const injectChromeCss = () => {
+    const doc = iframeRef.current?.contentDocument
+    if (!doc) return
+    const style = doc.createElement('style')
+    style.textContent = `
+      #float_menu, #float_menu_button, #float_tray { display: none !important; }
+      .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
+      html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
+    `
+    doc.head.appendChild(style)
+  }
 
   if (failed) {
     return (
@@ -101,6 +118,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive }: DesktopPanelPr
           title="Desktop"
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
           allow="clipboard-read; clipboard-write; fullscreen"
+          onLoad={injectChromeCss}
         />
       )}
     </div>

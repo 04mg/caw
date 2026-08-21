@@ -25,6 +25,7 @@ func Register(apiMux *http.ServeMux, rootMux *http.ServeMux) {
 	apiMux.HandleFunc("POST /desktop", h.Create)
 	apiMux.HandleFunc("DELETE /desktop/{id}", h.Delete)
 	apiMux.HandleFunc("GET /desktop/{id}", h.Get)
+	apiMux.HandleFunc("GET /desktop/status", h.Status)
 
 	// Proxied routes (raw HTTP/WS to the xpra server, on the root mux so
 	// the iframe URL is a clean /desktop/{id}/... path).
@@ -75,6 +76,20 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// Status handles GET /api/desktop/status. Reports whether xpra is
+// installed on the host (and its version) so the Desktop settings section
+// can show install guidance when it's missing.
+func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
+	installed := xpraAvailable()
+	resp := map[string]any{"xpraInstalled": installed}
+	if installed {
+		if v := xpraVersion(); v != "" {
+			resp["xpraVersion"] = v
+		}
+	}
+	httpx.RespondJSON(w, resp)
 }
 
 // Get handles GET /api/desktop/{id}. Reports whether the session is alive.

@@ -2,14 +2,14 @@ package desktop
 
 import (
 	"os/exec"
+	"strings"
 	"sync"
 )
 
 // xpraBinary is the name of the xpra executable looked up on PATH. Caw
-// auto-provisions xpra on first launch (see EnsureInstalled) so this is
-// normally on PATH after the first run; the LookPath gate keeps the
-// desktop-app menu hidden on hosts where provisioning failed or was
-// skipped (e.g. offline).
+// does not install xpra itself; users install it on their device (see the
+// Desktop settings section). The LookPath gate keeps the desktop-app menu
+// hidden on hosts where xpra is not installed.
 const xpraBinary = "xpra"
 
 // xpraAvailable reports whether the xpra executable can be found on PATH.
@@ -18,6 +18,22 @@ const xpraBinary = "xpra"
 func xpraAvailable() bool {
 	_, err := exec.LookPath(xpraBinary)
 	return err == nil
+}
+
+// xpraVersion returns the xpra version string (e.g. "6.3.6") or an empty
+// string if it cannot be determined.
+func xpraVersion() string {
+	out, err := exec.Command(xpraBinary, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	for _, f := range fields {
+		if f[0] >= '0' && f[0] <= '9' {
+			return f
+		}
+	}
+	return ""
 }
 
 // displayMu guards the xpra display-number allocator. Display numbers are

@@ -158,6 +158,10 @@ export function getDesktopApps(): DesktopAppPref[] {
   return cache.desktopApps ?? []
 }
 
+export async function setDesktopApps(apps: DesktopAppPref[]): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, desktopApps: apps })
+}
+
 export function getDefaultShell(): string {
   return cache.defaultShell
 }
