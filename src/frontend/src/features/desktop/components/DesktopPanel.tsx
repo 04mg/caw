@@ -140,9 +140,10 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
   //   path as the native maximize button, which resizes the display to match
   //   the pane correctly (unlike --desktop-fullscreen, which only scales).
   //
-  // The .windowhead uses height:0 rather than display:none because xpra's
-  // JS reads the header's CSS height to compute its top offset — display:none
-  // still yields 30px and leaves a dead, unclickable strip at the top.
+  // The main window's head (#head1) uses height:0 rather than display:none
+  // because xpra's JS reads the header's CSS height to compute its top
+  // offset — display:none still yields 30px and leaves a dead, unclickable
+  // strip at the top.
   const injectChrome = useCallback((iframe: HTMLIFrameElement) => {
     const doc = iframe.contentDocument
     if (!doc) return
@@ -152,7 +153,11 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
       style.textContent = `
         #float_menu, #float_menu_button, #float_tray { display: none !important; }
         .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
-        .windowhead { display: none !important; height: 0 !important; }
+        /* Only the session's main window (#head1) runs chrome-free; popups
+           and secondary windows keep their draggable title bar, pinned at
+           the client's standard 30px header height. */
+        #head1 { display: none !important; height: 0 !important; }
+        .windowhead:not(#head1) { height: 30px !important; }
         #progress { display: none !important; }
         html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
       `
