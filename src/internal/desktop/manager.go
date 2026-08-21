@@ -146,7 +146,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		"--resize-display=yes",
 	}
 
-	cmd := exec.Command(xpraBinary, args...)
+	cmd := exec.Command(xpraPath(), args...)
 	cmd.Dir = cwd
 	cmd.Env = env
 	// Keep xpra's stderr for debugging; the server logs startup progress
@@ -293,7 +293,11 @@ func (m *SessionManager) ReconcileOrphans(knownLeafIDs map[string]bool) {
 // start-child gracefully (and --exit-with-children cleans up the Xvfb).
 func stopXpra(display int) error {
 	displaySpec := ":" + strconv.Itoa(display)
-	cmd := exec.Command(xpraBinary, "stop", displaySpec)
+	exe := xpraPath()
+	if exe == "" {
+		return fmt.Errorf("xpra is not installed; cannot stop %s", displaySpec)
+	}
+	cmd := exec.Command(exe, "stop", displaySpec)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("xpra stop %s: %w: %s", displaySpec, err, out)
 	}
