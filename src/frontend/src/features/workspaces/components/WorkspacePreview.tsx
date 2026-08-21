@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
+import { WorkspaceEmptyState } from '@/features/shared/components/WorkspaceEmptyState'
+import { countLeaves } from '@/features/shared/utils/layout'
+import { getSurface } from '@/features/desktop/services/desktopSurface'
 import { ensureTabGroups, findGroupById, collectGroups } from '../utils/tabGroups'
 import { type Workspace } from '../types'
 
@@ -49,17 +52,22 @@ interface WorkspacePreviewProps {
  * Composite every visible live terminal canvas in the main content area into
  * a single static image. Panes are located via their `data-pane-id` wrappers;
  * anything inside a hover-preview portal is excluded so we never capture our
- * own output. Returns a PNG data URL, or null when nothing is rendered.
+ * own output. Desktop panes contribute their xpra client canvases, read
+ * same-origin out of the session surface's iframe. Returns a PNG data URL,
+ * or null when nothing is rendered.
  */
 function captureActiveWorkspaceSnapshot(): string | null {
   const previewRoots = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-preview"]'))
   const panes = Array.from(document.querySelectorAll<HTMLElement>('div[data-pane-id]'))
+  // Deduplicate nested wrappers (TerminalGrid leaf + DesktopPanel root share
+  // the same data-pane-id) so panes aren't visited twice.
+  const unique = panes.filter((p) => !panes.some((other) => other !== p && other.contains(p)))
   const visible: DOMRect[] = []
-  for (const pane of panes) {
+  for (const pane of unique) {
     if (previewRoots.some((root) => root.contains(pane))) continue
     const rect = pane.getBoundingClientRect()
     if (rect.width < 2 || rect.height < 2) continue
-    if (!pane.querySelector('.xterm-screen canvas')) continue
+    if (!hasRenderableContent(pane)) continue
     visible.push(rect)
   }
   if (!visible.length) return null
@@ -85,19 +93,38 @@ function captureActiveWorkspaceSnapshot(): string | null {
   if (!ctx) return null
   ctx.scale(dpr, dpr)
 
-  const bg = getComputedStyle(panes[0]).backgroundColor
+  const bg = getComputedStyle(unique[0]).backgroundColor
   ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#000000'
   ctx.fillRect(0, 0, width, height)
 
-  for (const pane of panes) {
+  for (const pane of unique) {
     if (previewRoots.some((root) => root.contains(pane))) continue
-    for (const canvas of pane.querySelectorAll('canvas')) {
+    for (const canvas of collectPaneCanvases(pane)) {
       const rect = canvas.getBoundingClientRect()
       if (rect.width === 0 || rect.height === 0) continue
       ctx.drawImage(canvas, rect.left - left, rect.top - top, rect.width, rect.height)
     }
   }
   return out.toDataURL('image/png')
+}
+
+// A pane is worth capturing when it has a painted xterm canvas or a live
+// desktop session surface whose iframe document contains canvases.
+function hasRenderableContent(pane: HTMLElement): boolean {
+  if (pane.querySelector('.xterm-screen canvas')) return true
+  const doc = getSurface(pane.dataset.paneId ?? '')?.iframe.contentDocument
+  return !!doc && !!doc.querySelector('canvas')
+}
+
+// Collect the canvases to draw for a pane: its own xterm canvases plus, for
+// desktop panes, the xpra client's canvases inside the same-origin iframe.
+// The iframe is pinned exactly over the pane rect, so coordinates inside its
+// viewport match the top-level viewport.
+function collectPaneCanvases(pane: HTMLElement): HTMLCanvasElement[] {
+  const canvases = Array.from(pane.querySelectorAll('canvas'))
+  const doc = getSurface(pane.dataset.paneId ?? '')?.iframe.contentDocument
+  if (doc) canvases.push(...Array.from(doc.querySelectorAll('canvas')))
+  return canvases
 }
 
 function noop() {}
@@ -126,6 +153,10 @@ export function WorkspacePreview({ workspace, isActive, emoji, title, anchor }: 
     return () => cancelAnimationFrame(raf)
   }, [isActive])
 
+  // The workspace has nothing to show when its active tab is missing or
+  // holds no panes — render the shared empty state instead of a blank tile.
+  const isEmpty = !activeTab || countLeaves(activeTab.layout) === 0
+
   const left = anchor.side === 'right'
     ? anchor.edge + GAP
     : anchor.edge - GAP - THUMB_WIDTH
@@ -145,7 +176,9 @@ export function WorkspacePreview({ workspace, isActive, emoji, title, anchor }: 
       >
         <div className="overflow-hidden relative" style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }}>
           {isActive ? (
-            snapshot ? (
+            isEmpty ? (
+              <WorkspaceEmptyState />
+            ) : snapshot ? (
               <img src={snapshot} alt="" className="h-full w-full object-cover" draggable={false} />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
@@ -172,11 +205,10 @@ export function WorkspacePreview({ workspace, isActive, emoji, title, anchor }: 
                   onClose={noop}
                   cwd={workspace.path}
                   onSizesChange={noop}
+                  preview
                 />
               ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <p className="text-sm text-muted-foreground italic">Empty workspace</p>
-                </div>
+                <WorkspaceEmptyState />
               )}
             </div>
           )}

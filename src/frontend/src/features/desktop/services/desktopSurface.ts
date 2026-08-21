@@ -19,11 +19,12 @@ function getLayer(): HTMLElement {
   if (layer) return layer
   layer = document.createElement('div')
   layer.id = LAYER_ID
-  // Sits above regular pane content (z-auto) and the pane overlay controls
-  // stay reachable because they use higher z-indexes; dialogs and dropdown
+  // Sits above regular pane content (z-auto / z-[1]) but BELOW the split
+  // separator handles (z-10) so pane borders stay visible between desktop
+  // panes, and below pane overlay controls (z-20); dialogs and dropdown
   // portals live at z-50. The layer ignores pointers; each visible wrapper
   // re-enables them so exactly the on-screen iframe is interactive.
-  layer.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;'
+  layer.style.cssText = 'position:fixed;inset:0;z-index:5;pointer-events:none;'
   document.body.appendChild(layer)
   // Fullscreen must fill the viewport even though wrappers carry inline
   // geometry while docked in a pane.
@@ -60,9 +61,10 @@ export function acquireSurface(leafId: string, clientUrl: string): DesktopSurfac
   return s
 }
 
-// showSurface pins the surface over the pane's rect and restores keyboard
-// focus to the iframe document — without the focus grab, keystrokes keep
-// going to the parent page after the pane was hidden and reshown.
+// showSurface pins the surface over the pane's rect. Keyboard focus is
+// restored to the iframe document ONLY on the hidden→visible transition:
+// the caller invokes this every animation frame while docked, and grabbing
+// focus per-frame would continuously steal keystrokes from terminal panes.
 export function showSurface(leafId: string, rect: DOMRect): void {
   const s = surfaces.get(leafId)
   if (!s) return
@@ -71,8 +73,9 @@ export function showSurface(leafId: string, rect: DOMRect): void {
   st.top = `${rect.top}px`
   st.width = `${rect.width}px`
   st.height = `${rect.height}px`
+  const wasHidden = st.visibility !== 'visible'
   st.visibility = 'visible'
-  s.iframe.contentWindow?.focus()
+  if (wasHidden) s.iframe.contentWindow?.focus()
 }
 
 export function hideSurface(leafId: string): void {

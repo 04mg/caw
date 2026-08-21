@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { SplitLayout } from '@/features/shared/components/SplitLayout'
 import { Toaster, toast } from 'sonner'
-import cawSvg from '@/assets/logo.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
 import { KanbanBoard } from '@/features/kanban/components/KanbanBoard'
@@ -57,7 +56,7 @@ import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
-import { Shortcut } from './Shortcut'
+import { WorkspaceEmptyState } from './WorkspaceEmptyState'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
 
@@ -287,7 +286,6 @@ export function AppLayout() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSidebarOnRight = getCustomization().layout.sidebarOrder === 'explorer-workspace'
-  const logoFilter = getCustomization().logo.filter
   const explorerSidebarOnRight = !workspaceSidebarOnRight
 
   // Top-level SplitLayout sizing strategy
@@ -1151,7 +1149,13 @@ export function AppLayout() {
       const tabIndex = activeWorkspace.layouts.findIndex((l) => l.id === tabId)
       if (tabIndex < 0) return
       const tab = activeWorkspace.layouts[tabIndex]
-      for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId, deleteBranch)
+      // Tear down every leaf session; destroyDesktop is a no-op for
+      // non-desktop leaves, and skipping it leaked xpra processes when a
+      // tab containing a desktop pane was closed.
+      for (const leafId of collectLeafIds(tab.layout)) {
+        destroyTerminal(leafId, deleteBranch)
+        destroyDesktop(leafId)
+      }
 
       patchWorkspace(activeWorkspace.id, (ws) => {
         const layouts = ws.layouts.filter((l) => l.id !== tabId)
@@ -1745,52 +1749,16 @@ export function AppLayout() {
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   ) : activeWorkspace && layouts.length === 0 ? (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   ) : (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   )
 

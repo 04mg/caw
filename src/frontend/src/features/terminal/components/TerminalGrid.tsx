@@ -23,6 +23,9 @@ interface TerminalGridProps {
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
   onOpenFile?: (filePath: string, line?: number, column?: number) => void
+  // Preview mode (workspace hover thumbnails): panes render inert/static —
+  // desktop leaves show a placeholder instead of spawning a session.
+  preview?: boolean
 }
 
 function childKey(child: LayoutNode): string {
@@ -41,6 +44,7 @@ export function TerminalGrid({
   gitStatuses,
   onOpenDiff,
   onOpenFile,
+  preview,
 }: TerminalGridProps): ReactNode {
   if (node.type === 'empty') {
     return null
@@ -65,7 +69,7 @@ export function TerminalGrid({
         {isEditor ? (
           <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} onOpenFile={onOpenFile} />
         ) : isDesktop ? (
-          <DesktopPanel leafId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} onClose={onClose} />
+          <DesktopPanel leafId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} preview={preview} onClose={onClose} />
         ) : (
           <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} />
         )}
@@ -133,6 +137,7 @@ export function TerminalGrid({
           gitStatuses={gitStatuses}
           onOpenDiff={onOpenDiff}
           onOpenFile={onOpenFile}
+          preview={preview}
         />
       ))}
     </SplitGroup>

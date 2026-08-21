@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Loader2, Maximize2 } from 'lucide-react'
 import { desktopHealthCheck, ensureDesktop, getDesktopSession, markDesktopExited } from '../services/desktopRegistry'
 import { acquireSurface, hideSurface, isSurfaceElement, showSurface, type DesktopSurface } from '../services/desktopSurface'
-import { getPrefs, subscribePrefs } from '@/features/prefs/stores/prefsStore'
+import { getPrefs, subscribePrefs, getDesktopApps } from '@/features/prefs/stores/prefsStore'
+import { DesktopAppIcon } from './DesktopAppIcon'
 
 interface DesktopPanelProps {
   leafId: string
@@ -10,6 +11,10 @@ interface DesktopPanelProps {
   cmd?: string[]
   env?: [string, string][]
   isActive: boolean
+  // Preview mode (workspace hover thumbnails): render a static placeholder
+  // instead of spawning/attaching a real xpra session — hovering a sidebar
+  // row must never launch processes or steal keyboard focus.
+  preview?: boolean
   // Called when the desktop app / stream is gone so the pane closes itself.
   onClose: (leafId: string) => void
 }
@@ -34,7 +39,17 @@ type KeyboardApi = Navigator & {
 // the pane is mounted — never detached — so tab/workspace switches resume
 // instantly without reloading the stream or losing keyboard focus. When
 // the app closes or the stream dies, the pane closes itself via onClose.
-export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: DesktopPanelProps): ReactNode {
+export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose }: DesktopPanelProps): ReactNode {
+  // Resolve the app's identity (label/icon) for the preview placeholder by
+  // matching the leaf against the user's configured desktop apps.
+  const [appMeta] = useState(() => {
+    const apps = getDesktopApps()
+    return (
+      apps.find((a) => a.id === leafId) ??
+      apps.find((a) => cmd && a.cmd.length === cmd.length && a.cmd.every((c, i) => c === cmd[i])) ??
+      null
+    )
+  })
   // Fast path: when the session already exists (returning to a parked
   // pane), skip the spinner and surface it immediately.
   const [ready, setReady] = useState(() => {
@@ -51,6 +66,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   useEffect(() => subscribePrefs(() => setStream(getPrefs().desktopStream)), [])
 
   useEffect(() => {
+    if (preview) return
     let cancelled = false
     setFailed(false)
 
@@ -72,7 +88,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
       surfaceRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leafId, cwd, cmd, env])
+  }, [leafId, cwd, cmd, env, preview])
 
   // Health-check the session so we can close the pane as soon as the xpra
   // server dies (app closed, crash) — otherwise the dead session's proxy
@@ -80,13 +96,15 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   // has its own reconnect logic for transient drops, so we poll on a 1s
   // interval; the iframe's load handler below catches navigations sooner.
   useEffect(() => {
-    if (!ready) return
+    if (!ready || preview) return
     let active = true
     const check = async () => {
       if (!active) return
       const alive = await desktopHealthCheck(leafId)
       if (!active) return
       if (!alive) {
+        // Hide before closing so the error page can never flash.
+        hideSurface(leafId)
         markDesktopExited(leafId)
         onCloseRef.current(leafId)
       }
@@ -94,7 +112,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
     void check()
     const t = setInterval(check, 1000)
     return () => { active = false; clearInterval(t) }
-  }, [leafId, ready])
+  }, [leafId, ready, preview])
 
   // Build the xpra HTML5 client URL. The client is served by Caw at
   // /desktop/{id}/ (proxied to the xpra WS server's built-in HTTP). URL
@@ -169,7 +187,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
   // frame, and it stays glued during splitter drags and layout shifts).
   useEffect(() => {
     const host = hostRef.current
-    if (!host || !ready) return
+    if (!host || !ready || preview) return
 
     const surface = acquireSurface(leafId, clientUrl)
     surfaceRef.current = surface
@@ -182,12 +200,31 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
       // closes before a "404 page not found" error page becomes visible.
       void desktopHealthCheck(leafId).then((alive) => {
         if (!alive) {
+          hideSurface(leafId)
           markDesktopExited(leafId)
           onCloseRef.current(leafId)
         }
       })
     }
     surface.iframe.addEventListener('load', onLoad)
+
+    // Watchdog: when the session dies, the xpra client reloads itself and
+    // the proxy answers with a plain-text "404 page not found" document.
+    // Same-origin access lets us detect that document the moment it lands
+    // and hide the surface instantly — the error text must never be seen.
+    let dead = false
+    const sniff = () => {
+      if (dead) return
+      const body = surface.iframe.contentDocument?.body
+      if (body?.textContent?.includes('404 page not found')) {
+        dead = true
+        clearInterval(sniffTimer)
+        hideSurface(leafId)
+        markDesktopExited(leafId)
+        onCloseRef.current(leafId)
+      }
+    }
+    const sniffTimer = setInterval(sniff, 100)
 
     let raf = 0
     const sync = () => {
@@ -202,11 +239,12 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
 
     return () => {
       cancelAnimationFrame(raf)
+      clearInterval(sniffTimer)
       surface.iframe.removeEventListener('load', onLoad)
       hideSurface(leafId)
       surfaceRef.current = null
     }
-  }, [leafId, ready, clientUrl, injectChrome])
+  }, [leafId, ready, clientUrl, injectChrome, preview])
 
   // Keyboard capture: while the pane is fullscreen, lock the keyboard so
   // browser-reserved shortcuts (Ctrl+W, Ctrl+T, …) reach the app instead
@@ -241,6 +279,18 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
       ;(navigator as KeyboardApi).keyboard?.unlock?.()
     }
   }, [])
+
+  // Preview mode: static placeholder tile — no session, no surface, no
+  // keyboard interaction. Shows the app's identity so hover previews of
+  // workspaces containing desktop panes aren't just black rectangles.
+  if (preview) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-black" data-pane-id={leafId}>
+        <DesktopAppIcon appId={appMeta?.id ?? leafId} icon={appMeta?.icon} iconColor={appMeta?.iconColor} size={40} className="opacity-80" />
+        <span className="max-w-[80%] truncate text-xs text-muted-foreground/80">{appMeta?.label ?? cmd?.[0] ?? 'Desktop app'}</span>
+      </div>
+    )
+  }
 
   if (failed) {
     return (
