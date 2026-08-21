@@ -1,5 +1,7 @@
+export type LeafView = 'terminal' | 'editor' | 'desktop'
+
 export type LayoutNode =
-  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string; revealLine?: number; revealColumn?: number }
+  | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string; revealLine?: number; revealColumn?: number; view?: LeafView }
   | { type: 'split'; id: string; orientation: 'horizontal' | 'vertical'; children: LayoutNode[]; sizes: number[] }
   | { type: 'empty' }
 
@@ -12,6 +14,19 @@ export function normalizeLayout(node: unknown): LayoutNode {
   const n = node as Record<string, unknown>
   if (n.type === 'empty') return { type: 'empty' }
   if (n.type === 'leaf') {
+    // Normalize the view field. Legacy leaves with no explicit view infer
+    // "editor" from filePath/isDiff and default to "terminal" otherwise,
+    // mirroring the backend's loadLayoutTree normalization.
+    const filePath = typeof n.filePath === 'string' ? n.filePath : undefined
+    const isDiff = typeof n.isDiff === 'boolean' ? n.isDiff : undefined
+    let view: LeafView | undefined
+    if (n.view === 'terminal' || n.view === 'editor' || n.view === 'desktop') {
+      view = n.view as LeafView
+    } else if (filePath || isDiff) {
+      view = 'editor'
+    } else {
+      view = 'terminal'
+    }
     return {
       type: 'leaf',
       id: typeof n.id === 'string' ? n.id : crypto.randomUUID(),
@@ -19,13 +34,14 @@ export function normalizeLayout(node: unknown): LayoutNode {
       cmd: Array.isArray(n.cmd) ? (n.cmd as string[]) : undefined,
       env: Array.isArray(n.env) ? (n.env as [string, string][]) : undefined,
       agentId: typeof n.agentId === 'string' ? n.agentId : undefined,
-      filePath: typeof n.filePath === 'string' ? n.filePath : undefined,
-      isDiff: typeof n.isDiff === 'boolean' ? n.isDiff : undefined,
+      filePath,
+      isDiff,
       agentBranch: typeof n.agentBranch === 'string' ? n.agentBranch : undefined,
       baseBranch: typeof n.baseBranch === 'string' ? n.baseBranch : undefined,
       petSlug: typeof n.petSlug === 'string' ? n.petSlug : undefined,
       revealLine: typeof n.revealLine === 'number' ? n.revealLine : undefined,
       revealColumn: typeof n.revealColumn === 'number' ? n.revealColumn : undefined,
+      view,
     }
   }
   if (n.type === 'split') {
@@ -48,8 +64,8 @@ export function normalizeLayout(node: unknown): LayoutNode {
   return createEmpty()
 }
 
-export function createLeaf(cwd: string, cmd?: string[], agentId?: string, env?: [string, string][]): LayoutNode {
-  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, env, agentId }
+export function createLeaf(cwd: string, cmd?: string[], agentId?: string, env?: [string, string][], view?: LeafView): LayoutNode {
+  return { type: 'leaf', id: crypto.randomUUID(), cwd, cmd, env, agentId, view }
 }
 
 export function splitLeaf(

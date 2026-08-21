@@ -4,7 +4,7 @@ import { Slider } from '@/components/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 import { Checkbox } from '@/components/checkbox'
 
-import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
+import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus, Monitor } from 'lucide-react'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
 import { ClaudeIcon } from '@/features/agents/components/ClaudeIcon'
@@ -38,6 +38,7 @@ import { SettingsItem } from './SettingsItem'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { SaveToast } from './SaveToast'
 import { PetsSettingsPanel } from './PetsSettingsPanel'
+import { DesktopSettingsPanel } from './DesktopSettingsPanel'
 import cawLogoSvg from '@/assets/app-logo.svg'
 import { createQuotaAccount, getSelectedQuotaAccount, normalizeQuotaSettingsPayload, serializeQuotaSettingsPayload, type QuotaProviderId, type QuotaProviderSettings, type QuotaSettingsMode } from '@/features/shared/utils/quotaLimits'
 
@@ -91,7 +92,7 @@ const BUNDLED_THEMES: ThemePreset[] = [
   { name: 'Caw Light', customization: bundledTheme('Caw Light') },
 ]
 
-type Section = 'appearance' | 'agents' | 'terminal' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
+type Section = 'appearance' | 'agents' | 'terminal' | 'desktop' | 'workspaces' | 'limits' | 'notifications' | 'voice' | 'updates' | 'hotkeys' | 'pets'
 
 export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<Section>('updates')
@@ -705,9 +706,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
   }
 
-  // PetsSettingsPanel reports its own save outcomes through this callback so
-  // all settings sections share the same floating save toast.
-  const handlePetsSaveStatus = (status: 'idle' | 'success' | 'error') => {
+  // Panels that save through their own stores (pets, desktop) report their
+  // save outcomes through this callback so all settings sections share the
+  // same floating save toast.
+  const handlePanelSaveStatus = (status: 'idle' | 'success' | 'error') => {
     setSaveStatus(status)
     if (status !== 'idle') {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -769,6 +771,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'appearance', label: 'Appearance', icon: Palette, category: 'Preferences' },
     { id: 'terminal', label: 'Terminal', icon: Terminal, category: 'Preferences' },
+  { id: 'desktop', label: 'Desktop', icon: Monitor, category: 'Preferences' },
     { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, category: 'Preferences' },
     { id: 'voice', label: 'Voice', icon: Mic, category: 'Preferences' },
     { id: 'workspaces', label: 'Workspaces', icon: Folder, category: 'General' },
@@ -1212,6 +1215,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
+          {activeSection === 'desktop' && (
+            <DesktopSettingsPanel onSaveStatusChange={handlePanelSaveStatus} />
+          )}
+
           {activeSection === 'hotkeys' && (
             <div className="flex flex-col gap-4">
               <div>
@@ -1284,7 +1291,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
-          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePetsSaveStatus} />}
+          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePanelSaveStatus} />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">

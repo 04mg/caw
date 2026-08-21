@@ -1,7 +1,9 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { Terminal, Plus, Workflow } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
+import { type LeafView } from '@/features/shared/utils/layout'
 import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
+import { DesktopAppIcon } from '@/features/desktop/components/DesktopAppIcon'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -12,7 +14,7 @@ import {
 import { Checkbox } from '@/components/checkbox'
 
 interface NewTabMenuProps {
-  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][]) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: LeafView) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   children?: ReactNode
@@ -31,8 +33,9 @@ export function NewTabMenu({
   className,
   triggerClassName,
   triggerTitle = 'New tab/agent',
-}: NewTabMenuProps) {
+}: NewTabMenuProps): ReactNode {
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
+  const [availableDesktopApps, setAvailableDesktopApps] = useState<any[]>([])
 
   useEffect(() => {
     fetch('/api/agents')
@@ -44,7 +47,20 @@ export function NewTabMenu({
         }
       })
       .catch(() => {})
+    fetch('/api/agents/desktop')
+      .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
+      .then((json) => {
+        const data = json?.data
+        if (Array.isArray(data)) {
+          setAvailableDesktopApps(data)
+        }
+      })
+      .catch(() => {})
   }, [])
+
+  // The backend returns the user-configured desktop apps (Desktop settings
+  // section), already filtered by binary availability and xpra presence.
+  const desktopApps = availableDesktopApps
 
   return (
     <DropdownMenu>
@@ -78,7 +94,7 @@ export function NewTabMenu({
                 return (
                   <DropdownMenuItem
                     key={agentInfo.id}
-                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, agent?.env)}
+                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, undefined, agent?.env)}
                   >
                     <IconComponent size={16} className="h-4 w-4" />
                     <span>{agentInfo.label}</span>
@@ -88,6 +104,20 @@ export function NewTabMenu({
             </>
           )
         })()}
+        {desktopApps.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            {desktopApps.map((appInfo) => (
+              <DropdownMenuItem
+                key={appInfo.id}
+                onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
+              >
+                <DesktopAppIcon appId={appInfo.id} icon={appInfo.icon} iconColor={appInfo.iconColor} size={16} className="h-4 w-4" />
+                <span>{appInfo.label}</span>
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={(e) => {

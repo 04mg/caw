@@ -13,6 +13,33 @@ export interface PetsConfig {
   uniquePerAgent?: boolean
 }
 
+export interface DesktopAppPref {
+  id: string
+  label: string
+  cmd: string[]
+  env?: [string, string][]
+  // Icon ref: 'si:<slug>' (vendored Simple Icons), 'lucide:<Name>' (generic
+  // glyph) or a data:image/... URL (user upload). Undefined = generic icon.
+  icon?: string
+  // Hex tint applied to vector icons (si:/lucide:); uploads render as-is.
+  iconColor?: string
+}
+
+export interface DesktopStreamPrefs {
+  // Encoding: auto, jpeg, png or webp.
+  encoding: string
+  // Image quality 1-100 (higher = sharper, more bandwidth).
+  quality: number
+  // Encode speed 1-100 (higher = lower latency, more bandwidth).
+  speed: number
+}
+
+export const DEFAULT_DESKTOP_STREAM: DesktopStreamPrefs = {
+  encoding: 'auto',
+  quality: 90,
+  speed: 65,
+}
+
 export interface PrefsState {
   defaultNewAgent: string
   disabledAgents: string[]
@@ -23,6 +50,8 @@ export interface PrefsState {
   hotkeys: Record<string, string>
   pets: PetsConfig
   customization: CustomizationState
+  desktopApps: DesktopAppPref[]
+  desktopStream: DesktopStreamPrefs
 }
 
 export const DEFAULT_PARKED_TERMINALS = 6
@@ -73,6 +102,8 @@ let cache: PrefsState = {
   hotkeys: { ...DEFAULT_HOTKEYS },
   pets: { ...DEFAULT_PETS, agentPins: {} },
   customization: DEFAULT_CUSTOMIZATION,
+  desktopApps: [],
+  desktopStream: { ...DEFAULT_DESKTOP_STREAM },
 }
 
 let loaded = false
@@ -143,6 +174,25 @@ export function getEffectiveAgentCmd(agentId: string, defaultCmd: string[]): str
   const override = cache.agentCmds[agentId]
   if (override && Array.isArray(override) && override.length > 0) return override
   return defaultCmd
+}
+
+const NO_APPS: DesktopAppPref[] = []
+
+export function getDesktopApps(): DesktopAppPref[] {
+  // Stable empty reference: useSyncExternalStore snapshots must not allocate.
+  return cache.desktopApps ?? NO_APPS
+}
+
+export async function setDesktopApps(apps: DesktopAppPref[]): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, desktopApps: apps })
+}
+
+export function getDesktopStream(): DesktopStreamPrefs {
+  return cache.desktopStream ?? { ...DEFAULT_DESKTOP_STREAM }
+}
+
+export async function setDesktopStream(stream: DesktopStreamPrefs): Promise<boolean> {
+  return persistAndBroadcast({ ...cache, desktopStream: stream })
 }
 
 export function getDefaultShell(): string {

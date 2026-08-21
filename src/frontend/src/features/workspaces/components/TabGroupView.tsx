@@ -23,7 +23,7 @@ interface TabGroupViewProps {
   onSwitchTab: (tabId: string, groupId: string) => void
   onCloseTab: (tabId: string) => void
   onReorderTabs: (tabId: string, groupId: string, toIndex: number) => void
-  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => void
+  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: import('@/features/shared/utils/layout').LeafView) => void
   onSplitGroup: (
     targetGroupId: string,
     draggedTabId: string,
@@ -107,6 +107,7 @@ export function TabGroupView({
       filePath: tab && tab.layout.type === 'leaf' ? tab.layout.filePath : undefined,
       isDiff: tab && tab.layout.type === 'leaf' ? tab.layout.isDiff : undefined,
       agentStatus: tab ? resolveTabAgentStatus(tab.layout) : undefined,
+      view: tab && tab.layout.type === 'leaf' ? tab.layout.view : undefined,
     }
   })
 
@@ -176,7 +177,7 @@ export function TabGroupView({
             onSwitch={(idx) => onSwitchTab(group.tabs[idx], group.id)}
             onClose={(idx) => onCloseTab(group.tabs[idx])}
             onReorder={(fromIdx, toIdx) => onReorderTabs(group.tabs[fromIdx], group.id, toIdx)}
-            onAdd={(cmd, agentId, label, env) => onAddTab(cmd, agentId, label, group.id, env)}
+            onAdd={(cmd, agentId, label, _groupId, env, view) => onAddTab(cmd, agentId, label, group.id, env, view)}
             enableWorktrees={workspace.enableWorktrees}
             onToggleWorktrees={onToggleWorktrees}
             onDragStart={onDragStart}

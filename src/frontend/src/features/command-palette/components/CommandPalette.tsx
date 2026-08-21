@@ -6,11 +6,21 @@ import { Input } from '@/components/input'
 import { cn } from '@/features/shared/utils/utils'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
+import { DesktopAppIcon } from '@/features/desktop/components/DesktopAppIcon'
 
 interface AgentInfo {
   id: string
   label: string
   cmd: string[]
+}
+
+interface DesktopAppInfo {
+  id: string
+  label: string
+  cmd: string[]
+  icon?: string
+  iconColor?: string
+  env?: [string, string][]
 }
 
 interface FileResult {
@@ -35,6 +45,7 @@ interface CommandPaletteProps {
   onOpenFile: (path: string) => void
   onAddTerminal: () => void
   onAddAgent: (cmd: string[], agentId: string, label: string, env?: [string, string][]) => void
+  onAddDesktopApp: (cmd: string[], appId: string, label: string, env?: [string, string][]) => void
   onOpenWorkspacePicker: () => void
   enableWorktrees: boolean
   onToggleWorktrees: () => void
@@ -48,6 +59,7 @@ export function CommandPalette({
   onOpenFile,
   onAddTerminal,
   onAddAgent,
+  onAddDesktopApp,
   onOpenWorkspacePicker,
   enableWorktrees,
   onToggleWorktrees,
@@ -55,6 +67,7 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  const [desktopApps, setDesktopApps] = useState<DesktopAppInfo[]>([])
   const [disabledAgents, setDisabledAgents] = useState<string[]>([])
   const [fileResults, setFileResults] = useState<FileResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -68,6 +81,11 @@ export function CommandPalette({
       .then((r) => r.ok ? r.json() : Promise.resolve({ data: [] }))
       .then((json) => setAgents(json?.data ?? []))
       .catch(() => setAgents([]))
+
+    fetch('/api/agents/desktop')
+      .then((r) => r.ok ? r.json() : Promise.resolve({ data: [] }))
+      .then((json) => setDesktopApps(json?.data ?? []))
+      .catch(() => setDesktopApps([]))
 
     setDisabledAgents(getDisabledAgents())
   }, [open])
@@ -156,6 +174,16 @@ export function CommandPalette({
       })
     }
 
+    for (const app of desktopApps) {
+      result.push({
+        id: `desktop-app-${app.id}`,
+        label: `> New ${app.label}`,
+        type: 'command',
+        icon: <DesktopAppIcon appId={app.id} icon={app.icon} iconColor={app.iconColor} size={16} className="h-4 w-4" />,
+        action: () => { onAddDesktopApp(app.cmd, app.id, app.label, app.env); onOpenChange(false) },
+      })
+    }
+
     for (const file of fileResults) {
       if (file.isDir) continue
       result.push({
@@ -169,7 +197,7 @@ export function CommandPalette({
     }
 
     return result
-  }, [agents, disabledAgents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onOpenFile, enableWorktrees, onToggleWorktrees])
+  }, [agents, desktopApps, disabledAgents, fileResults, onAddTerminal, onOpenChange, onOpenWorkspacePicker, onAddAgent, onAddDesktopApp, onOpenFile, enableWorktrees, onToggleWorktrees])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items

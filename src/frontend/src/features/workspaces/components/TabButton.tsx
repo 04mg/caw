@@ -4,6 +4,9 @@ import { agentTypes } from '@/features/agents/services/agentTypes'
 import { useFileDirty } from '@/features/editor/hooks/useFileDirty'
 import { type AgentStatus } from '@/features/agents/types'
 import { getAgentStatusDot } from '@/features/agents/utils/statusDot'
+import { DesktopAppIcon } from '@/features/desktop/components/DesktopAppIcon'
+import { useDesktopApp } from '@/features/desktop/hooks/useDesktopApp'
+import { type LeafView } from '@/features/shared/utils/layout'
 
 export interface TabItem {
   id: string
@@ -12,14 +15,26 @@ export interface TabItem {
   filePath?: string
   isDiff?: boolean
   agentStatus?: AgentStatus
+  view?: LeafView
 }
 
-function renderTabIcon(tab: TabItem) {
+function renderTabIcon(tab: TabItem, desktopAppIcon?: { icon?: string; iconColor?: string }) {
   if (tab.isDiff) {
     return <GitBranch className="h-3.5 w-3.5 text-primary shrink-0" />
   }
   if (tab.filePath) {
     return <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+  }
+  if (tab.view === 'desktop' && tab.agentId) {
+    return (
+      <DesktopAppIcon
+        appId={tab.agentId}
+        icon={desktopAppIcon?.icon}
+        iconColor={desktopAppIcon?.iconColor}
+        size={14}
+        className="h-3.5 w-3.5"
+      />
+    )
   }
   const agent = tab.agentId ? agentTypes[tab.agentId] : null
   if (agent && agent.icon) {
@@ -59,6 +74,7 @@ export function TabButton({
   setTabRef,
 }: TabButtonProps) {
   const dirty = useFileDirty(tab.filePath)
+  const desktopApp = useDesktopApp(tab.view === 'desktop' ? tab.agentId : undefined)
   const displayName = dirty ? `${tab.name}*` : tab.name
   return (
     <button
@@ -84,7 +100,7 @@ export function TabButton({
           : { transition: 'transform 0.15s ease-out' }),
       }}
     >
-      {renderTabIcon(tab)}
+      {renderTabIcon(tab, desktopApp)}
       <span className="truncate max-w-28">{displayName}</span>
       <span className="relative ml-1 flex h-3 w-3 shrink-0 items-center justify-center">
         {tab.agentId && tab.agentStatus && (() => {

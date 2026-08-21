@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/04mg/caw/internal/prefs"
 )
 
 type Service struct{}
@@ -32,6 +34,37 @@ func (s *Service) ListAgents() []Info {
 	for _, a := range agentsList {
 		if isAgentAvailable(a.Cmd[0]) {
 			available = append(available, a)
+		}
+	}
+	return available
+}
+
+// ListDesktopApps returns the user-configured desktop applications
+// (managed in the Desktop settings section), filtered by availability:
+// both the app binary and xpra must be on PATH. Caw does not ship a
+// default registry — the Desktop settings section is the single source of
+// truth for which apps appear in the New Tab menu.
+func (s *Service) ListDesktopApps() []DesktopApp {
+	if stateStore == nil {
+		return []DesktopApp{}
+	}
+	userApps := prefs.GetPrefs(stateStore).DesktopApps
+	available := []DesktopApp{}
+	for _, u := range userApps {
+		if len(u.Cmd) == 0 {
+			continue
+		}
+		if _, err := exec.LookPath(u.Cmd[0]); err != nil {
+			continue
+		}
+		app := DesktopApp{ID: u.ID, Label: u.Label, Cmd: u.Cmd, Env: u.Env, Icon: u.Icon, IconColor: u.IconColor}
+		available = append(available, app)
+	}
+	// Only show desktop apps if xpra itself is installed; otherwise the
+	// menu entry would launch a desktop session that can never start.
+	if len(available) > 0 {
+		if _, err := exec.LookPath("xpra"); err != nil {
+			return []DesktopApp{}
 		}
 	}
 	return available

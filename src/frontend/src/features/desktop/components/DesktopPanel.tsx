@@ -1,0 +1,474 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Loader2, Maximize2 } from 'lucide-react'
+import { desktopHealthCheck, ensureDesktop, getDesktopSession, markDesktopExited } from '../services/desktopRegistry'
+import { acquireSurface, hideSurface, isSurfaceElement, showSurface, type DesktopSurface } from '../services/desktopSurface'
+import { getPrefs, subscribePrefs, getDesktopApps, getHotkey, DEFAULT_HOTKEYS } from '@/features/prefs/stores/prefsStore'
+import { DesktopAppIcon } from './DesktopAppIcon'
+
+interface DesktopPanelProps {
+  leafId: string
+  cwd: string
+  cmd?: string[]
+  env?: [string, string][]
+  isActive: boolean
+  // Preview mode (workspace hover thumbnails): render a static placeholder
+  // instead of spawning/attaching a real xpra session — hovering a sidebar
+  // row must never launch processes or steal keyboard focus.
+  preview?: boolean
+  // Reports clicks on the session surface so the pane can become the
+  // active pane — the body-level wrapper swallows the pointer events that
+  // would otherwise reach the pane wrapper's own handlers.
+  onFocusPane?: (leafId: string) => void
+  // Called when the desktop app / stream is gone so the pane closes itself.
+  onClose: (leafId: string) => void
+}
+
+type KeyboardApi = Navigator & {
+  keyboard?: {
+    lock?: (keys?: string[]) => Promise<void>
+    unlock?: () => void
+  }
+}
+
+// DesktopPanel renders an xpra-forwarded graphical application inside a
+// pane. It is the desktop equivalent of TerminalPanel: ensureDesktop
+// spawns the xpra server for the leaf, then an <iframe> loads the xpra
+// HTML5 client (served by Caw at /desktop/{id}/) which connects back over
+// the proxied WebSocket at /ws/desktop/{id}. The iframe is sandboxed to
+// allow scripts, forms, popups and same-origin (required so the xpra
+// client's WebSocket to the Caw proxy counts as same-origin).
+//
+// The iframe itself lives in the persistent body-level surface layer (see
+// desktopSurface.ts) and is only positioned over this pane's rect while
+// the pane is mounted — never detached — so tab/workspace switches resume
+// instantly without reloading the stream or losing keyboard focus. When
+// the app closes or the stream dies, the pane closes itself via onClose.
+export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocusPane, onClose }: DesktopPanelProps): ReactNode {
+  // Resolve the app's identity (label/icon) for the preview placeholder by
+  // matching the leaf against the user's configured desktop apps.
+  const [appMeta] = useState(() => {
+    const apps = getDesktopApps()
+    return (
+      apps.find((a) => a.id === leafId) ??
+      apps.find((a) => cmd && a.cmd.length === cmd.length && a.cmd.every((c, i) => c === cmd[i])) ??
+      null
+    )
+  })
+  // Fast path: when the session already exists (returning to a parked
+  // pane), skip the spinner and surface it immediately.
+  const [ready, setReady] = useState(() => {
+    const s = getDesktopSession(leafId)
+    return !!s && !s.exited
+  })
+  const [failed, setFailed] = useState(false)
+  const [stream, setStream] = useState(() => getPrefs().desktopStream)
+  const hostRef = useRef<HTMLDivElement>(null)
+  const surfaceRef = useRef<DesktopSurface | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const onFocusPaneRef = useRef(onFocusPane)
+  onFocusPaneRef.current = onFocusPane
+
+  useEffect(() => subscribePrefs(() => setStream(getPrefs().desktopStream)), [])
+
+  useEffect(() => {
+    if (preview) return
+    let cancelled = false
+    setFailed(false)
+
+    const boot = async () => {
+      try {
+        await ensureDesktop(leafId, cwd, cmd, env)
+        if (!cancelled) setReady(true)
+      } catch (err) {
+        console.error('desktop session init failed:', err)
+        if (!cancelled) setFailed(true)
+      }
+    }
+    void boot()
+
+    return () => {
+      cancelled = true
+      // The iframe stays in the surface layer; just take it off-screen.
+      hideSurface(leafId)
+      surfaceRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leafId, cwd, cmd, env, preview])
+
+  // Health-check the session so we can close the pane as soon as the xpra
+  // server dies (app closed, crash) — otherwise the dead session's proxy
+  // answers "404 page not found" inside the pane. The xpra HTML5 client
+  // has its own reconnect logic for transient drops, so we poll on a 1s
+  // interval; the iframe's load handler below catches navigations sooner.
+  useEffect(() => {
+    if (!ready || preview) return
+    let active = true
+    const check = async () => {
+      if (!active) return
+      const alive = await desktopHealthCheck(leafId)
+      if (!active) return
+      if (!alive) {
+        // Hide before closing so the error page can never flash.
+        hideSurface(leafId)
+        markDesktopExited(leafId)
+        onCloseRef.current(leafId)
+      }
+    }
+    void check()
+    const t = setInterval(check, 1000)
+    return () => { active = false; clearInterval(t) }
+  }, [leafId, ready, preview])
+
+  // Build the xpra HTML5 client URL. The client is served by Caw at
+  // /desktop/{id}/ (proxied to the xpra WS server's built-in HTTP). URL
+  // params auto-connect the client to the proxied WS path /ws/desktop/{id}
+  // without showing the connect dialog. exit_with_children=1 keeps the
+  // session alive only while the app is running. The floating_menu/autohide
+  // params strip the xpra chrome; encoding/quality/speed come from the
+  // user's streaming preferences.
+  const clientUrl = ready
+    ? `/desktop/${encodeURIComponent(leafId)}/?action=connect&exit_with_children=1&submit=Connect&floating_menu=false&autohide=true&printing=false&file_transfer=false&sound=false&encoding=${encodeURIComponent(stream.encoding)}&quality=${stream.quality}&speed=${stream.speed}&path=${encodeURIComponent(`/ws/desktop/${encodeURIComponent(leafId)}`)}`
+    : ''
+
+  // Inject CSS + JS into the iframe document (same-origin via the Caw
+  // proxy) to restyle the xpra chrome and start the app maximized:
+  // - hide the floating menu, #progress overlay ("Opening WebSocket
+  //   connection…") and page margins;
+  // - the session's main window runs fully chrome-free (its title bar
+  //   #head1 is hidden with height:0 — xpra's JS reads the header's CSS
+  //   height to compute its top offset, so display:none alone leaves a
+  //   dead, unclickable strip at the top);
+  // - every other window gets macOS-style chrome: rounded corners with a
+  //   small border and soft shadow, a dark translucent title bar, centered
+  //   title and traffic-light buttons;
+  // - maximize each window via the client's set_maximized() — the same code
+  //   path as the native maximize button, which resizes the display to match
+  //   the pane correctly (unlike --desktop-fullscreen, which only scales).
+  const injectChrome = useCallback((iframe: HTMLIFrameElement) => {
+    const doc = iframe.contentDocument
+    if (!doc) return
+    if (!doc.getElementById('caw-chrome-style')) {
+      const style = doc.createElement('style')
+      style.id = 'caw-chrome-style'
+      style.textContent = `
+        #float_menu, #float_menu_button, #float_tray { display: none !important; }
+        /* The session's main window runs fully chrome-free; every other
+           window (popups, dialogs) gets macOS-style chrome instead. */
+        #head1 { display: none !important; height: 0 !important; }
+        .window.border {
+          border-radius: 10px !important;
+          overflow: hidden !important;
+          border: 1px solid rgba(255, 255, 255, 0.14) !important;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55) !important;
+        }
+        .window.border:has(.windowhead#head1) {
+          border-radius: 0 !important;
+          overflow: visible !important;
+          border: none !important;
+          box-shadow: none !important;
+          /* Always the lowest window: popups/dialogs must never get lost
+             underneath it. */
+          z-index: -1 !important;
+        }
+        .windowhead:not(#head1) {
+          height: 30px !important;
+          background: linear-gradient(#38383a, #2a2a2c) !important;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .windowhead:not(#head1) .windowicon { display: none !important; }
+        .windowhead:not(#head1) .windowtitle {
+          position: absolute !important;
+          left: 0 !important;
+          right: 0 !important;
+          top: 0 !important;
+          height: 30px !important;
+          line-height: 30px !important;
+          padding: 0 64px !important;
+          text-align: center !important;
+          font: 500 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+          color: rgba(255, 255, 255, 0.85) !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          pointer-events: none !important;
+        }
+        .windowhead:not(#head1) .windowbuttons img { display: none !important; }
+        .windowhead:not(#head1) .windowbuttons {
+          position: absolute !important;
+          right: 12px !important;
+          left: auto !important;
+          top: 0 !important;
+          height: 30px !important;
+          display: flex !important;
+          align-items: center !important;
+          gap: 8px !important;
+        }
+        /* Traffic lights: close / minimize / maximize, drawn over the
+           default icon buttons (DOM order differs from macOS order). */
+        .windowhead:not(#head1) .windowbuttons > span {
+          width: 12px !important;
+          height: 12px !important;
+          border-radius: 50% !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          cursor: pointer !important;
+          border: 0.5px solid rgba(0, 0, 0, 0.25) !important;
+        }
+        .windowbuttons > span[id^="close"] { background: #ff5f57 !important; order: -1 !important; }
+        .windowbuttons > span[id^="minimize"] { background: #febc2e !important; order: 0 !important; }
+        .windowbuttons > span[id^="maximize"] { background: #28c840 !important; order: 1 !important; }
+        #progress { display: none !important; }
+        html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
+      `
+      doc.head.appendChild(style)
+    }
+    if (!doc.getElementById('caw-hotkey-script')) {
+      // Forward Caw's registered hotkeys (Alt+Arrow, Alt+T, …) to the parent
+      // frame — while the iframe holds focus, keydowns never reach it and
+      // pane switching would be impossible without this relay.
+      const combos = Object.keys(DEFAULT_HOTKEYS)
+        .map((action) => getHotkey(action))
+        .filter(Boolean)
+      const script = doc.createElement('script')
+      script.id = 'caw-hotkey-script'
+      script.textContent = `
+        (function () {
+          var COMBOS = ${JSON.stringify(combos)};
+          document.addEventListener('keydown', function (e) {
+            if (e.defaultPrevented) return;
+            var parts = [];
+            if (e.altKey) parts.push('Alt');
+            if (e.ctrlKey) parts.push('Ctrl');
+            if (e.metaKey) parts.push('Meta');
+            if (e.shiftKey) parts.push('Shift');
+            parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+            var combo = parts.join('+');
+            if (COMBOS.indexOf(combo) === -1) return;
+            e.preventDefault();
+            e.stopPropagation();
+            window.parent.postMessage({ type: 'caw-hotkey', combo: combo }, '*');
+          }, true);
+        })();
+      `
+      doc.head.appendChild(script)
+    }
+    if (!doc.getElementById('caw-maximize-script')) {
+      const script = doc.createElement('script')
+      script.id = 'caw-maximize-script'
+      script.textContent = `
+        (function () {
+          var maximized = {};
+          var attempts = 0;
+          var timer = setInterval(function () {
+            attempts += 1;
+            var client = window.client;
+            if (!client || !client.id_to_window) {
+              if (attempts > 100) clearInterval(timer);
+              return;
+            }
+            var any = false;
+            for (var wid in client.id_to_window) {
+              any = true;
+              if (!maximized[wid]) {
+                maximized[wid] = true;
+                try { client.id_to_window[wid].set_maximized(true); } catch (e) {}
+              }
+            }
+            if (any && attempts > 100) clearInterval(timer);
+          }, 200);
+        })();
+      `
+      doc.head.appendChild(script)
+    }
+  }, [])
+
+  // Acquire the persistent surface for this leaf and keep it pinned over
+  // the pane's rect with a rAF loop (cheap: one getBoundingClientRect per
+  // frame, and it stays glued during splitter drags and layout shifts).
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || !ready || preview) return
+
+    const surface = acquireSurface(leafId, clientUrl)
+    surfaceRef.current = surface
+
+    const onLoad = () => {
+      injectChrome(surface.iframe)
+      // A load after the initial mount usually means the xpra client lost
+      // its backend (app exited/crashed) and navigated — health-check
+      // immediately instead of waiting for the next poll tick, so the pane
+      // closes before a "404 page not found" error page becomes visible.
+      void desktopHealthCheck(leafId).then((alive) => {
+        if (!alive) {
+          hideSurface(leafId)
+          markDesktopExited(leafId)
+          onCloseRef.current(leafId)
+        }
+      })
+    }
+    surface.iframe.addEventListener('load', onLoad)
+
+    // Clicks land on the body-level surface, never on the pane wrapper's
+    // own handlers — report them so this pane becomes the active pane.
+    const onWrapperPointerDown = () => onFocusPaneRef.current?.(leafId)
+    surface.wrapper.addEventListener('pointerdown', onWrapperPointerDown)
+
+    // Watchdog: when the session dies, the xpra client reloads itself and
+    // the proxy answers with a plain-text "404 page not found" document.
+    // Same-origin access lets us detect that document the moment it lands
+    // and hide the surface instantly — the error text must never be seen.
+    let dead = false
+    const sniff = () => {
+      if (dead) return
+      const body = surface.iframe.contentDocument?.body
+      if (body?.textContent?.includes('404 page not found')) {
+        dead = true
+        clearInterval(sniffTimer)
+        hideSurface(leafId)
+        markDesktopExited(leafId)
+        onCloseRef.current(leafId)
+      }
+    }
+    const sniffTimer = setInterval(sniff, 100)
+
+    let raf = 0
+    const sync = () => {
+      if (host.isConnected) {
+        const rect = host.getBoundingClientRect()
+        if (rect.width < 1 || rect.height < 1) hideSurface(leafId)
+        else showSurface(leafId, rect)
+      }
+      raf = requestAnimationFrame(sync)
+    }
+    raf = requestAnimationFrame(sync)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      clearInterval(sniffTimer)
+      surface.iframe.removeEventListener('load', onLoad)
+      surface.wrapper.removeEventListener('pointerdown', onWrapperPointerDown)
+      hideSurface(leafId)
+      surfaceRef.current = null
+    }
+  }, [leafId, ready, clientUrl, injectChrome, preview])
+
+  // Give the iframe document keyboard focus whenever this pane becomes the
+  // active pane (click or Alt+Arrow cycling) — otherwise keystrokes keep
+  // going to whichever terminal held focus.
+  useEffect(() => {
+    if (!isActive || !ready || preview) return
+    surfaceRef.current?.iframe.contentWindow?.focus()
+  }, [isActive, ready, preview])
+
+  // The xpra client inside the iframe consumes every keystroke while it
+  // holds focus — including app hotkeys like Alt+Arrow. injectChrome
+  // forwards those combos here via postMessage; re-dispatch them as real
+  // KeyboardEvents so the global hotkey handler picks them up.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type !== 'caw-hotkey' || typeof e.data.combo !== 'string') return
+      if (e.source !== surfaceRef.current?.iframe.contentWindow) return
+      const parts = e.data.combo.split('+')
+      const key = parts.pop() as string
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key,
+        code: key,
+        altKey: parts.includes('Alt'),
+        ctrlKey: parts.includes('Ctrl'),
+        metaKey: parts.includes('Meta'),
+        shiftKey: parts.includes('Shift'),
+        bubbles: true,
+        cancelable: true,
+      }))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  // Keyboard capture: while the pane is fullscreen, lock the keyboard so
+  // browser-reserved shortcuts (Ctrl+W, Ctrl+T, …) reach the app instead
+  // of the browser. Requires the Keyboard Lock API (Chromium) and only
+  // takes effect in fullscreen; other browsers silently ignore it.
+  const enterCapture = useCallback(async () => {
+    const wrapper = surfaceRef.current?.wrapper
+    if (!wrapper) return
+    try {
+      if (!document.fullscreenElement) await wrapper.requestFullscreen()
+      await (navigator as KeyboardApi).keyboard?.lock?.()
+    } catch {
+      // Fullscreen denied or unsupported — ignore.
+    }
+  }, [])
+
+  useEffect(() => {
+    const onFsChange = () => {
+      const wrapper = surfaceRef.current?.wrapper
+      if (document.fullscreenElement && wrapper && document.fullscreenElement === wrapper) {
+        void (navigator as KeyboardApi).keyboard?.lock?.().catch(() => {})
+      } else {
+        ;(navigator as KeyboardApi).keyboard?.unlock?.()
+      }
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange)
+      // The pane may unmount while its surface is fullscreen (tab switch
+      // via hotkey); leave fullscreen so the layer isn't stuck on top.
+      if (isSurfaceElement(document.fullscreenElement)) void document.exitFullscreen().catch(() => {})
+      ;(navigator as KeyboardApi).keyboard?.unlock?.()
+    }
+  }, [])
+
+  // Preview mode: static placeholder tile — no session, no surface, no
+  // keyboard interaction. Shows the app's identity so hover previews of
+  // workspaces containing desktop panes aren't just black rectangles.
+  if (preview) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-black" data-pane-id={leafId}>
+        <DesktopAppIcon appId={appMeta?.id ?? leafId} icon={appMeta?.icon} iconColor={appMeta?.iconColor} size={40} className="opacity-80" />
+        <span className="max-w-[80%] truncate text-xs text-muted-foreground/80">{appMeta?.label ?? cmd?.[0] ?? 'Desktop app'}</span>
+      </div>
+    )
+  }
+
+  if (failed) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-background text-muted-foreground p-4 text-center">
+        <div>
+          <p className="text-sm">Failed to start desktop session</p>
+          <button
+            className="mt-2 text-xs underline hover:text-foreground"
+            onClick={() => { setFailed(false); setReady(false); ensureDesktop(leafId, cwd, cmd, env).then(() => setReady(true)).catch(() => setFailed(true)) }}
+          >
+            Restart
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="relative h-full w-full overflow-hidden bg-black"
+      data-active={isActive ? 'true' : 'false'}
+      data-pane-id={leafId}
+    >
+      {!ready && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/60" />
+        </div>
+      )}
+      <div ref={hostRef} className="h-full w-full" />
+      {ready && (
+        <button
+          onClick={(e) => { e.stopPropagation(); void enterCapture() }}
+          className="absolute top-1 right-1 z-20 h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center opacity-0 hover:opacity-100 focus:opacity-100 transition-opacity"
+          title="Fullscreen (captures all keyboard input)"
+        >
+          <Maximize2 className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  )
+}

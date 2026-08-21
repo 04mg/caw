@@ -18,7 +18,7 @@ interface TabGroupTreeProps {
   onSwitchTab: (tabId: string, groupId: string) => void
   onCloseTab: (tabId: string) => void
   onReorderTabs: (tabId: string, groupId: string, toIndex: number) => void
-  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => void
+  onAddTab: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: import('@/features/shared/utils/layout').LeafView) => void
   onSplitGroup: (
     targetGroupId: string,
     draggedTabId: string,
