@@ -29,9 +29,23 @@ function getLayer(): HTMLElement {
   // Fullscreen must fill the viewport even though wrappers carry inline
   // geometry while docked in a pane.
   const style = document.createElement('style')
-  style.textContent = `#${LAYER_ID} > div:fullscreen { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }`
+  style.textContent = `
+    #${LAYER_ID} > div:fullscreen { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+    /* During tab drags the wrappers must not eat pointer events, or the
+       drop-overlay logic in the app never sees pointermove/pointerup. */
+    #${LAYER_ID}[data-inert] > div { pointer-events: none !important; }
+  `
   document.head.appendChild(style)
   return layer
+}
+
+// setDesktopSurfacesInert disables pointer interaction on every session
+// wrapper while a tab drag is in progress, so drag/drop hit-testing flows
+// through to the app's drop overlays.
+export function setDesktopSurfacesInert(inert: boolean): void {
+  if (!layer) return
+  if (inert) layer.setAttribute('data-inert', '')
+  else layer.removeAttribute('data-inert')
 }
 
 // acquireSurface returns (creating if needed) the persistent surface for a

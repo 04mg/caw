@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Loader2, Maximize2 } from 'lucide-react'
 import { desktopHealthCheck, ensureDesktop, getDesktopSession, markDesktopExited } from '../services/desktopRegistry'
 import { acquireSurface, hideSurface, isSurfaceElement, showSurface, type DesktopSurface } from '../services/desktopSurface'
-import { getPrefs, subscribePrefs, getDesktopApps } from '@/features/prefs/stores/prefsStore'
+import { getPrefs, subscribePrefs, getDesktopApps, getHotkey, DEFAULT_HOTKEYS } from '@/features/prefs/stores/prefsStore'
 import { DesktopAppIcon } from './DesktopAppIcon'
 
 interface DesktopPanelProps {
@@ -15,6 +15,10 @@ interface DesktopPanelProps {
   // instead of spawning/attaching a real xpra session — hovering a sidebar
   // row must never launch processes or steal keyboard focus.
   preview?: boolean
+  // Reports clicks on the session surface so the pane can become the
+  // active pane — the body-level wrapper swallows the pointer events that
+  // would otherwise reach the pane wrapper's own handlers.
+  onFocusPane?: (leafId: string) => void
   // Called when the desktop app / stream is gone so the pane closes itself.
   onClose: (leafId: string) => void
 }
@@ -39,7 +43,7 @@ type KeyboardApi = Navigator & {
 // the pane is mounted — never detached — so tab/workspace switches resume
 // instantly without reloading the stream or losing keyboard focus. When
 // the app closes or the stream dies, the pane closes itself via onClose.
-export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose }: DesktopPanelProps): ReactNode {
+export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocusPane, onClose }: DesktopPanelProps): ReactNode {
   // Resolve the app's identity (label/icon) for the preview placeholder by
   // matching the leaf against the user's configured desktop apps.
   const [appMeta] = useState(() => {
@@ -62,6 +66,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose
   const surfaceRef = useRef<DesktopSurface | null>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const onFocusPaneRef = useRef(onFocusPane)
+  onFocusPaneRef.current = onFocusPane
 
   useEffect(() => subscribePrefs(() => setStream(getPrefs().desktopStream)), [])
 
@@ -152,6 +158,36 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose
       `
       doc.head.appendChild(style)
     }
+    if (!doc.getElementById('caw-hotkey-script')) {
+      // Forward Caw's registered hotkeys (Alt+Arrow, Alt+T, …) to the parent
+      // frame — while the iframe holds focus, keydowns never reach it and
+      // pane switching would be impossible without this relay.
+      const combos = Object.keys(DEFAULT_HOTKEYS)
+        .map((action) => getHotkey(action))
+        .filter(Boolean)
+      const script = doc.createElement('script')
+      script.id = 'caw-hotkey-script'
+      script.textContent = `
+        (function () {
+          var COMBOS = ${JSON.stringify(combos)};
+          document.addEventListener('keydown', function (e) {
+            if (e.defaultPrevented) return;
+            var parts = [];
+            if (e.altKey) parts.push('Alt');
+            if (e.ctrlKey) parts.push('Ctrl');
+            if (e.metaKey) parts.push('Meta');
+            if (e.shiftKey) parts.push('Shift');
+            parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+            var combo = parts.join('+');
+            if (COMBOS.indexOf(combo) === -1) return;
+            e.preventDefault();
+            e.stopPropagation();
+            window.parent.postMessage({ type: 'caw-hotkey', combo: combo }, '*');
+          }, true);
+        })();
+      `
+      doc.head.appendChild(script)
+    }
     if (!doc.getElementById('caw-maximize-script')) {
       const script = doc.createElement('script')
       script.id = 'caw-maximize-script'
@@ -208,6 +244,11 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose
     }
     surface.iframe.addEventListener('load', onLoad)
 
+    // Clicks land on the body-level surface, never on the pane wrapper's
+    // own handlers — report them so this pane becomes the active pane.
+    const onWrapperPointerDown = () => onFocusPaneRef.current?.(leafId)
+    surface.wrapper.addEventListener('pointerdown', onWrapperPointerDown)
+
     // Watchdog: when the session dies, the xpra client reloads itself and
     // the proxy answers with a plain-text "404 page not found" document.
     // Same-origin access lets us detect that document the moment it lands
@@ -241,10 +282,44 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onClose
       cancelAnimationFrame(raf)
       clearInterval(sniffTimer)
       surface.iframe.removeEventListener('load', onLoad)
+      surface.wrapper.removeEventListener('pointerdown', onWrapperPointerDown)
       hideSurface(leafId)
       surfaceRef.current = null
     }
   }, [leafId, ready, clientUrl, injectChrome, preview])
+
+  // Give the iframe document keyboard focus whenever this pane becomes the
+  // active pane (click or Alt+Arrow cycling) — otherwise keystrokes keep
+  // going to whichever terminal held focus.
+  useEffect(() => {
+    if (!isActive || !ready || preview) return
+    surfaceRef.current?.iframe.contentWindow?.focus()
+  }, [isActive, ready, preview])
+
+  // The xpra client inside the iframe consumes every keystroke while it
+  // holds focus — including app hotkeys like Alt+Arrow. injectChrome
+  // forwards those combos here via postMessage; re-dispatch them as real
+  // KeyboardEvents so the global hotkey handler picks them up.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type !== 'caw-hotkey' || typeof e.data.combo !== 'string') return
+      if (e.source !== surfaceRef.current?.iframe.contentWindow) return
+      const parts = e.data.combo.split('+')
+      const key = parts.pop() as string
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key,
+        code: key,
+        altKey: parts.includes('Alt'),
+        ctrlKey: parts.includes('Ctrl'),
+        metaKey: parts.includes('Meta'),
+        shiftKey: parts.includes('Shift'),
+        bubbles: true,
+        cancelable: true,
+      }))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
 
   // Keyboard capture: while the pane is fullscreen, lock the keyboard so
   // browser-reserved shortcuts (Ctrl+W, Ctrl+T, …) reach the app instead

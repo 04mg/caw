@@ -29,6 +29,7 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
 import { destroyDesktop, setOnDesktopExit, isDesktopExited } from '@/features/desktop/services/desktopRegistry'
+import { setDesktopSurfacesInert } from '@/features/desktop/services/desktopSurface'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -140,6 +141,10 @@ export function AppLayout() {
       setDragMousePos(null)
       return
     }
+    // Desktop session iframes live above the panes in their own layer and
+    // would swallow pointermove/pointerup mid-drag; make them pass-through
+    // so the drop overlays keep tracking the cursor.
+    setDesktopSurfacesInert(true)
     const handleGlobalPointerMove = (e: PointerEvent) => {
       setDragMousePos({ x: e.clientX, y: e.clientY })
     }
@@ -152,6 +157,7 @@ export function AppLayout() {
     window.addEventListener('pointermove', handleGlobalPointerMove)
     window.addEventListener('pointerup', handleGlobalPointerUp)
     return () => {
+      setDesktopSurfacesInert(false)
       window.removeEventListener('pointermove', handleGlobalPointerMove)
       window.removeEventListener('pointerup', handleGlobalPointerUp)
     }

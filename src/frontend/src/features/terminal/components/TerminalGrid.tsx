@@ -69,7 +69,7 @@ export function TerminalGrid({
         {isEditor ? (
           <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} onOpenFile={onOpenFile} />
         ) : isDesktop ? (
-          <DesktopPanel leafId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} preview={preview} onClose={onClose} />
+          <DesktopPanel leafId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} preview={preview} onFocusPane={onFocus} onClose={onClose} />
         ) : (
           <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} />
         )}
