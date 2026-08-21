@@ -166,6 +166,30 @@ export function setLeafPetSlug(root: LayoutNode, leafId: string, petSlug?: strin
   return root
 }
 
+// setLeafFile swaps which file an editor leaf displays (VS Code-style tab
+// reuse). Updates filePath, cwd and the reveal position; returns the tree
+// unchanged if the leaf is not found.
+export function setLeafFile(
+  root: LayoutNode,
+  leafId: string,
+  file: { filePath: string; cwd?: string; revealLine?: number; revealColumn?: number },
+): LayoutNode {
+  if (root.type === 'leaf') {
+    if (root.id !== leafId) return root
+    return {
+      ...root,
+      filePath: file.filePath,
+      cwd: file.cwd || root.cwd,
+      revealLine: file.revealLine,
+      revealColumn: file.revealColumn,
+    }
+  }
+  if (root.type === 'split') {
+    return { ...root, children: root.children.map((c) => setLeafFile(c, leafId, file)) }
+  }
+  return root
+}
+
 export function setSplitSizes(
   root: LayoutNode,
   splitId: string,
