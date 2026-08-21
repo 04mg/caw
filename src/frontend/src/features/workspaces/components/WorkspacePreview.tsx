@@ -20,7 +20,7 @@ const VIRTUAL_HEIGHT = 640
 const THUMB_WIDTH = 320
 const SCALE = THUMB_WIDTH / VIRTUAL_WIDTH
 const THUMB_HEIGHT = Math.round(VIRTUAL_HEIGHT * SCALE)
-const FOOTER_HEIGHT = 26
+const FOOTER_HEIGHT = 36
 const PREVIEW_HEIGHT = THUMB_HEIGHT + FOOTER_HEIGHT
 const GAP = 8
 const VIEWPORT_MARGIN = 8
@@ -107,7 +107,7 @@ export function WorkspacePreview({ workspace, emoji, title, anchor }: WorkspaceP
         </div>
         {/* Browser-style caption strip: emoji + workspace name. */}
         <div
-          className="flex items-center gap-1.5 px-2 border-t border-border bg-secondary/40 select-none"
+          className="flex items-center gap-1.5 px-2.5 py-2 border-t border-border bg-secondary/40 select-none"
           style={{ height: FOOTER_HEIGHT }}
         >
           <span className="text-xs leading-none shrink-0">{emoji}</span>

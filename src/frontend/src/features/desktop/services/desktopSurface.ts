@@ -48,6 +48,15 @@ export function setDesktopSurfacesInert(inert: boolean): void {
   else layer.removeAttribute('data-inert')
 }
 
+// setDesktopSurfacesVisible hides the entire layer without detaching any
+// iframe — sessions keep running and reshowing is instant, never a reload.
+// Used for full-area overlays (the Kanban board) that must paint above the
+// iframes even though their subtree sits in a lower stacking context.
+export function setDesktopSurfacesVisible(visible: boolean): void {
+  if (!layer) return
+  layer.style.display = visible ? '' : 'none'
+}
+
 // acquireSurface returns (creating if needed) the persistent surface for a
 // leaf and points its iframe at clientUrl — navigating only when the URL
 // actually changed, so reacquiring an unchanged session never reloads.

@@ -132,18 +132,19 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
     : ''
 
   // Inject CSS + JS into the iframe document (same-origin via the Caw
-  // proxy) to strip the remaining xpra chrome and start the app maximized:
-  // - hide the floating menu, window borders/shadows and title bars drawn by
-  //   the HTML5 client, and page margins so the app fills the pane edge-to-edge;
-  // - hide the #progress overlay (the "Opening WebSocket connection…" text);
+  // proxy) to restyle the xpra chrome and start the app maximized:
+  // - hide the floating menu, #progress overlay ("Opening WebSocket
+  //   connection…") and page margins;
+  // - the session's main window runs fully chrome-free (its title bar
+  //   #head1 is hidden with height:0 — xpra's JS reads the header's CSS
+  //   height to compute its top offset, so display:none alone leaves a
+  //   dead, unclickable strip at the top);
+  // - every other window gets macOS-style chrome: rounded corners with a
+  //   small border and soft shadow, a dark translucent title bar, centered
+  //   title and traffic-light buttons;
   // - maximize each window via the client's set_maximized() — the same code
   //   path as the native maximize button, which resizes the display to match
   //   the pane correctly (unlike --desktop-fullscreen, which only scales).
-  //
-  // The main window's head (#head1) uses height:0 rather than display:none
-  // because xpra's JS reads the header's CSS height to compute its top
-  // offset — display:none still yields 30px and leaves a dead, unclickable
-  // strip at the top.
   const injectChrome = useCallback((iframe: HTMLIFrameElement) => {
     const doc = iframe.contentDocument
     if (!doc) return
@@ -152,12 +153,66 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
       style.id = 'caw-chrome-style'
       style.textContent = `
         #float_menu, #float_menu_button, #float_tray { display: none !important; }
-        .window.border { border: none !important; box-shadow: none !important; border-radius: 0 !important; }
-        /* Only the session's main window (#head1) runs chrome-free; popups
-           and secondary windows keep their draggable title bar, pinned at
-           the client's standard 30px header height. */
+        /* The session's main window runs fully chrome-free; every other
+           window (popups, dialogs) gets macOS-style chrome instead. */
         #head1 { display: none !important; height: 0 !important; }
-        .windowhead:not(#head1) { height: 30px !important; }
+        .window.border {
+          border-radius: 10px !important;
+          overflow: hidden !important;
+          border: 1px solid rgba(255, 255, 255, 0.14) !important;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55) !important;
+        }
+        .window.border:has(.windowhead#head1) {
+          border-radius: 0 !important;
+          overflow: visible !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .windowhead:not(#head1) {
+          height: 30px !important;
+          background: linear-gradient(#38383a, #2a2a2c) !important;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .windowhead:not(#head1) .windowicon { display: none !important; }
+        .windowhead:not(#head1) .windowtitle {
+          position: absolute !important;
+          left: 0 !important;
+          right: 0 !important;
+          top: 0 !important;
+          height: 30px !important;
+          line-height: 30px !important;
+          text-align: center !important;
+          font: 500 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+          color: rgba(255, 255, 255, 0.85) !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          pointer-events: none !important;
+        }
+        .windowhead:not(#head1) .windowbuttons img { display: none !important; }
+        .windowhead:not(#head1) .windowbuttons {
+          position: absolute !important;
+          left: 12px !important;
+          top: 0 !important;
+          height: 30px !important;
+          display: flex !important;
+          align-items: center !important;
+          gap: 8px !important;
+        }
+        /* Traffic lights: close / minimize / maximize, drawn over the
+           default icon buttons (DOM order differs from macOS order). */
+        .windowhead:not(#head1) .windowbuttons > span {
+          width: 12px !important;
+          height: 12px !important;
+          border-radius: 50% !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          cursor: pointer !important;
+          border: 0.5px solid rgba(0, 0, 0, 0.25) !important;
+        }
+        .windowbuttons > span[id^="close"] { background: #ff5f57 !important; order: -1 !important; }
+        .windowbuttons > span[id^="minimize"] { background: #febc2e !important; order: 0 !important; }
+        .windowbuttons > span[id^="maximize"] { background: #28c840 !important; order: 1 !important; }
         #progress { display: none !important; }
         html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
       `
