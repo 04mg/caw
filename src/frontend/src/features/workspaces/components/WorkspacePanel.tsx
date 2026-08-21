@@ -350,12 +350,12 @@ export function WorkspacePanel({
         })(        )}
         {previewWsId && previewAnchor && (() => {
           const ws = workspaces.find((w) => w.id === previewWsId)
-          if (!ws) return null
+          // No thumbnail for the workspace that's already open in the main area.
+          if (!ws || ws.id === activeWorkspaceId) return null
           const idx = workspaces.indexOf(ws)
           return (
             <WorkspacePreview
               workspace={ws}
-              isActive={ws.id === activeWorkspaceId}
               emoji={ws.emoji || commonEmojis[idx % commonEmojis.length]}
               title={ws.name || ws.path || 'Workspace'}
               anchor={previewAnchor}
@@ -557,12 +557,12 @@ export function WorkspacePanel({
 
       {previewWsId && previewAnchor && (() => {
         const ws = workspaces.find((w) => w.id === previewWsId)
-        if (!ws) return null
+        // No thumbnail for the workspace that's already open in the main area.
+        if (!ws || ws.id === activeWorkspaceId) return null
         const idx = workspaces.indexOf(ws)
         return (
           <WorkspacePreview
             workspace={ws}
-            isActive={ws.id === activeWorkspaceId}
             emoji={ws.emoji || commonEmojis[idx % commonEmojis.length]}
             title={ws.name || ws.path || 'Workspace'}
             anchor={previewAnchor}
