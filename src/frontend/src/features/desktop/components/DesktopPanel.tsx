@@ -200,12 +200,19 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
           left: auto !important;
           top: 0 !important;
           height: 30px !important;
+          /* Reset xpra's default .windowbuttons padding-top: 7px — the flex
+             centering happens inside the padded content box, so without
+             this the circles ride below the header's vertical midline. */
+          padding: 0 !important;
+          box-sizing: border-box !important;
           display: flex !important;
           align-items: center !important;
           gap: 8px !important;
         }
         /* Traffic lights: close / minimize / maximize, drawn over the
-           default icon buttons (DOM order differs from macOS order). */
+           default icon buttons (DOM order differs from macOS order).
+           Minimize is decorative in Caw — shown, but inert: windows live
+           inside a pane, so minimizing them would just hide the stream. */
         .windowhead:not(#head1) .windowbuttons > span {
           width: 12px !important;
           height: 12px !important;
@@ -216,7 +223,12 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
           border: 0.5px solid rgba(0, 0, 0, 0.25) !important;
         }
         .windowbuttons > span[id^="close"] { background: #ff5f57 !important; order: -1 !important; }
-        .windowbuttons > span[id^="minimize"] { background: #febc2e !important; order: 0 !important; }
+        .windowbuttons > span[id^="minimize"] {
+          background: #febc2e !important;
+          order: 0 !important;
+          pointer-events: none !important;
+          cursor: default !important;
+        }
         .windowbuttons > span[id^="maximize"] { background: #28c840 !important; order: 1 !important; }
         #progress { display: none !important; }
         html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: transparent !important; }
