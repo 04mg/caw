@@ -83,12 +83,31 @@ type CustomizationState struct {
 // DesktopAppUser is a user-defined graphical app entry, mirroring the
 // AgentCmds override pattern: users can add custom desktop apps (any
 // graphical X11 command) without code changes. The id is the menu label
-// key; cmd is the xpra --start-child command.
+// key; cmd is the xpra --start-child command. Icon refs are resolved
+// client-side: 'si:<slug>' (vendored brand paths), 'lucide:<Name>' or a
+// data:image/... upload; IconColor tints vector icons.
 type DesktopAppUser struct {
-	ID    string   `json:"id"`
-	Label string   `json:"label"`
-	Cmd   []string `json:"cmd"`
-	Env   [][]string `json:"env,omitempty"`
+	ID        string     `json:"id"`
+	Label     string     `json:"label"`
+	Cmd       []string   `json:"cmd"`
+	Env       [][]string `json:"env,omitempty"`
+	Icon      string     `json:"icon,omitempty"`
+	IconColor string     `json:"iconColor,omitempty"`
+}
+
+// DesktopStream holds xpra streaming quality preferences, passed to the
+// HTML5 client as URL params (encoding/quality/speed).
+type DesktopStream struct {
+	// Encoding is the picture encoding: auto, jpeg, png or webp.
+	Encoding string `json:"encoding"`
+	// Quality is the image quality 1-100 (higher = sharper, more bandwidth).
+	Quality int `json:"quality"`
+	// Speed is the encode speed 1-100 (higher = lower latency, more bandwidth).
+	Speed int `json:"speed"`
+}
+
+func defaultDesktopStream() DesktopStream {
+	return DesktopStream{Encoding: "auto", Quality: 90, Speed: 65}
 }
 
 // PrefsState holds the user's work preferences shared across all devices.
@@ -110,6 +129,8 @@ type PrefsState struct {
 	// defaults. Each entry launches as an xpra --start-child in a desktop
 	// leaf. Mirrors the AgentCmds override pattern.
 	DesktopApps []DesktopAppUser `json:"desktopApps"`
+	// DesktopStream holds xpra streaming quality preferences.
+	DesktopStream DesktopStream `json:"desktopStream"`
 }
 
 const (
@@ -123,6 +144,7 @@ const (
 	keyPets                = "pref_pets"
 	keyCustomization       = "pref_customization"
 	keyDesktopApps         = "pref_desktop_apps"
+	keyDesktopStream       = "pref_desktop_stream"
 	defaultParkedTerminals = 6
 )
 
@@ -254,6 +276,21 @@ func GetPrefs(store *state.Store) PrefsState {
 			p.DesktopApps = apps
 		}
 	}
+	p.DesktopStream = defaultDesktopStream()
+	if v, err := store.GetSetting(keyDesktopStream); err == nil && v != "" {
+		var s DesktopStream
+		if json.Unmarshal([]byte(v), &s) == nil {
+			if s.Encoding != "" {
+				p.DesktopStream.Encoding = s.Encoding
+			}
+			if s.Quality >= 1 && s.Quality <= 100 {
+				p.DesktopStream.Quality = s.Quality
+			}
+			if s.Speed >= 1 && s.Speed <= 100 {
+				p.DesktopStream.Speed = s.Speed
+			}
+		}
+	}
 
 	return p
 }
@@ -295,6 +332,10 @@ func SetPrefs(store *state.Store, p PrefsState) error {
 	}
 	desktopAppsJSON, _ := json.Marshal(p.DesktopApps)
 	if err := store.SetSetting(keyDesktopApps, string(desktopAppsJSON)); err != nil {
+		return err
+	}
+	streamJSON, _ := json.Marshal(p.DesktopStream)
+	if err := store.SetSetting(keyDesktopStream, string(streamJSON)); err != nil {
 		return err
 	}
 	return nil

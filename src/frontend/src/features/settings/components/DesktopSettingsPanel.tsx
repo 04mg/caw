@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink, Monitor, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/button'
+import { DesktopIconPicker } from '@/features/desktop/components/DesktopIconPicker'
+import { resolveDesktopIconFill } from '@/features/desktop/components/DesktopAppIcon'
+import { DESKTOP_BRAND_ICON_BY_SLUG } from '@/features/desktop/constants/desktopBrandIcons'
 import {
   getDesktopApps,
+  getDesktopStream,
   setDesktopApps,
+  setDesktopStream,
   subscribePrefs,
   type DesktopAppPref,
+  type DesktopStreamPrefs,
 } from '@/features/prefs/stores/prefsStore'
 
 type SaveStatus = 'idle' | 'success' | 'error'
@@ -22,6 +28,7 @@ interface XpraStatus {
 export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPanelProps) {
   const [status, setStatus] = useState<XpraStatus | null>(null)
   const [apps, setApps] = useState<DesktopAppPref[]>(() => getDesktopApps())
+  const [stream, setStream] = useState<DesktopStreamPrefs>(() => getDesktopStream())
 
   useEffect(() => {
     let cancelled = false
@@ -35,11 +42,20 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
   }, [])
 
   useEffect(() => {
-    return subscribePrefs(() => setApps(getDesktopApps()))
+    return subscribePrefs(() => {
+      setApps(getDesktopApps())
+      setStream(getDesktopStream())
+    })
   }, [])
 
   const save = async (next: DesktopAppPref[]) => {
     const ok = await setDesktopApps(next)
+    onSaveStatusChange?.(ok ? 'success' : 'error')
+  }
+
+  const saveStream = async (next: DesktopStreamPrefs) => {
+    setStream(next)
+    const ok = await setDesktopStream(next)
     onSaveStatusChange?.(ok ? 'success' : 'error')
   }
 
@@ -106,7 +122,7 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
       <div className={`flex flex-col gap-3 ${installed ? '' : 'pointer-events-none opacity-50'}`}>
         <div className="flex items-center justify-between">
           <label className="text-xs font-medium">Applications</label>
-          <Button variant="outline" size="sm" className="gap-1.5 h-7 px-2" onClick={addApp}>
+          <Button variant="outline" size="sm" className="gap-1.5 h-7 px-2 cursor-pointer" onClick={addApp}>
             <Plus className="h-3.5 w-3.5" />
             Add App
           </Button>
@@ -121,33 +137,63 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
           </p>
         ) : (
           <div className="flex flex-col gap-2">
-            {apps.map((app, idx) => (
-              <div key={app.id} className="flex flex-col gap-2 rounded-lg border border-border p-3">
-                <div className="flex items-center gap-2">
+            {apps.map((app, idx) => {
+              const isVector = !!app.icon && (app.icon.startsWith('si:') || app.icon.startsWith('lucide:'))
+              const effectiveColor = resolveDesktopIconFill(app.icon, app.iconColor)
+              return (
+                <div key={app.id} className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-2">
+                    <DesktopIconPicker
+                      appId={app.id}
+                      icon={app.icon}
+                      iconColor={app.iconColor}
+                      onChange={(icon, iconColor) => updateApp(idx, { icon, iconColor })}
+                    />
+                    <input
+                      type="text"
+                      value={app.label}
+                      onChange={(e) => updateApp(idx, { label: e.target.value })}
+                      placeholder="Name (e.g. Firefox)"
+                      className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
+                    />
+                    <button
+                      onClick={() => removeApp(idx)}
+                      title="Remove app"
+                      className="cursor-pointer p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                   <input
                     type="text"
-                    value={app.label}
-                    onChange={(e) => updateApp(idx, { label: e.target.value })}
-                    placeholder="Name (e.g. Firefox)"
-                    className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
+                    value={app.cmd.join(' ')}
+                    onChange={(e) => setCmd(idx, e.target.value)}
+                    placeholder="Command (e.g. firefox-esr --new-window)"
+                    className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
                   />
-                  <button
-                    onClick={() => removeApp(idx)}
-                    title="Remove app"
-                    className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {isVector && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground">Icon color</span>
+                      <input
+                        type="color"
+                        value={/^#[0-9a-fA-F]{6}$/.test(effectiveColor) ? effectiveColor : '#000000'}
+                        onChange={(e) => updateApp(idx, { iconColor: e.target.value.toUpperCase() })}
+                        className="cursor-pointer h-6 w-8 rounded border border-input bg-background p-0.5"
+                        title="Icon color"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => updateApp(idx, { iconColor: undefined })}
+                        className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+                        title="Use the brand's default color"
+                      >
+                        Brand default{!app.iconColor && brandHexLabel(app.icon) ? ` (#${brandHexLabel(app.icon)})` : ''}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <input
-                  type="text"
-                  value={app.cmd.join(' ')}
-                  onChange={(e) => setCmd(idx, e.target.value)}
-                  placeholder="Command (e.g. firefox-esr --new-window)"
-                  className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
-                />
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -157,6 +203,60 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
           Install Xpra to configure desktop apps.
         </p>
       )}
+
+      {/* Streaming quality */}
+      <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
+        <div className="flex flex-col gap-0.5">
+          <label className="text-xs font-medium">Streaming quality</label>
+          <p className="text-[10px] text-muted-foreground">
+            Applies to new desktop sessions. Higher quality/slower speed uses more bandwidth.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-16 text-[10px] text-muted-foreground">Encoding</span>
+          <select
+            value={stream.encoding}
+            onChange={(e) => void saveStream({ ...stream, encoding: e.target.value })}
+            className="flex-1 px-2 py-1.5 rounded-md border border-input bg-background text-xs text-foreground outline-none focus:border-ring transition-colors cursor-pointer"
+          >
+            <option value="auto">Auto</option>
+            <option value="jpeg">JPEG (best for photos/video)</option>
+            <option value="png">PNG (lossless, heavy)</option>
+            <option value="webp">WebP</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-16 text-[10px] text-muted-foreground">Quality</span>
+          <input
+            type="range"
+            min={1}
+            max={100}
+            value={stream.quality}
+            onChange={(e) => void saveStream({ ...stream, quality: Number(e.target.value) })}
+            className="flex-1 accent-primary cursor-pointer"
+          />
+          <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.quality}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-16 text-[10px] text-muted-foreground">Speed</span>
+          <input
+            type="range"
+            min={1}
+            max={100}
+            value={stream.speed}
+            onChange={(e) => void saveStream({ ...stream, speed: Number(e.target.value) })}
+            className="flex-1 accent-primary cursor-pointer"
+          />
+          <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.speed}</span>
+        </div>
+      </div>
     </div>
   )
+}
+
+// brandHexLabel returns the official Simple Icons hex for a 'si:' ref, for
+// display next to the "Brand default" color reset.
+function brandHexLabel(icon: string | undefined): string | undefined {
+  if (!icon?.startsWith('si:')) return undefined
+  return DESKTOP_BRAND_ICON_BY_SLUG[icon.slice(3)]?.hex
 }

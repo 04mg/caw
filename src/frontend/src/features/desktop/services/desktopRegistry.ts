@@ -2,7 +2,10 @@
 // the desktop equivalent of terminalRegistry.ts: ensureDesktop(id) POSTs
 // /api/desktop to spawn the xpra server for the leaf, and destroyDesktop
 // DELETEs it. The actual rendering is a plain <iframe> pointing at the
-// Caw-proxied xpra HTML5 client (see DesktopPanel.tsx).
+// Caw-proxied xpra HTML5 client (see DesktopPanel.tsx); closed panes park
+// their iframe in iframeLot so switching tabs/workspaces is instant.
+
+import { discardParkedIframe } from './iframeLot'
 
 export interface DesktopSession {
   leafId: string
@@ -52,6 +55,7 @@ export function destroyDesktop(leafId: string): void {
   const inst = registry.get(leafId)
   if (!inst) return
   registry.delete(leafId)
+  discardParkedIframe(leafId)
   notify()
   fetch(`/api/desktop/${encodeURIComponent(leafId)}`, {
     method: 'DELETE',

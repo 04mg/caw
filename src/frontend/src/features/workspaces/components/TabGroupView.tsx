@@ -107,6 +107,7 @@ export function TabGroupView({
       filePath: tab && tab.layout.type === 'leaf' ? tab.layout.filePath : undefined,
       isDiff: tab && tab.layout.type === 'leaf' ? tab.layout.isDiff : undefined,
       agentStatus: tab ? resolveTabAgentStatus(tab.layout) : undefined,
+      view: tab && tab.layout.type === 'leaf' ? tab.layout.view : undefined,
     }
   })
 

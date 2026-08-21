@@ -1,8 +1,9 @@
 import { useState, useEffect, type ReactNode } from 'react'
-import { Terminal, Plus, Workflow, Monitor } from 'lucide-react'
+import { Terminal, Plus, Workflow } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { type LeafView } from '@/features/shared/utils/layout'
 import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
+import { DesktopAppIcon } from '@/features/desktop/components/DesktopAppIcon'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -111,7 +112,7 @@ export function NewTabMenu({
                 key={appInfo.id}
                 onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
               >
-                <Monitor size={16} className="h-4 w-4" />
+                <DesktopAppIcon appId={appInfo.id} icon={appInfo.icon} iconColor={appInfo.iconColor} size={16} className="h-4 w-4" />
                 <span>{appInfo.label}</span>
               </DropdownMenuItem>
             ))}

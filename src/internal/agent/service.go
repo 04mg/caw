@@ -56,7 +56,7 @@ func (s *Service) ListDesktopApps() []DesktopApp {
 		if _, err := exec.LookPath(u.Cmd[0]); err != nil {
 			continue
 		}
-		app := DesktopApp{ID: u.ID, Label: u.Label, Cmd: u.Cmd, Env: u.Env}
+		app := DesktopApp{ID: u.ID, Label: u.Label, Cmd: u.Cmd, Env: u.Env, Icon: u.Icon, IconColor: u.IconColor}
 		available = append(available, app)
 	}
 	// Only show desktop apps if xpra itself is installed; otherwise the

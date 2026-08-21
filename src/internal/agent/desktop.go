@@ -11,4 +11,6 @@ type DesktopApp struct {
 	Label string   `json:"label"`
 	Cmd   []string `json:"cmd"`
 	Env   [][]string `json:"env,omitempty"` // [key, value] pairs to inject into the start-child environment
+	Icon      string `json:"icon,omitempty"`
+	IconColor string `json:"iconColor,omitempty"`
 }
