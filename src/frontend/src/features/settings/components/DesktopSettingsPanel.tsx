@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ExternalLink, Monitor, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ColorPicker } from '@/components/color-picker'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/select'
 import { DesktopIconPicker } from '@/features/desktop/components/DesktopIconPicker'
 import { resolveDesktopIconFill } from '@/features/desktop/constants/desktopIconFill'
 import { DESKTOP_BRAND_ICON_BY_SLUG } from '@/features/desktop/constants/desktopBrandIcons'
@@ -30,18 +31,16 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
   const [status, setStatus] = useState<XpraStatus | null>(null)
   const [apps, setApps] = useState<DesktopAppPref[]>(() => getDesktopApps())
   const [stream, setStream] = useState<DesktopStreamPrefs>(() => getDesktopStream())
-  // Raw command-line drafts per app id. Editing the cmd as an array means
-  // join(' ')/split(' ') normalization on every keystroke eats spaces and
-  // moves the caret; the draft keeps the raw text while typing.
-  const [cmdDrafts, setCmdDrafts] = useState<Record<string, string>>({})
 
-  // Editing is local-first: keystrokes update React state immediately and
-  // persistence is debounced + serialized. The prefs subscription must not
-  // clobber unsaved local edits — server echoes arriving mid-typing would
-  // revert characters the user just typed.
+  // Text inputs are uncontrolled and commit on blur; sliders commit on
+  // release. Nothing writes to prefs — or even touches React state — per
+  // keystroke or drag tick.
   const appsRef = useRef(apps)
-  const dirtyRef = useRef(false)
-  const timerRef = useRef<number | null>(null)
+  appsRef.current = apps
+  const streamRef = useRef(stream)
+  streamRef.current = stream
+
+  // Serialize pref writes so rapid commits can never land out of order.
   const queueRef = useRef<Promise<boolean>>(Promise.resolve(true))
 
   useEffect(() => {
@@ -56,78 +55,45 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
   }, [])
 
   useEffect(() => {
-    const unsubscribe = subscribePrefs(() => {
-      if (!dirtyRef.current) setApps(getDesktopApps())
+    return subscribePrefs(() => {
+      setApps(getDesktopApps())
       setStream(getDesktopStream())
     })
-    return () => {
-      unsubscribe()
-      if (timerRef.current != null) window.clearTimeout(timerRef.current)
-      // Flush unsaved edits so closing settings right after typing doesn't
-      // silently drop them.
-      if (dirtyRef.current) void setDesktopApps(appsRef.current)
-    }
   }, [])
 
-  const persistApps = useCallback((next: DesktopAppPref[], immediate = false) => {
+  const persistApps = useCallback((next: DesktopAppPref[]) => {
     appsRef.current = next
-    dirtyRef.current = true
     setApps(next)
-    if (timerRef.current != null) window.clearTimeout(timerRef.current)
-    const flush = () => {
-      timerRef.current = null
-      const payload = appsRef.current
-      queueRef.current = queueRef.current
-        .then(async () => {
-          const ok = await setDesktopApps(payload)
-          // Stay dirty when a newer edit landed during the request; its own
-          // flush will clear the flag.
-          if (payload === appsRef.current) dirtyRef.current = false
-          onSaveStatusChange?.(ok ? 'success' : 'error')
-          return ok
-        })
-        .catch(() => false)
-    }
-    if (immediate) flush()
-    else timerRef.current = window.setTimeout(flush, 400)
+    queueRef.current = queueRef.current
+      .then(async () => {
+        const ok = await setDesktopApps(next)
+        onSaveStatusChange?.(ok ? 'success' : 'error')
+        return ok
+      })
+      .catch(() => false)
   }, [onSaveStatusChange])
 
-  const updateApps = useCallback((fn: (prev: DesktopAppPref[]) => DesktopAppPref[], immediate = false) => {
-    persistApps(fn(appsRef.current), immediate)
+  const updateApp = useCallback((idx: number, patch: Partial<DesktopAppPref>) => {
+    persistApps(appsRef.current.map((a, i) => (i === idx ? { ...a, ...patch } : a)))
   }, [persistApps])
 
-  const saveStream = async (next: DesktopStreamPrefs) => {
-    setStream(next)
-    const ok = await setDesktopStream(next)
-    onSaveStatusChange?.(ok ? 'success' : 'error')
-  }
-
-  const updateApp = useCallback((idx: number, patch: Partial<DesktopAppPref>) => {
-    updateApps((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)))
-  }, [updateApps])
-
   const removeApp = (idx: number) => {
-    updateApps((prev) => prev.filter((_, i) => i !== idx), true)
+    persistApps(appsRef.current.filter((_, i) => i !== idx))
   }
 
   const addApp = () => {
-    const id = `app-${Date.now().toString(36)}`
-    updateApps((prev) => [...prev, { id, label: '', cmd: [] }], true)
+    persistApps([...appsRef.current, { id: `app-${Date.now().toString(36)}`, label: '', cmd: [] }])
   }
 
-  const handleCmdChange = (idx: number, appId: string, raw: string) => {
-    setCmdDrafts((d) => ({ ...d, [appId]: raw }))
-    updateApp(idx, { cmd: splitCmd(raw) })
-  }
-
-  const clearCmdDraft = (appId: string) => {
-    setCmdDrafts((d) => {
-      if (!(appId in d)) return d
-      const next = { ...d }
-      delete next[appId]
-      return next
-    })
-  }
+  // saveStream persists the given (or current) streaming prefs once an
+  // interaction ends — slider release, keyboard step, select change.
+  const saveStream = useCallback(async (next?: DesktopStreamPrefs) => {
+    const target = next ?? streamRef.current
+    streamRef.current = target
+    setStream(target)
+    const ok = await setDesktopStream(target)
+    onSaveStatusChange?.(ok ? 'success' : 'error')
+  }, [onSaveStatusChange])
 
   const installed = status?.xpraInstalled === true
 
@@ -199,10 +165,16 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
                       iconColor={app.iconColor}
                       onChange={(icon, iconColor) => updateApp(idx, { icon, iconColor })}
                     />
+                    {/* Uncontrolled: the DOM holds the in-progress text and
+                        nothing is committed until the input is left. Keyed
+                        by value so external pref changes remount it. */}
                     <input
+                      key={`${app.id}:label:${app.label}`}
                       type="text"
-                      value={app.label}
-                      onChange={(e) => updateApp(idx, { label: e.target.value })}
+                      defaultValue={app.label}
+                      onBlur={(e) => {
+                        if (e.target.value !== app.label) updateApp(idx, { label: e.target.value })
+                      }}
                       placeholder="Name (e.g. Firefox)"
                       className="flex-1 px-2.5 py-1.5 rounded-md border border-input bg-background text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
                     />
@@ -214,11 +186,17 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
+                  {/* Uncontrolled like the name field: raw text is kept in
+                      the DOM while typing (no per-keystroke whitespace
+                      normalization); argv is parsed once on blur. */}
                   <input
+                    key={`${app.id}:cmd:${app.cmd.join(' ')}`}
                     type="text"
-                    value={cmdDrafts[app.id] ?? app.cmd.join(' ')}
-                    onChange={(e) => handleCmdChange(idx, app.id, e.target.value)}
-                    onBlur={() => clearCmdDraft(app.id)}
+                    defaultValue={app.cmd.join(' ')}
+                    onBlur={(e) => {
+                      const parts = splitCmd(e.target.value)
+                      if (parts.join(' ') !== app.cmd.join(' ')) updateApp(idx, { cmd: parts })
+                    }}
                     placeholder="Command (e.g. firefox-esr --new-window)"
                     className="w-full px-2.5 py-1.5 rounded-md border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-ring transition-colors"
                   />
@@ -264,17 +242,23 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
         </div>
         <div className="flex items-center gap-2">
           <span className="w-16 text-[10px] text-muted-foreground">Encoding</span>
-          <select
+          <Select
             value={stream.encoding}
-            onChange={(e) => void saveStream({ ...stream, encoding: e.target.value })}
-            className="flex-1 px-2 py-1.5 rounded-md border border-input bg-background text-xs text-foreground outline-none focus:border-ring transition-colors cursor-pointer"
+            onValueChange={(v) => void saveStream({ ...streamRef.current, encoding: v })}
           >
-            <option value="auto">Auto</option>
-            <option value="jpeg">JPEG (best for photos/video)</option>
-            <option value="png">PNG (lossless, heavy)</option>
-            <option value="webp">WebP</option>
-          </select>
+            <SelectTrigger className="flex-1 h-7 text-xs cursor-pointer">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto" className="cursor-pointer text-xs">Auto</SelectItem>
+              <SelectItem value="jpeg" className="cursor-pointer text-xs">JPEG (best for photos/video)</SelectItem>
+              <SelectItem value="png" className="cursor-pointer text-xs">PNG (lossless, heavy)</SelectItem>
+              <SelectItem value="webp" className="cursor-pointer text-xs">WebP</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
+        {/* Sliders update their thumb locally while dragging but only
+            persist when the interaction ends (pointer/keyboard release). */}
         <div className="flex items-center gap-2">
           <span className="w-16 text-[10px] text-muted-foreground">Quality</span>
           <input
@@ -282,7 +266,13 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
             min={1}
             max={100}
             value={stream.quality}
-            onChange={(e) => void saveStream({ ...stream, quality: Number(e.target.value) })}
+            onChange={(e) => {
+              const next = { ...streamRef.current, quality: Number(e.target.value) }
+              streamRef.current = next
+              setStream(next)
+            }}
+            onPointerUp={() => void saveStream()}
+            onKeyUp={() => void saveStream()}
             className="flex-1 accent-primary cursor-pointer"
           />
           <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.quality}</span>
@@ -294,7 +284,13 @@ export function DesktopSettingsPanel({ onSaveStatusChange }: DesktopSettingsPane
             min={1}
             max={100}
             value={stream.speed}
-            onChange={(e) => void saveStream({ ...stream, speed: Number(e.target.value) })}
+            onChange={(e) => {
+              const next = { ...streamRef.current, speed: Number(e.target.value) }
+              streamRef.current = next
+              setStream(next)
+            }}
+            onPointerUp={() => void saveStream()}
+            onKeyUp={() => void saveStream()}
             className="flex-1 accent-primary cursor-pointer"
           />
           <span className="w-8 text-right text-[10px] text-muted-foreground tabular-nums">{stream.speed}</span>

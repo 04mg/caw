@@ -77,14 +77,15 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leafId, cwd, cmd, env])
 
-  // Periodically health-check the session so we can close the pane when
-  // the xpra server dies (app closed, crash). The xpra HTML5 client has
-  // its own reconnect logic for transient drops, so we poll on a slow
-  // interval (3s) to avoid fighting it.
+  // Health-check the session so we can close the pane as soon as the xpra
+  // server dies (app closed, crash) — otherwise the dead session's proxy
+  // answers "404 page not found" inside the pane. The xpra HTML5 client
+  // has its own reconnect logic for transient drops, so we poll on a 1s
+  // interval; the iframe's load handler below catches navigations sooner.
   useEffect(() => {
     if (!ready) return
     let active = true
-    const poll = async () => {
+    const check = async () => {
       if (!active) return
       const alive = await desktopHealthCheck(leafId)
       if (!active) return
@@ -93,7 +94,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
         onCloseRef.current(leafId)
       }
     }
-    const t = setInterval(poll, 3000)
+    void check()
+    const t = setInterval(check, 1000)
     return () => { active = false; clearInterval(t) }
   }, [leafId, ready])
 
@@ -182,7 +184,19 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, onClose }: Deskt
       iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads')
       iframe.allow = 'clipboard-read; clipboard-write; fullscreen'
     }
-    const onLoadHandler = () => injectChrome(iframe)
+    const onLoadHandler = () => {
+      injectChrome(iframe)
+      // A load after the initial mount usually means the xpra client lost
+      // its backend (app exited/crashed) and navigated — health-check
+      // immediately instead of waiting for the next poll tick, so the pane
+      // closes before a "404 page not found" error page becomes visible.
+      void desktopHealthCheck(leafId).then((alive) => {
+        if (!alive) {
+          markDesktopExited(leafId)
+          onCloseRef.current(leafId)
+        }
+      })
+    }
     iframe.addEventListener('load', onLoadHandler)
     iframeRef.current = iframe
 

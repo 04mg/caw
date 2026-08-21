@@ -2399,6 +2399,13 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       <DialogContent
         hideClose={isMobile}
         data-testid="settings-dialog"
+        onPointerDownOutside={(e) => {
+          // Radix renders select/dropdown menu content into a body-level
+          // portal, so those clicks count as "outside" the dialog. Never
+          // close the settings modal for interactions inside such a portal
+          // (icon picker, color picker, encoding select, …).
+          if ((e.target as HTMLElement).closest('[data-radix-popper-content-wrapper]')) e.preventDefault()
+        }}
         style={
           isMobile
             ? undefined
