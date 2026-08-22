@@ -27,6 +27,7 @@ const BUBBLE_MIN_H = 44
 const BTN_SIZE = 26
 const BTN_GAP = 6
 const ROW_GAP = 4
+const MARGIN = 8
 
 export function FloatingPromptBubble({
   open,
@@ -47,12 +48,9 @@ export function FloatingPromptBubble({
   const bubbleRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: BUBBLE_MIN_W, h: BUBBLE_MIN_H })
   const [showHistory, setShowHistory] = useState(false)
-  const [flipped, setFlipped] = useState(false)
-  // While dragging, the live position is driven here. On mouseup we commit
-  // it to the hook via onPinPosition so it persists.
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
-  const dragStartRef = useRef<{ mx: number; my: number; originX: number; originY: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
+  // Measure the bubble after it renders / text changes so we can clamp.
   useLayoutEffect(() => {
     const el = bubbleRef.current
     if (!el) return
@@ -60,6 +58,7 @@ export function FloatingPromptBubble({
     setSize({ w: Math.ceil(r.width), h: Math.ceil(r.height) })
   }, [text, open, showHistory])
 
+  // Focus the textarea when the bubble opens and place the caret at the end.
   useEffect(() => {
     if (open && taRef.current) {
       const ta = taRef.current
@@ -71,6 +70,7 @@ export function FloatingPromptBubble({
     }
   }, [open])
 
+  // Close history dropdown when clicking outside.
   useEffect(() => {
     if (!showHistory) return
     const onDown = (e: MouseEvent) => {
@@ -81,112 +81,92 @@ export function FloatingPromptBubble({
     return () => document.removeEventListener('mousedown', onDown)
   }, [showHistory])
 
-  // Auto-computed position (used when no drag and no pin).
-  const autoPos = useMemo(() => {
-    const topRowW = 2 * BTN_SIZE + BTN_GAP
-    const bottomRowW = BTN_SIZE
-    const rowH = BTN_SIZE
-    const maxRowW = Math.max(topRowW, bottomRowW)
-    const totalW = Math.max(size.w, maxRowW)
+  // Full composite bounds: the bubble plus a button row (and gap) on each
+  // vertical side. Used to guarantee everything stays inside the viewport.
+  const compositeBounds = useCallback(
+    (w: number, h: number) => ({
+      fullW: Math.max(w, BTN_SIZE * 2 + BTN_GAP),
+      fullH: h + BTN_SIZE * 2 + ROW_GAP * 2,
+    }),
+    [],
+  )
 
+  // Auto-computed position next to the cursor. Always resolves to a spot
+  // where the ENTIRE composite (buttons + bubble) is fully visible.
+  const autoPos = useMemo(() => {
+    const { fullW, fullH } = compositeBounds(size.w, size.h)
     const vw = window.innerWidth
     const vh = window.innerHeight
+
+    const minY = MARGIN
+    const maxY = Math.max(minY, vh - MARGIN - fullH)
+    const minX = MARGIN
+    const maxX = Math.max(minX, vw - MARGIN - fullW)
+
+    // Preferred: below-right of the cursor; fall back to above-left.
+    let y = mouse.y + offset
+    const aboveY = mouse.y - offset - fullH
+    const flip = y + fullH > vh - MARGIN && aboveY >= minY
+    if (flip) y = aboveY
 
     let x = mouse.x + offset
-    let y = mouse.y + offset
+    if (x + fullW > vw - MARGIN) x = mouse.x - offset - fullW
 
-    if (x + totalW > vw - 8) {
-      x = mouse.x - offset - totalW
-    }
-    if (x < 8) x = 8
-
-    const bottomRowBottom = y + size.h + ROW_GAP + rowH
-    let flip = false
-    if (bottomRowBottom > vh - 8) {
-      flip = true
-    }
-    const topRowTop = y - ROW_GAP - rowH
-    if (!flip && topRowTop < 8) {
-      flip = true
-    }
-
-    if (flip) {
-      const allAboveH = rowH * 2 + ROW_GAP * 2
-      if (y + size.h > vh - 8) y = vh - 8 - size.h
-      if (y - allAboveH < 8) y = 8 + allAboveH
-    } else {
-      if (y < 8) y = 8
-      if (y + size.h + ROW_GAP + rowH > vh - 8) {
-        y = vh - 8 - size.h - ROW_GAP - rowH
-      }
-    }
+    // Hard clamp: the whole composite must be fully on screen.
+    y = Math.min(Math.max(y, minY), maxY)
+    x = Math.min(Math.max(x, minX), maxX)
 
     return { x, y, flip }
-  }, [mouse, offset, size])
+  }, [mouse, offset, size, compositeBounds])
 
-  useEffect(() => {
-    setFlipped(autoPos.flip)
-  }, [autoPos.flip])
+  // Clamp an arbitrary absolute position so the composite stays visible.
+  const clampToViewport = useCallback(
+    (x: number, y: number): FloatingPromptPosition => {
+      const { fullW, fullH } = compositeBounds(size.w, size.h)
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const cx = Math.min(Math.max(x, MARGIN), Math.max(MARGIN, vw - MARGIN - fullW))
+      const cy = Math.min(Math.max(y, MARGIN), Math.max(MARGIN, vh - MARGIN - fullH))
+      return { x: cx, y: cy }
+    },
+    [size, compositeBounds],
+  )
 
-  // The effective position: drag > pinned > auto.
-  const effectivePos = dragPos ?? pinnedPos ?? { x: autoPos.x, y: autoPos.y }
+  // The effective position: pinned (dragged) wins over auto.
+  const effectivePos = pinnedPos ?? { x: autoPos.x, y: autoPos.y }
 
-  // Clamp an absolute position into the viewport.
-  const clampPos = useCallback((x: number, y: number) => {
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const rowH = BTN_SIZE
-    const cx = Math.max(8, Math.min(x, vw - size.w - 8))
-    const cy = Math.max(8 + rowH * 2 + ROW_GAP * 2, Math.min(y, vh - size.h - 8))
-    return { x: cx, y: cy }
-  }, [size])
+  // Drag: attach window listeners imperatively on mousedown so the drag
+  // starts immediately, independent of React effect timing. Every move pins
+  // the live position in the hook, so it persists after release.
+  const startDrag = (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, textarea, a, input, [role="button"]')) return
+    e.preventDefault()
 
-  // Drag machinery: mousedown anywhere on the container (except interactive
-  // elements) starts a drag. mousemove updates dragPos; mouseup commits it
-  // to the hook so it persists.
-  useEffect(() => {
-    if (!dragStartRef.current) return
-    const onMove = (e: MouseEvent) => {
-      const s = dragStartRef.current
-      if (!s) return
-      const nx = s.originX + (e.clientX - s.mx)
-      const ny = s.originY + (e.clientY - s.my)
-      setDragPos(clampPos(nx, ny))
+    const startX = e.clientX
+    const startY = e.clientY
+    const originX = effectivePos.x
+    const originY = effectivePos.y
+    let lastPos: FloatingPromptPosition = { x: originX, y: originY }
+
+    const onMove = (ev: MouseEvent) => {
+      lastPos = clampToViewport(originX + ev.clientX - startX, originY + ev.clientY - startY)
+      onPinPosition(lastPos)
     }
     const onUp = () => {
-      // Commit the last dragPos to the hook so it persists after release.
-      setDragPos((dp) => {
-        if (dp) onPinPosition(dp)
-        return null
-      })
-      dragStartRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      onPinPosition(lastPos)
+      setIsDragging(false)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [clampPos, onPinPosition])
-
-  const startDrag = (e: React.MouseEvent) => {
-    // Don't drag when clicking interactive elements.
-    const target = e.target as HTMLElement
-    if (target.closest('button, textarea, a, [role="button"], input')) return
-    e.preventDefault()
-    const origin = effectivePos
-    dragStartRef.current = { mx: e.clientX, my: e.clientY, originX: origin.x, originY: origin.y }
-    setDragPos({ x: origin.x, y: origin.y })
+    setIsDragging(true)
   }
 
-  const isDragging = dragStartRef.current !== null
-
   const topButtons = (
-    <div
-      className={cn('flex items-center cursor-grab', isDragging && 'cursor-grabbing')}
-      style={{ gap: BTN_GAP }}
-      onMouseDown={startDrag}
-    >
+    <div className={cn('flex items-center', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
       <CircleButton
         label="History"
         disabled={history.length === 0}
@@ -202,11 +182,7 @@ export function FloatingPromptBubble({
   )
 
   const bottomButtons = (
-    <div
-      className={cn('flex items-center cursor-grab', isDragging && 'cursor-grabbing')}
-      style={{ gap: BTN_GAP }}
-      onMouseDown={startDrag}
-    >
+    <div className={cn('flex items-center', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
       <CircleButton
         label="Send"
         disabled={!canSend || text.trim().length === 0}
@@ -223,20 +199,19 @@ export function FloatingPromptBubble({
       ref={bubbleRef}
       data-floating-prompt
       className={cn(
-        'relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl cursor-grab',
-        isDragging && 'cursor-grabbing',
+        'relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl',
+        isDragging ? 'cursor-grabbing' : 'cursor-grab',
       )}
       style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
-      onMouseDown={(e) => {
-        e.stopPropagation()
-        startDrag(e)
-      }}
+      onMouseDown={startDrag}
     >
       <textarea
         ref={taRef}
         value={text}
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={(e) => {
+          // Enter => newline (default textarea behavior). Stop propagation
+          // so the global listener doesn't react. Escape is handled globally.
           e.stopPropagation()
           if (e.key === 'Escape') {
             e.preventDefault()
@@ -295,8 +270,8 @@ export function FloatingPromptBubble({
           exit={{ opacity: 0, scale: 0.92 }}
           transition={{ duration: 0.12 }}
         >
-          <div className="flex flex-col items-start pointer-events-auto" style={{ gap: ROW_GAP }}>
-            {flipped ? (
+          <div className={cn('flex flex-col items-start pointer-events-auto', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: ROW_GAP }}>
+            {autoPos.flip ? (
               <>
                 {bottomButtons}
                 {topButtons}
