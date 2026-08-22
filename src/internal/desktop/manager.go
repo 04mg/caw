@@ -24,10 +24,19 @@ type Session struct {
 	Cmd     []string
 	Display int
 	Port    int
+	// Spec is the xpra display/session specifier passed on the command line:
+	// ":<display>" on Unix, "windows=<hwnd>" on Windows. Used to stop the
+	// server and to identify the session in logs.
+	Spec string
 	// xpraCmd is the running xpra process. We keep it so Delete can stop
 	// the server (which in turn kills the start-child via
 	// --exit-with-children) and so ReconcileOrphans can detect orphans.
 	xpraCmd *exec.Cmd
+	// appCmd is the graphical application process. On Unix this is nil
+	// (xpra's --start-child owns the app); on Windows Caw launches the app
+	// itself and shadows its top-level window, so we own the process and
+	// must kill it on Delete.
+	appCmd *exec.Cmd
 	// killed is set by Delete so OnSessionExit consumers can distinguish an
 	// explicit kill from a process that died on its own.
 	killed bool
@@ -86,17 +95,12 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		return "", fmt.Errorf("desktop session requires a start-child command")
 	}
 
-	display := allocDisplay()
-	if display < 0 {
-		return "", fmt.Errorf("no free xpra display number")
-	}
 	port, err := freeTCPPort()
 	if err != nil {
-		releaseDisplay(display)
 		return "", err
 	}
 
-	// Build the start-child env. xpra forwards these to the child via
+	// Build the child env. xpra forwards these to the child via
 	// --start-child; the env is passed as KEY=VALUE trailing args to the
 	// start-child command itself, but xpra's --env flag applies to the
 	// server. The simplest robust approach: set the env on the xpra process
@@ -109,72 +113,25 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		env = append(env, kv[0]+"="+kv[1])
 	}
 
-	// xpra invocation:
-	//   xpra start :<display>
-	//     --start-child=<cmd...>
-	//     --bind-ws=127.0.0.1:<port>
-	//     --exit-with-children=yes
-	//     --terminate-children=yes
-	//     --html=auto           (serve the HTML5 client on the WS port)
-	//     --attach=no           (don't auto-attach a local client)
-	//     --daemon=no           (stay in foreground so we own the process)
-	//     --pulseaudio=no       (no audio server needed for app forwarding)
-	//     --notifications=no    (don't spawn a notification daemon)
-	// We pass --start-child as a single argv element with the command
-	// joined by spaces; xpra runs it through the shell so quoting is
-	// handled.
-	startChild := joinShellSafe(req.Cmd)
-	args := []string{
-		"start", ":" + strconv.Itoa(display),
-		"--start-child=" + startChild,
-		"--bind-ws=127.0.0.1:" + strconv.Itoa(port),
-		"--exit-with-children=yes",
-		"--terminate-children=yes",
-		"--html=auto",
-		"--attach=no",
-		"--daemon=no",
-		"--pulseaudio=no",
-		"--notifications=no",
-		"--systemd-run=no",
-		// Chrome-free embedding: no xpra-drawn window borders, no tray,
-		// and the virtual display resizes to match the client pane. The
-		// app window is maximized client-side (see DesktopPanel) so it
-		// fills the pane immediately while still resizing correctly.
-		"--border=off",
-		"--tray=no",
-		"--system-tray=no",
-		"--resize-display=yes",
-	}
-
-	cmd := exec.Command(xpraPath(), args...)
-	cmd.Dir = cwd
-	cmd.Env = env
-	// Keep xpra's stderr for debugging; the server logs startup progress
-	// there and Create waits for the WS port to accept before returning.
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		releaseDisplay(display)
-		return "", fmt.Errorf("start xpra: %w", err)
-	}
-
-	sess := &Session{
-		ID:      id,
-		Cwd:     cwd,
-		Cmd:     req.Cmd,
-		Display: display,
-		Port:    port,
-		xpraCmd: cmd,
+	// Platform-specific launch. On Unix this runs `xpra start :<display>
+	// --start-child=<cmd>` (seamless mode with a virtual X display). On
+	// Windows seamless mode is unavailable (the Windows xpra build lacks the
+	// X11 bindings), so the Windows variant instead launches the app
+	// itself and runs `xpra shadow windows=<hwnd>` to forward just that
+	// window. Both return a Session whose WS port we then wait on.
+	sess, err := launchXpra(id, cwd, req.Cmd, env, port)
+	if err != nil {
+		return "", err
 	}
 
 	// Wait for xpra's WS port to accept connections before returning so the
 	// frontend's iframe doesn't hit a closed port on first paint. Cap at
-	// 10s; if xpra is slow the iframe will still retry via its reconnect
-	// logic but we want the common case to be instant.
-	if err := waitForPort(port, 10*time.Second); err != nil {
+	// 20s; Windows shadow servers can take ~10s to initialise, while the
+	// Unix case binds within a second or two.
+	if err := waitForPort(port, 20*time.Second); err != nil {
 		// xpra failed to bind; tear it down and report.
-		_ = stopXpra(display)
-		releaseDisplay(display)
+		_ = stopSession(sess)
+		releaseSession(sess)
 		return "", fmt.Errorf("xpra did not start: %w", err)
 	}
 
@@ -242,8 +199,8 @@ func (m *SessionManager) Delete(id string) bool {
 	if !ok {
 		return false
 	}
-	_ = stopXpra(sess.Display)
-	releaseDisplay(sess.Display)
+	_ = stopSession(sess)
+	releaseSession(sess)
 	if OnSessionExit != nil {
 		OnSessionExit(id, true)
 	}
@@ -287,21 +244,20 @@ func (m *SessionManager) ReconcileOrphans(knownLeafIDs map[string]bool) {
 	m.scheduleReconcile(knownLeafIDs)
 }
 
-// stopXpra runs `xpra stop :<display>` to cleanly shut down the server. It
-// is the desktop equivalent of terminal.Pty.Kill. We use the control
-// command rather than Process.Kill so xpra has a chance to terminate the
-// start-child gracefully (and --exit-with-children cleans up the Xvfb).
-func stopXpra(display int) error {
-	displaySpec := ":" + strconv.Itoa(display)
-	exe := xpraPath()
-	if exe == "" {
-		return fmt.Errorf("xpra is not installed; cannot stop %s", displaySpec)
-	}
-	cmd := exec.Command(exe, "stop", displaySpec)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("xpra stop %s: %w: %s", displaySpec, err, out)
-	}
-	return nil
+// stopSession shuts down the xpra server for the session. It is the desktop
+// equivalent of terminal.Pty.Kill. The mechanism is platform-specific: on
+// Unix `xpra stop :<display>` cleanly stops the server (and
+// --exit-with-children cleans up the Xvfb); on Windows, where `xpra stop`
+// does not reliably resolve per-window shadow sessions, we kill the process
+// tree of the xpra process we spawned (and the app process Caw launched).
+func stopSession(sess *Session) error {
+	return stopSessionImpl(sess)
+}
+
+// releaseSession releases any per-session resources (the display number on
+// Unix; nothing on Windows).
+func releaseSession(sess *Session) {
+	releaseSessionImpl(sess)
 }
 
 // waitForPort polls the given TCP port until it accepts a connection or the
