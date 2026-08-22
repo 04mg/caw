@@ -56,6 +56,8 @@ import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getCustomization, getDefaultNewAgent, getHotkey, loadPrefs, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
 import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
+import { useFloatingPrompt } from '@/features/floating-prompt/hooks/useFloatingPrompt'
+import { FloatingPromptBubble } from '@/features/floating-prompt/components/FloatingPromptBubble'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState'
@@ -388,6 +390,9 @@ export function AppLayout() {
   const currentWorkspacePath = (activeTab && activePaneId && getLeafCwd(activeTab.layout, activePaneId)) || activeWorkspace?.path || ''
   const activeLeaf = activeTab && activePaneId ? getLeaf(activeTab.layout, activePaneId) : null
   const activeWorktreeBranch = activeLeaf?.agentBranch ?? undefined
+
+  const floatingPrompt = useFloatingPrompt()
+  const canSendFloating = Boolean(activePaneId)
 
   const fetchGitStatus = useCallback(async () => {
     if (!currentWorkspacePath) {
@@ -2464,6 +2469,25 @@ export function AppLayout() {
           )}
         </DialogContent>
       </Dialog>
+
+      <FloatingPromptBubble
+        open={floatingPrompt.open}
+        text={floatingPrompt.text}
+        mouse={floatingPrompt.mouse}
+        offset={floatingPrompt.offset}
+        history={floatingPrompt.history}
+        canSend={canSendFloating}
+        onTextChange={floatingPrompt.setText}
+        onClose={floatingPrompt.closeBubble}
+        onSend={() => {
+          if (activePaneId && floatingPrompt.text) {
+            sendTerminalInput(activePaneId, floatingPrompt.text)
+          }
+          floatingPrompt.sendAndClose()
+        }}
+        onInsertFromHistory={floatingPrompt.insertFromHistory}
+        onClearHistory={floatingPrompt.clearHistory}
+      />
 
       <svg style={{ width: 0, height: 0, position: 'absolute' }}>
         <linearGradient id="lava-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
