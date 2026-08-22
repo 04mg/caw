@@ -628,9 +628,6 @@ export function WorkspacePanel({
                     <span className="text-base leading-none shrink-0">{row.folder.emoji || '\u{1F4C1}'}</span>
                     <span className="truncate flex-1 font-medium">{row.folder.name}</span>
                     <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
-                      <span className={`text-[10px] text-muted-foreground absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${isMobile ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'}`}>
-                        {row.childCount}
-                      </span>
                       <div className={`absolute inset-0 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         <FolderMenu
                           onEdit={() => setFolderDialog({ mode: 'edit', folder: row.folder })}

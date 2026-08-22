@@ -78,6 +78,7 @@ export function buildSidebarRows(
   }
 
   const rows: SidebarRow[] = []
+  const rendered = new Set<string>()
   for (const id of order) {
     const folder = folders.find((f) => f.id === id)
     if (folder) {
@@ -88,9 +89,11 @@ export function buildSidebarRows(
         collapsed: collapsedIds.has(folder.id),
         childCount: children.length,
       })
+      rendered.add(folder.id)
       if (!collapsedIds.has(folder.id)) {
         for (const child of children) {
           rows.push({ kind: 'workspace', ws: child, depth: 1 })
+          rendered.add(child.id)
         }
       }
       continue
@@ -98,7 +101,16 @@ export function buildSidebarRows(
     const ws = byId.get(id)
     if (ws && !ws.folderId) {
       rows.push({ kind: 'workspace', ws, depth: 0 })
+      rendered.add(ws.id)
     }
+  }
+  // Safety net: any workspace not yet covered by `order` (e.g. before the
+  // loaded sidebar layout has been applied, or a folder that dropped out of
+  // the order) still renders so workspaces never disappear mid-load.
+  for (const ws of workspaces) {
+    if (rendered.has(ws.id)) continue
+    if (ws.folderId && folders.some((f) => f.id === ws.folderId)) continue
+    rows.push({ kind: 'workspace', ws, depth: 0 })
   }
   return rows
 }
