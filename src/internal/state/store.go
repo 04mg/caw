@@ -119,6 +119,15 @@ func (s *Store) migrate() {
 		file_ext     TEXT NOT NULL,
 		size_bytes   INTEGER NOT NULL,
 		created_at   TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS workspace_folders (
+		id    TEXT PRIMARY KEY,
+		name  TEXT NOT NULL,
+		emoji TEXT DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS workspace_sidebar_order (
+		position INTEGER PRIMARY KEY,
+		entry_id TEXT NOT NULL
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
@@ -139,6 +148,8 @@ func (s *Store) migrate() {
 	// Existing leaves default to "" which loadLayoutTree normalizes to the
 	// legacy terminal/editor heuristic (isDiff/filePath => editor).
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN view TEXT DEFAULT ''")
+	// Workspace sidebar folders: membership column + folder/order tables.
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN folder_id TEXT DEFAULT ''")
 	s.migrateQuotaAccounts()
 }
 
@@ -156,7 +167,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, ''), COALESCE(copy_to_worktrees, '') FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, ''), COALESCE(copy_to_worktrees, ''), COALESCE(folder_id, '') FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -166,13 +177,39 @@ func (s *Store) Get() AppState {
 		var w Workspace
 		var enableWorktrees int
 		var copyJSON string
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON, &copyJSON); err != nil {
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON, &copyJSON, &w.FolderID); err != nil {
 			continue
 		}
 		w.EnableWorktrees = enableWorktrees != 0
 		_ = json.Unmarshal([]byte(copyJSON), &w.CopyToWorktrees)
 		w.Layouts = s.loadTabLayouts(w.ID)
 		as.Workspaces = append(as.Workspaces, w)
+	}
+
+	// Load sidebar folders
+	fRows, err := s.db.Query("SELECT id, name, COALESCE(emoji, '') FROM workspace_folders ORDER BY rowid")
+	if err == nil {
+		for fRows.Next() {
+			var f Folder
+			if err := fRows.Scan(&f.ID, &f.Name, &f.Emoji); err != nil {
+				continue
+			}
+			as.WorkspaceFolders = append(as.WorkspaceFolders, f)
+		}
+		fRows.Close()
+	}
+
+	// Load root-level sidebar order
+	oRows, err := s.db.Query("SELECT entry_id FROM workspace_sidebar_order ORDER BY position")
+	if err == nil {
+		for oRows.Next() {
+			var id string
+			if err := oRows.Scan(&id); err != nil {
+				continue
+			}
+			as.SidebarOrder = append(as.SidebarOrder, id)
+		}
+		oRows.Close()
 	}
 	return as
 }
@@ -273,6 +310,8 @@ func (s *Store) Set(as AppState) {
 	tx.Exec("DELETE FROM layout_nodes")
 	tx.Exec("DELETE FROM tab_layouts")
 	tx.Exec("DELETE FROM workspaces")
+	tx.Exec("DELETE FROM workspace_folders")
+	tx.Exec("DELETE FROM workspace_sidebar_order")
 
 	// Preserve VAPID keys and shared work prefs that must survive workspace
 	// state saves. Store.Set() does DELETE FROM settings, which would wipe
@@ -314,8 +353,8 @@ func (s *Store) Set(as AppState) {
 		}
 		copyJSON, _ := json.Marshal(w.CopyToWorktrees)
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json, copy_to_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON, string(copyJSON),
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json, copy_to_worktrees, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON, string(copyJSON), w.FolderID,
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(
@@ -324,6 +363,19 @@ func (s *Store) Set(as AppState) {
 			)
 			s.saveLayoutTree(tx, tl.ID, "", tl.Layout, 0)
 		}
+	}
+
+	for _, f := range as.WorkspaceFolders {
+		tx.Exec(
+			"INSERT INTO workspace_folders (id, name, emoji) VALUES (?, ?, ?)",
+			f.ID, f.Name, f.Emoji,
+		)
+	}
+	for i, entryID := range as.SidebarOrder {
+		tx.Exec(
+			"INSERT INTO workspace_sidebar_order (position, entry_id) VALUES (?, ?)",
+			i, entryID,
+		)
 	}
 
 	tx.Commit()

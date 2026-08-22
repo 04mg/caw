@@ -25,7 +25,8 @@ import {
   persistWorkspaces,
   subscribeRemoteState,
 } from '@/features/workspaces/stores/workspaceStore'
-import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
+import { type Workspace, type WorkspaceFolder, type TabGroupsNode } from '@/features/workspaces/types'
+import { normalizeSidebar, deleteFolder as removeFolderFromState, type SidebarState } from '@/features/workspaces/utils/sidebarFolders'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
@@ -90,6 +91,8 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([])
+  const [sidebarOrder, setSidebarOrder] = useState<string[]>([])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('caw:sidebarCollapsed') === '1',
   )
@@ -231,6 +234,25 @@ export function AppLayout() {
         return { ...w, tabGroups: tree, activeGroupId }
       })
       setWorkspaces(parsedWorkspaces)
+      // Sidebar folders: normalize the loaded state so invariants hold
+      // (dangling folderIds cleared, order covers every root entry exactly
+      // once). Old states without folders normalize to a no-op layout.
+      const normalized = normalizeSidebar(parsedWorkspaces, s.workspaceFolders ?? [], s.sidebarOrder ?? [])
+      if (normalized) {
+        const fixed = normalized.workspaces.map((w) => {
+          localFocusRef.current[w.id] = localFocusRef.current[w.id] ?? {
+            tabIndex: Math.max(0, Math.min(w.activeTabIndex, w.layouts.length - 1)),
+            paneId: w.activePaneId,
+          }
+          return w
+        })
+        setWorkspaces(fixed)
+        setWorkspaceFolders(normalized.folders)
+        setSidebarOrder(normalized.order)
+      } else {
+        setWorkspaceFolders(s.workspaceFolders ?? [])
+        setSidebarOrder(s.sidebarOrder ?? [])
+      }
       // Selection is per-client: prefer the local focus we just seeded,
       // falling back to the backend's last-writer value only to pick the
       // initial workspace. Other devices switching workspaces must never
@@ -247,6 +269,8 @@ export function AppLayout() {
   useEffect(() => {
     const unsub = subscribeRemoteState((remote) => {
       skipPersistRef.current = true
+      setWorkspaceFolders(remote.workspaceFolders ?? [])
+      setSidebarOrder(remote.sidebarOrder ?? [])
       setWorkspaces((prev) => {
         if (workspacesEqual(prev, remote.workspaces)) {
           return prev
@@ -596,8 +620,8 @@ export function AppLayout() {
       skipPersistRef.current = false
       return
     }
-    persistWorkspaces(workspaces, activeWorkspaceId)
-  }, [workspaces, activeWorkspaceId])
+    persistWorkspaces(workspaces, activeWorkspaceId, workspaceFolders, sidebarOrder)
+  }, [workspaces, activeWorkspaceId, workspaceFolders, sidebarOrder])
 
   useEffect(() => {
     if (activeWorkspace && workspaces.length > 0) {
@@ -1730,15 +1754,62 @@ export function AppLayout() {
     })
   }, [])
 
-  const handleReorderWorkspaces = useCallback((from: number, to: number) => {
-    if (from === to || from < 0 || to < 0) return
-    setWorkspaces((prev) => {
-      const next = prev.slice()
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
-      return next
-    })
+  const sidebarStateRef = useRef<SidebarState>({ workspaces: [], folders: [], order: [] })
+  sidebarStateRef.current = { workspaces, folders: workspaceFolders, order: sidebarOrder }
+
+  const handleSidebarMutation = useCallback((fn: (s: SidebarState) => SidebarState) => {
+    const next = fn(sidebarStateRef.current)
+    setWorkspaces(next.workspaces)
+    setWorkspaceFolders(next.folders)
+    setSidebarOrder(next.order)
   }, [])
+
+  const handleCreateFolder = useCallback(
+    (name: string, emoji: string, workspaceIds?: string[]) => {
+      const folder: WorkspaceFolder = { id: crypto.randomUUID(), name, emoji: emoji || undefined }
+      setWorkspaceFolders((prev) => [...prev, folder])
+      setSidebarOrder((prev) => [...prev, folder.id])
+      if (workspaceIds && workspaceIds.length > 0) {
+        const ids = new Set(workspaceIds)
+        setWorkspaces((prev) =>
+          prev.map((w) => (ids.has(w.id) ? { ...w, folderId: folder.id } : w)),
+        )
+        setSidebarOrder((prev) => prev.filter((id) => !ids.has(id)))
+      }
+    },
+    [],
+  )
+
+  const handleEditFolder = useCallback((id: string, name: string, emoji: string) => {
+    setWorkspaceFolders((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, name, emoji: emoji || undefined } : f)),
+    )
+  }, [])
+
+  const handleDeleteFolder = useCallback(
+    (folderId: string) => {
+      const current = sidebarStateRef.current
+      const removedWsIds = new Set(
+        current.workspaces.filter((w) => w.folderId === folderId).map((w) => w.id),
+      )
+      for (const wsId of removedWsIds) {
+        const target = current.workspaces.find((w) => w.id === wsId)
+        if (!target) continue
+        for (const tab of target.layouts) {
+          for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId)
+        }
+      }
+      const next = removeFolderFromState(current, folderId)
+      setWorkspaces(next.workspaces)
+      setWorkspaceFolders(next.folders)
+      setSidebarOrder(next.order)
+      setActiveWorkspaceId((cur) => {
+        if (cur && removedWsIds.has(cur)) return next.workspaces[0]?.id ?? null
+        return cur
+      })
+    },
+    [],
+  )
 
   useHotkeys({
     [getHotkey('closePane')]: () => { if (activePaneId) handleClosePane(activePaneId) },
@@ -1933,6 +2004,8 @@ export function AppLayout() {
             <div className={`absolute top-0 bottom-0 left-0 w-[80%] max-w-[320px] bg-background border-r border-border transition-transform duration-300 ease-out ${workspacesDrawerOpen ? 'translate-x-0 delay-150' : '-translate-x-full'}`}>
               <WorkspacePanel
                 workspaces={workspaces}
+                folders={workspaceFolders}
+                sidebarOrder={sidebarOrder}
                 activeWorkspaceId={activeWorkspaceId}
                 onSelectWorkspace={(id) => {
                   setActiveWorkspaceId(id)
@@ -1941,7 +2014,10 @@ export function AppLayout() {
                 onAddWorkspace={handleAddWorkspace}
                 onDeleteWorkspace={handleDeleteWorkspace}
                 onEditWorkspace={handleEditWorkspace}
-                onReorderWorkspaces={handleReorderWorkspaces}
+                onCreateFolder={handleCreateFolder}
+                onEditFolder={handleEditFolder}
+                onDeleteFolder={handleDeleteFolder}
+                onSidebarMutation={handleSidebarMutation}
                 collapsed={false}
                 onToggle={() => setWorkspacesDrawerOpen(false)}
                 pickerOpen={pickerOpen}
@@ -2134,12 +2210,17 @@ export function AppLayout() {
                     ResizeObserver emitted (issue #691). */}
                 <WorkspacePanel
                   workspaces={workspaces}
+                  folders={workspaceFolders}
+                  sidebarOrder={sidebarOrder}
                   activeWorkspaceId={activeWorkspaceId}
                   onSelectWorkspace={setActiveWorkspaceId}
                   onAddWorkspace={handleAddWorkspace}
                   onDeleteWorkspace={handleDeleteWorkspace}
                   onEditWorkspace={handleEditWorkspace}
-                  onReorderWorkspaces={handleReorderWorkspaces}
+                  onCreateFolder={handleCreateFolder}
+                  onEditFolder={handleEditFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                  onSidebarMutation={handleSidebarMutation}
                   collapsed={sidebarCollapsed}
                   onToggle={toggleSidebar}
                   pickerOpen={pickerOpen}

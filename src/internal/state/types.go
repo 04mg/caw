@@ -40,11 +40,25 @@ type Workspace struct {
 	EnableWorktrees bool        `json:"enableWorktrees"`
 	TabGroupsJSON   string      `json:"tabGroupsJson,omitempty"`
 	CopyToWorktrees []string    `json:"copyToWorktrees,omitempty"`
+	FolderID        string      `json:"folderId,omitempty"`
+}
+
+// Folder is a sidebar grouping for workspaces. Folders are never nested:
+// they only contain workspaces and live at the root level of the sidebar.
+type Folder struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Emoji string `json:"emoji,omitempty"`
 }
 
 type AppState struct {
 	Workspaces        []Workspace `json:"workspaces"`
 	ActiveWorkspaceID string      `json:"activeWorkspaceId"`
+	WorkspaceFolders  []Folder    `json:"workspaceFolders,omitempty"`
+	// SidebarOrder holds the root-level display order: ids of folders and
+	// loose workspaces, interleaved. Workspaces inside a folder are ordered
+	// by their position in Workspaces.
+	SidebarOrder []string `json:"sidebarOrder,omitempty"`
 }
 
 // CollectLeafIDs walks every workspace/tab/layout tree in the AppState and
