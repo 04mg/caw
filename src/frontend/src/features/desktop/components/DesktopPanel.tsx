@@ -119,7 +119,10 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
     const host = hostRef.current
     if (!host || !ready || preview) return
 
-    const wsUrl = `ws://${location.host}/ws/desktop/${encodeURIComponent(leafId)}`
+    // Match the page scheme: wss:// when served over https (e.g. via the
+    // Cloudflare tunnel), otherwise browsers block ws:// as mixed content.
+    const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws'
+    const wsUrl = `${wsScheme}://${location.host}/ws/desktop/${encodeURIComponent(leafId)}`
     const entry = acquireClient(
       leafId,
       wsUrl,
