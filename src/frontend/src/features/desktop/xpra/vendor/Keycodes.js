@@ -1743,7 +1743,7 @@ const CHARCODE_TO_NAME_SHIFTED = {};
 CHARCODE_TO_NAME_SHIFTED[187] = "dead_grave";
 CHARCODE_TO_NAME_SHIFTED[221] = "dead_grave";
 
-MODIFIERS_NAMES  = {
+const MODIFIERS_NAMES = {
   "Control": "control",
   "Alt": "mod1",
   "Meta": "mod4",
@@ -1767,7 +1767,7 @@ MODIFIERS_NAMES  = {
  * we prefer looking up just the left ("_L") variants for simplicity,
  * and also because the ones on the right ("_R") are more often re-purposed.
  */
-X11_TO_MODIFIER = {
+const X11_TO_MODIFIER = {
   "Num_Lock": "NumLock",
   "Alt_L": "Alt",
   "Meta_L": "Meta",
