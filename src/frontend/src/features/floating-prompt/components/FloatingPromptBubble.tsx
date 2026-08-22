@@ -44,6 +44,12 @@ export function FloatingPromptBubble({
   const [showHistory, setShowHistory] = useState(false)
   const [flipped, setFlipped] = useState(false) // buttons-below => buttons-above
 
+  // Drag state: once the user grabs any row or the bubble, the position is
+  // driven by dragOffset relative to the auto-computed position, so the
+  // component controls its own placement while being dragged.
+  const [drag, setDrag] = useState<{ active: boolean; dx: number; dy: number } | null>(null)
+  const dragStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
+
   // Measure the bubble after it renders / text changes so we can clamp.
   useLayoutEffect(() => {
     const el = bubbleRef.current
@@ -74,6 +80,41 @@ export function FloatingPromptBubble({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [showHistory])
+
+  // Drag: mousedown on any row or the bubble starts a drag. The drag moves
+  // the whole bubble relative to its auto-computed position. mouseup / escape
+  // ends it. While dragging, show a grabbing cursor.
+  useEffect(() => {
+    if (!drag?.active) return
+    const onMove = (e: MouseEvent) => {
+      if (!dragStartRef.current) return
+      setDrag({
+        active: true,
+        dx: e.clientX - dragStartRef.current.mx,
+        dy: e.clientY - dragStartRef.current.my,
+      })
+    }
+    const onUp = () => {
+      setDrag(null)
+      dragStartRef.current = null
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [drag?.active])
+
+  const startDrag = (e: React.MouseEvent) => {
+    // Don't start a drag when clicking on an interactive element inside the
+    // bubble (textarea, buttons, history items).
+    const target = e.target as HTMLElement
+    if (target.closest('button, textarea, a, [role="button"]')) return
+    e.preventDefault()
+    dragStartRef.current = { mx: e.clientX, my: e.clientY, px: position.x, py: position.y }
+    setDrag({ active: true, dx: 0, dy: 0 })
+  }
 
   const position = useMemo(() => {
     // One button row has up to 2 buttons (History + Close) on top, 1 (Send) on bottom.
@@ -132,8 +173,12 @@ export function FloatingPromptBubble({
     setFlipped(position.flip)
   }, [position.flip])
 
+  const finalPos = drag
+    ? { x: position.x + drag.dx, y: position.y + drag.dy }
+    : position
+
   const topButtons = (
-    <div className="flex items-center gap-1.5" style={{ gap: BTN_GAP }}>
+    <div className="flex items-center gap-1.5 cursor-grab" style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
       <CircleButton
         label="History"
         disabled={history.length === 0}
@@ -149,7 +194,7 @@ export function FloatingPromptBubble({
   )
 
   const bottomButtons = (
-    <div className="flex items-center" style={{ gap: BTN_GAP }}>
+    <div className="flex items-center cursor-grab" style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
       <CircleButton
         label="Send"
         disabled={!canSend || text.trim().length === 0}
@@ -165,9 +210,12 @@ export function FloatingPromptBubble({
     <div
       ref={bubbleRef}
       data-floating-prompt
-      className="relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl"
+      className="relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl cursor-grab"
       style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
-      onMouseDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => {
+        e.stopPropagation()
+        startDrag(e)
+      }}
     >
       <textarea
         ref={taRef}
@@ -200,7 +248,7 @@ export function FloatingPromptBubble({
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">History</span>
             <button
               onClick={onClearHistory}
-              className="text-muted-foreground hover:text-destructive transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               title="Clear history"
             >
               <Trash2 className="h-3 w-3" />
@@ -227,8 +275,8 @@ export function FloatingPromptBubble({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed z-[60] pointer-events-none"
-          style={{ left: position.x, top: position.y }}
+          className={cn('fixed z-[60] pointer-events-none', drag?.active ? 'cursor-grabbing' : 'cursor-grab')}
+          style={{ left: finalPos.x, top: finalPos.y }}
           initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.92 }}
