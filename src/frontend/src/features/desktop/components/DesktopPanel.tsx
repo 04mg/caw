@@ -59,6 +59,8 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
   const [failed, setFailed] = useState(false)
   const [stream, setStream] = useState<DesktopStreamPrefs>(() => getPrefs().desktopStream)
   const [muted, setMuted] = useState(false)
+  // Bumped to force a fresh client after the WS reconnect budget exhausts.
+  const [clientEpoch, setClientEpoch] = useState(0)
   const hostRef = useRef<HTMLDivElement>(null)
   const clientRef = useRef<XpraClient | null>(null)
   const onCloseRef = useRef(onClose)
@@ -136,8 +138,15 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
       },
       () => { /* first window: nothing extra needed, spinner already hidden */ },
       (reason) => {
-        void reason
-        destroyClient(leafId)
+        if (reason === 'reconnect failed') {
+          // The WS gave up but the session may well be alive (e.g. the
+          // service restarted). Drop the dead client and acquire a fresh
+          // one; if the session is actually gone the health poll below
+          // closes the pane within a second.
+          destroyClient(leafId)
+          setClientEpoch((n) => n + 1)
+          return
+        }
         markDesktopExited(leafId)
         onCloseRef.current(leafId)
       },
@@ -171,7 +180,7 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
       clientRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leafId, ready, preview])
+  }, [leafId, ready, preview, clientEpoch])
 
   // Give the desktop surface keyboard focus whenever this pane becomes the
   // active pane.

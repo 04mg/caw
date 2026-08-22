@@ -391,13 +391,15 @@ export class XpraClient {
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return
     this.reconnectAttempts += 1
-    if (this.reconnectAttempts > 10) {
+    // Be patient: transient outages (service restarts, tunnel blips) should
+    // heal without user intervention. ~60 attempts at up to 15s ≈ 12 min.
+    if (this.reconnectAttempts > 60) {
       this.setState('closed', 'reconnect attempts exhausted')
       this.cb.onClose('reconnect failed')
       return
     }
     this.setState('reconnecting')
-    const delay = Math.min(2000 * this.reconnectAttempts, 10000)
+    const delay = Math.min(2000 * this.reconnectAttempts, 15000)
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null
       this.helloReceived = false
