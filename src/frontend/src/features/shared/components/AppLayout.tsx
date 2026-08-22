@@ -30,7 +30,6 @@ import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
 import { destroyDesktop, setOnDesktopExit, isDesktopExited } from '@/features/desktop/services/desktopRegistry'
-import { setDesktopSurfacesInert, setDesktopSurfacesVisible } from '@/features/desktop/services/desktopSurface'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -142,10 +141,6 @@ export function AppLayout() {
       setDragMousePos(null)
       return
     }
-    // Desktop session iframes live above the panes in their own layer and
-    // would swallow pointermove/pointerup mid-drag; make them pass-through
-    // so the drop overlays keep tracking the cursor.
-    setDesktopSurfacesInert(true)
     const handleGlobalPointerMove = (e: PointerEvent) => {
       setDragMousePos({ x: e.clientX, y: e.clientY })
     }
@@ -158,20 +153,15 @@ export function AppLayout() {
     window.addEventListener('pointermove', handleGlobalPointerMove)
     window.addEventListener('pointerup', handleGlobalPointerUp)
     return () => {
-      setDesktopSurfacesInert(false)
       window.removeEventListener('pointermove', handleGlobalPointerMove)
       window.removeEventListener('pointerup', handleGlobalPointerUp)
     }
   }, [draggedTabId])
 
-  // The Kanban overlay is trapped in a lower stacking context than the
-  // body-level desktop surface layer, so its z-index alone can't cover
-  // live iframes. Hide the layer while the board is open instead —
-  // sessions keep running and reappear instantly on close.
-  useEffect(() => {
-    setDesktopSurfacesVisible(!(agentBoardOpen || kanbanClosing))
-    return () => setDesktopSurfacesVisible(true)
-  }, [agentBoardOpen, kanbanClosing])
+  // (The bundled desktop client renders its canvas inside the normal pane
+  // layout, so there is no body-level surface layer to hide during a tab drag
+  // or while the Kanban board is open — the regular stacking/z-index takes
+  // care of covering inactive desktop panes.)
 
   // Mobile layout state variables
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)

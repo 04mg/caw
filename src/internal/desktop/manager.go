@@ -115,14 +115,16 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	//     --bind-ws=127.0.0.1:<port>
 	//     --exit-with-children=yes
 	//     --terminate-children=yes
-	//     --html=auto           (serve the HTML5 client on the WS port)
 	//     --attach=no           (don't auto-attach a local client)
 	//     --daemon=no           (stay in foreground so we own the process)
-	//     --pulseaudio=no       (no audio server needed for app forwarding)
+	//     --pulseaudio=yes     (start a private pulse server so the app's
+	//                           audio is forwarded to the bundled client)
+	//     --speaker=on          (enable speaker forwarding)
+	//     --microphone=off      (we don't capture local audio)
 	//     --notifications=no    (don't spawn a notification daemon)
-	// We pass --start-child as a single argv element with the command
-	// joined by spaces; xpra runs it through the shell so quoting is
-	// handled.
+	// We no longer pass --html=auto: the HTML5 client is bundled in Caw
+	// itself (see src/frontend/.../desktop/xpra) and loads directly, so xpra
+	// only needs to serve the WebSocket stream on the bound port.
 	startChild := joinShellSafe(req.Cmd)
 	args := []string{
 		"start", ":" + strconv.Itoa(display),
@@ -130,16 +132,17 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 		"--bind-ws=127.0.0.1:" + strconv.Itoa(port),
 		"--exit-with-children=yes",
 		"--terminate-children=yes",
-		"--html=auto",
 		"--attach=no",
 		"--daemon=no",
-		"--pulseaudio=no",
+		"--pulseaudio=yes",
+		"--speaker=on",
+		"--microphone=off",
 		"--notifications=no",
 		"--systemd-run=no",
 		// Chrome-free embedding: no xpra-drawn window borders, no tray,
 		// and the virtual display resizes to match the client pane. The
-		// app window is maximized client-side (see DesktopPanel) so it
-		// fills the pane immediately while still resizing correctly.
+		// app window is configured to fill the pane by the bundled client
+		// so it fills the pane immediately while still resizing correctly.
 		"--border=off",
 		"--tray=no",
 		"--system-tray=no",
