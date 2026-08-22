@@ -22,8 +22,6 @@ func launchXpra(id, cwd string, cmd []string, env []string, port int) (*Session,
 	//   xpra start :<display>
 	//     --start-child=<cmd...>
 	//     --bind-ws=127.0.0.1:<port>
-	//     --exit-with-children=yes
-	//     --terminate-children=yes
 	//     --attach=no           (don't auto-attach a local client)
 	//     --daemon=no           (stay in foreground so we own the process)
 	//     --pulseaudio=yes     (start a private pulse server so the app's
@@ -34,13 +32,19 @@ func launchXpra(id, cwd string, cmd []string, env []string, port int) (*Session,
 	// We no longer pass --html=auto: the HTML5 client is bundled in Caw
 	// itself (see src/frontend/.../desktop/xpra) and loads directly, so xpra
 	// only needs to serve the WebSocket stream on the bound port.
+	//
+	// We do NOT pass --exit-with-children/--terminate-children: some apps
+	// (notably Firefox) daemonize — the start-child process forks a
+	// detached copy and exits immediately, which would make xpra tear the
+	// session down before the app even appears. xpra keeps serving the
+	// app's windows on the virtual display regardless; orphan sessions
+	// are reaped by ReconcileOrphans (when the pane leaves the layout) or
+	// the DELETE /api/desktop/{id} route.
 	startChild := joinShellSafe(cmd)
 	args := []string{
 		"start", ":" + strconv.Itoa(display),
 		"--start-child=" + startChild,
 		"--bind-ws=127.0.0.1:" + strconv.Itoa(port),
-		"--exit-with-children=yes",
-		"--terminate-children=yes",
 		"--attach=no",
 		"--daemon=no",
 		"--pulseaudio=yes",

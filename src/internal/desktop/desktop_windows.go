@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -48,26 +49,56 @@ func launchXpra(id, cwd string, cmd []string, env []string, port int) (*Session,
 		return nil, fmt.Errorf("desktop session requires a command")
 	}
 
-	exePath, err := exec.LookPath(cmd[0])
-	if err != nil {
-		// exec.LookPath on Windows searches PATH and the app dir; if the
-		// user configured a bare name like "notepad" it resolves here.
-		return nil, fmt.Errorf("lookup %s: %w", cmd[0], err)
+	// Resolve the executable for the CreateProcess fast path. Skip the
+	// lookup for shell-activated (UWP) commands — they go through
+	// `cmd /c start` and don't need a resolved exePath.
+	var exePath string
+	if !needsShellExecute(cmd) {
+		var err error
+		exePath, err = exec.LookPath(cmd[0])
+		if err != nil {
+			// exec.LookPath on Windows searches PATH and the app dir; if
+			// the user configured a bare name like "notepad" it resolves
+			// here.
+			return nil, fmt.Errorf("lookup %s: %w", cmd[0], err)
+		}
 	}
 
-	// Launch the application ourselves. We detach it from xpra (there is
-	// no xpra child relationship on Windows) and capture its PID so we can
-	// find its top-level window and clean it up on Delete.
-	appCmd := exec.Command(exePath, cmd[1:]...)
+	// Snapshot the visible top-level windows that already exist so we can
+	// detect NEW windows the app creates, even when the launched PID is
+	// not the one that owns the window (UWP apps launched via explorer.exe
+	// shell:AppsFolder\..., single-instance apps that delegate to an
+	// existing process, or apps that relaunch themselves elevated via
+	// UAC — all break the launched-PID → window-owner relationship).
+	existing := snapshotVisibleWindows()
+
+	// Launch the application. Most apps resolve via exec.LookPath and
+	// CreateProcess (fast path, gives us a PID). UWP/store apps launched
+	// via "explorer.exe shell:AppsFolder\<AUMID>" are special: running
+	// explorer.exe through CreateProcess just opens an Explorer window
+	// instead of activating the app — UWP activation MUST go through the
+	// shell (ShellExecute). Route any command containing "shell:" through
+	// `cmd /c start` (which uses ShellExecute internally); we can't track
+	// the PID, but the new-window detection below handles that.
+	var appCmd *exec.Cmd
+	if needsShellExecute(cmd) {
+		// `cmd /c start "" "<args>..."` invokes ShellExecuteEx, which is
+		// the only way to activate UWP apps. The empty title ("") is
+		// required so the first quoted arg isn't treated as a title.
+		appCmd = exec.Command("cmd", "/c", "start", "", strings.Join(cmd, " "))
+	} else {
+		appCmd = exec.Command(exePath, cmd[1:]...)
+	}
 	appCmd.Dir = cwd
 	appCmd.Env = env
 	if err := appCmd.Start(); err != nil {
 		return nil, fmt.Errorf("start application %s: %w", cmd[0], err)
 	}
 
-	// Wait for the app to create a visible top-level window. We poll up to
-	// 20s; most GUI apps show a window within a second or two.
-	hwnd, err := waitForTopLevelWindow(uint32(appCmd.Process.Pid), 20*time.Second)
+	// Wait for the app to create a visible top-level window. Try the
+	// launched PID first (fast path for most apps), then fall back to any
+	// new visible top-level window. Allow 45s for heavy Electron/UWP apps.
+	hwnd, err := waitForTopLevelWindow(uint32(appCmd.Process.Pid), 45*time.Second, existing)
 	if err != nil {
 		_ = killProcessTree(appCmd.Process.Pid)
 		return nil, err
@@ -150,20 +181,62 @@ func killProcessTree(pid int) error {
 	return exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
 
-// waitForTopLevelWindow polls EnumWindows for a visible, unowned top-level
-// window belonging to the given PID. "Unowned" (GetWindow(GW_OWNER)==0)
-// filters out transient windows and toolwindows that some apps create
-// before their real main window. Returns an error if no window appears
-// before the timeout.
-func waitForTopLevelWindow(pid uint32, timeout time.Duration) (uintptr, error) {
+// waitForTopLevelWindow polls for a visible, unowned top-level window.
+// It first tries windows owned by the launched PID (fast path), then
+// falls back to any NEW visible top-level window that appeared since the
+// pre-launch snapshot (handles UWP/single-instance/UAC apps where the
+// window is owned by a different PID than the one we launched). Returns
+// an error if no window appears before the timeout.
+func waitForTopLevelWindow(pid uint32, timeout time.Duration, existing map[uintptr]bool) (uintptr, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if hwnd := findTopLevelWindow(pid); hwnd != 0 {
 			return hwnd, nil
 		}
+		if hwnd := findNewTopLevelWindow(existing); hwnd != 0 {
+			return hwnd, nil
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return 0, fmt.Errorf("application (pid %d) did not create a visible window within %s", pid, timeout)
+}
+
+// snapshotVisibleWindows returns the set of currently visible top-level
+// window handles. Used as a pre-launch baseline so we can detect windows
+// the app creates even when they are owned by a different PID.
+func snapshotVisibleWindows() map[uintptr]bool {
+	set := make(map[uintptr]bool)
+	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
+		if isWindowVisible(hwnd) && getOwner(hwnd) == 0 {
+			set[hwnd] = true
+		}
+		return 1
+	})
+	procEnumWindows.Call(cb, 0)
+	return set
+}
+
+// findNewTopLevelWindow enumerates all visible, unowned top-level windows
+// and returns the first one NOT in the pre-launch snapshot. This catches
+// apps whose window is owned by a process other than the one we launched
+// (UWP apps, single-instance delegates, UAC-elevated relaunches).
+func findNewTopLevelWindow(existing map[uintptr]bool) uintptr {
+	var found uintptr
+	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
+		if !isWindowVisible(hwnd) {
+			return 1
+		}
+		if getOwner(hwnd) != 0 {
+			return 1
+		}
+		if existing[hwnd] {
+			return 1
+		}
+		found = hwnd
+		return 0
+	})
+	procEnumWindows.Call(cb, 0)
+	return found
 }
 
 // findTopLevelWindow enumerates all top-level windows and returns the first
@@ -206,4 +279,17 @@ func getOwner(hwnd uintptr) uintptr {
 	gw := user32.NewProc("GetWindow")
 	owner, _, _ := gw.Call(hwnd, gwOwner)
 	return owner
+}
+
+// needsShellExecute reports whether the command should be launched via
+// ShellExecute (cmd /c start) rather than CreateProcess. UWP/store apps
+// activated via "explorer.exe shell:AppsFolder\<AUMID>" REQUIRE the shell
+// path: CreateProcess on explorer.exe just opens an Explorer window.
+func needsShellExecute(cmd []string) bool {
+	for _, arg := range cmd {
+		if strings.Contains(arg, "shell:") {
+			return true
+		}
+	}
+	return false
 }
