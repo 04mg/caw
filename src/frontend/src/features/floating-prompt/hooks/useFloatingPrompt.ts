@@ -73,17 +73,16 @@ export function useFloatingPrompt() {
   mouseRef.current = mouse
 
   // Track the mouse position continuously so the bubble can open right next
-  // to the cursor the moment a printable key lands while unfocused.
+  // to the cursor the moment a printable key lands while unfocused. Once the
+  // bubble is open it stays anchored at the position it appeared — it must
+  // not follow the cursor, otherwise the user can never reach the buttons.
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY }
-      if (open) {
-        setMouse({ x: e.clientX, y: e.clientY })
-      }
     }
     window.addEventListener('mousemove', onMove)
     return () => window.removeEventListener('mousemove', onMove)
-  }, [open])
+  }, [])
 
   const openBubble = useCallback((initialChar: string) => {
     setMouse({ ...mouseRef.current })
