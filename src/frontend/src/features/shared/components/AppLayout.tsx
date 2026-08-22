@@ -2475,6 +2475,7 @@ export function AppLayout() {
         text={floatingPrompt.text}
         mouse={floatingPrompt.mouse}
         offset={floatingPrompt.offset}
+        pinnedPos={floatingPrompt.pinnedPos}
         history={floatingPrompt.history}
         canSend={canSendFloating}
         onTextChange={floatingPrompt.setText}
@@ -2487,6 +2488,7 @@ export function AppLayout() {
         }}
         onInsertFromHistory={floatingPrompt.insertFromHistory}
         onClearHistory={floatingPrompt.clearHistory}
+        onPinPosition={floatingPrompt.pinPosition}
       />
 
       <svg style={{ width: 0, height: 0, position: 'absolute' }}>

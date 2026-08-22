@@ -1,14 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { SendHorizonal, X, History, Trash2 } from 'lucide-react'
 import { cn } from '@/features/shared/utils/utils'
 import { CircleButton } from './CircleButton'
+import type { FloatingPromptPosition } from '@/features/floating-prompt/hooks/useFloatingPrompt'
 
 interface FloatingPromptBubbleProps {
   open: boolean
   text: string
   mouse: { x: number; y: number }
   offset: number
+  pinnedPos: FloatingPromptPosition | null
   history: string[]
   canSend: boolean
   onTextChange: (text: string) => void
@@ -16,6 +18,7 @@ interface FloatingPromptBubbleProps {
   onSend: () => void
   onInsertFromHistory: (item: string) => void
   onClearHistory: () => void
+  onPinPosition: (pos: FloatingPromptPosition) => void
 }
 
 const BUBBLE_MIN_W = 200
@@ -30,6 +33,7 @@ export function FloatingPromptBubble({
   text,
   mouse,
   offset,
+  pinnedPos,
   history,
   canSend,
   onTextChange,
@@ -37,20 +41,18 @@ export function FloatingPromptBubble({
   onSend,
   onInsertFromHistory,
   onClearHistory,
+  onPinPosition,
 }: FloatingPromptBubbleProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: BUBBLE_MIN_W, h: BUBBLE_MIN_H })
   const [showHistory, setShowHistory] = useState(false)
-  const [flipped, setFlipped] = useState(false) // buttons-below => buttons-above
+  const [flipped, setFlipped] = useState(false)
+  // While dragging, the live position is driven here. On mouseup we commit
+  // it to the hook via onPinPosition so it persists.
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
+  const dragStartRef = useRef<{ mx: number; my: number; originX: number; originY: number } | null>(null)
 
-  // Drag state: once the user grabs any row or the bubble, the position is
-  // driven by dragOffset relative to the auto-computed position, so the
-  // component controls its own placement while being dragged.
-  const [drag, setDrag] = useState<{ active: boolean; dx: number; dy: number } | null>(null)
-  const dragStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
-
-  // Measure the bubble after it renders / text changes so we can clamp.
   useLayoutEffect(() => {
     const el = bubbleRef.current
     if (!el) return
@@ -58,7 +60,6 @@ export function FloatingPromptBubble({
     setSize({ w: Math.ceil(r.width), h: Math.ceil(r.height) })
   }, [text, open, showHistory])
 
-  // Focus the textarea when the bubble opens and place the caret at the end.
   useEffect(() => {
     if (open && taRef.current) {
       const ta = taRef.current
@@ -70,7 +71,6 @@ export function FloatingPromptBubble({
     }
   }, [open])
 
-  // Close history dropdown when clicking outside.
   useEffect(() => {
     if (!showHistory) return
     const onDown = (e: MouseEvent) => {
@@ -81,43 +81,8 @@ export function FloatingPromptBubble({
     return () => document.removeEventListener('mousedown', onDown)
   }, [showHistory])
 
-  // Drag: mousedown on any row or the bubble starts a drag. The drag moves
-  // the whole bubble relative to its auto-computed position. mouseup / escape
-  // ends it. While dragging, show a grabbing cursor.
-  useEffect(() => {
-    if (!drag?.active) return
-    const onMove = (e: MouseEvent) => {
-      if (!dragStartRef.current) return
-      setDrag({
-        active: true,
-        dx: e.clientX - dragStartRef.current.mx,
-        dy: e.clientY - dragStartRef.current.my,
-      })
-    }
-    const onUp = () => {
-      setDrag(null)
-      dragStartRef.current = null
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [drag?.active])
-
-  const startDrag = (e: React.MouseEvent) => {
-    // Don't start a drag when clicking on an interactive element inside the
-    // bubble (textarea, buttons, history items).
-    const target = e.target as HTMLElement
-    if (target.closest('button, textarea, a, [role="button"]')) return
-    e.preventDefault()
-    dragStartRef.current = { mx: e.clientX, my: e.clientY, px: position.x, py: position.y }
-    setDrag({ active: true, dx: 0, dy: 0 })
-  }
-
-  const position = useMemo(() => {
-    // One button row has up to 2 buttons (History + Close) on top, 1 (Send) on bottom.
+  // Auto-computed position (used when no drag and no pin).
+  const autoPos = useMemo(() => {
     const topRowW = 2 * BTN_SIZE + BTN_GAP
     const bottomRowW = BTN_SIZE
     const rowH = BTN_SIZE
@@ -127,35 +92,25 @@ export function FloatingPromptBubble({
     const vw = window.innerWidth
     const vh = window.innerHeight
 
-    // Preferred: bubble to the right of the cursor.
     let x = mouse.x + offset
     let y = mouse.y + offset
 
-    // Horizontal clamp: if it overflows the right edge, place to the left.
     if (x + totalW > vw - 8) {
       x = mouse.x - offset - totalW
     }
     if (x < 8) x = 8
 
-    // Decide whether the button row goes above or below the bubble.
-    // Default: buttons below (top row above bubble, bottom row below bubble)?
-    // We'll put: top row (History, Close) ABOVE bubble, bottom row (Send) BELOW bubble.
-    // If there's no room below for the bottom row, flip everything above.
     const bottomRowBottom = y + size.h + ROW_GAP + rowH
     let flip = false
     if (bottomRowBottom > vh - 8) {
       flip = true
     }
-    // Also flip if the top row would overflow the top.
     const topRowTop = y - ROW_GAP - rowH
     if (!flip && topRowTop < 8) {
-      // not enough room above for the top row — flip to put all buttons below
       flip = true
     }
 
-    // Vertical clamp
     if (flip) {
-      // All buttons above the bubble: [bottom row][top row][bubble]
       const allAboveH = rowH * 2 + ROW_GAP * 2
       if (y + size.h > vh - 8) y = vh - 8 - size.h
       if (y - allAboveH < 8) y = 8 + allAboveH
@@ -170,15 +125,68 @@ export function FloatingPromptBubble({
   }, [mouse, offset, size])
 
   useEffect(() => {
-    setFlipped(position.flip)
-  }, [position.flip])
+    setFlipped(autoPos.flip)
+  }, [autoPos.flip])
 
-  const finalPos = drag
-    ? { x: position.x + drag.dx, y: position.y + drag.dy }
-    : position
+  // The effective position: drag > pinned > auto.
+  const effectivePos = dragPos ?? pinnedPos ?? { x: autoPos.x, y: autoPos.y }
+
+  // Clamp an absolute position into the viewport.
+  const clampPos = useCallback((x: number, y: number) => {
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const rowH = BTN_SIZE
+    const cx = Math.max(8, Math.min(x, vw - size.w - 8))
+    const cy = Math.max(8 + rowH * 2 + ROW_GAP * 2, Math.min(y, vh - size.h - 8))
+    return { x: cx, y: cy }
+  }, [size])
+
+  // Drag machinery: mousedown anywhere on the container (except interactive
+  // elements) starts a drag. mousemove updates dragPos; mouseup commits it
+  // to the hook so it persists.
+  useEffect(() => {
+    if (!dragStartRef.current) return
+    const onMove = (e: MouseEvent) => {
+      const s = dragStartRef.current
+      if (!s) return
+      const nx = s.originX + (e.clientX - s.mx)
+      const ny = s.originY + (e.clientY - s.my)
+      setDragPos(clampPos(nx, ny))
+    }
+    const onUp = () => {
+      // Commit the last dragPos to the hook so it persists after release.
+      setDragPos((dp) => {
+        if (dp) onPinPosition(dp)
+        return null
+      })
+      dragStartRef.current = null
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [clampPos, onPinPosition])
+
+  const startDrag = (e: React.MouseEvent) => {
+    // Don't drag when clicking interactive elements.
+    const target = e.target as HTMLElement
+    if (target.closest('button, textarea, a, [role="button"], input')) return
+    e.preventDefault()
+    const origin = effectivePos
+    dragStartRef.current = { mx: e.clientX, my: e.clientY, originX: origin.x, originY: origin.y }
+    setDragPos({ x: origin.x, y: origin.y })
+  }
+
+  const isDragging = dragStartRef.current !== null
 
   const topButtons = (
-    <div className="flex items-center gap-1.5 cursor-grab" style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
+    <div
+      className={cn('flex items-center cursor-grab', isDragging && 'cursor-grabbing')}
+      style={{ gap: BTN_GAP }}
+      onMouseDown={startDrag}
+    >
       <CircleButton
         label="History"
         disabled={history.length === 0}
@@ -194,7 +202,11 @@ export function FloatingPromptBubble({
   )
 
   const bottomButtons = (
-    <div className="flex items-center cursor-grab" style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
+    <div
+      className={cn('flex items-center cursor-grab', isDragging && 'cursor-grabbing')}
+      style={{ gap: BTN_GAP }}
+      onMouseDown={startDrag}
+    >
       <CircleButton
         label="Send"
         disabled={!canSend || text.trim().length === 0}
@@ -210,7 +222,10 @@ export function FloatingPromptBubble({
     <div
       ref={bubbleRef}
       data-floating-prompt
-      className="relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl cursor-grab"
+      className={cn(
+        'relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl cursor-grab',
+        isDragging && 'cursor-grabbing',
+      )}
       style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
       onMouseDown={(e) => {
         e.stopPropagation()
@@ -222,8 +237,6 @@ export function FloatingPromptBubble({
         value={text}
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={(e) => {
-          // Enter => newline (default textarea behavior). Stop propagation
-          // so the global listener doesn't react. Escape is handled globally.
           e.stopPropagation()
           if (e.key === 'Escape') {
             e.preventDefault()
@@ -275,8 +288,8 @@ export function FloatingPromptBubble({
     <AnimatePresence>
       {open && (
         <motion.div
-          className={cn('fixed z-[60] pointer-events-none', drag?.active ? 'cursor-grabbing' : 'cursor-grab')}
-          style={{ left: finalPos.x, top: finalPos.y }}
+          className="fixed z-[60] pointer-events-none"
+          style={{ left: effectivePos.x, top: effectivePos.y }}
           initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.92 }}

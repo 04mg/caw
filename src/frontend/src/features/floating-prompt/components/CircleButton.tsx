@@ -19,7 +19,6 @@ export function CircleButton({ children, label, disabled, active, highlight, onC
         e.stopPropagation()
         onClick()
       }}
-      onMouseDown={(e) => e.stopPropagation()}
       className={cn(
         'flex items-center justify-center rounded-full border transition-all',
         'disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none',

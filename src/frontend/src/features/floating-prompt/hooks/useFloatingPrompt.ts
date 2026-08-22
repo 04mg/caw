@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export interface FloatingPromptState {
-  open: boolean
-  text: string
-  mouse: { x: number; y: number }
-  history: string[]
-}
-
 const HISTORY_KEY = 'caw:floatingPromptHistory'
 const HISTORY_LIMIT = 50
 const OFFSET = 16
@@ -29,11 +22,8 @@ const FOCUS_SELECTOR = [
 ].join(',')
 
 function isPrintableKey(e: KeyboardEvent): boolean {
-  // A single-character key with no destructive modifier (except Shift).
-  // Also accept dead keys (composing accents) so non-English layouts work.
   if (e.ctrlKey || e.altKey || e.metaKey) return false
   if (e.key.length !== 1) return false
-  // Reject control characters
   if (e.key.charCodeAt(0) < 32) return false
   return true
 }
@@ -42,8 +32,6 @@ function isFocusInTextContext(): boolean {
   const el = document.activeElement
   if (!el) return false
   if (el === document.body) return true
-  // If the active element matches any of the text-entry selectors, the user
-  // is typing into that element, not "into the void".
   if ((el as HTMLElement).closest?.(FOCUS_SELECTOR)) return false
   return true
 }
@@ -64,18 +52,25 @@ function saveHistory(items: string[]) {
   } catch { /* ignore */ }
 }
 
+export interface FloatingPromptPosition {
+  x: number
+  y: number
+}
+
 export function useFloatingPrompt() {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [mouse, setMouse] = useState({ x: 0, y: 0 })
   const [history, setHistory] = useState<string[]>(() => loadHistory())
+  // pinnedPos is set when the user drags the bubble. While null, the
+  // component auto-positions next to the cursor. Once set, it sticks.
+  // It is cleared when the bubble is fully closed so the next open
+  // re-anchors to the cursor — unless reopened via the hotkey, which
+  // preserves the last pinned position.
+  const [pinnedPos, setPinnedPos] = useState<FloatingPromptPosition | null>(null)
   const mouseRef = useRef(mouse)
   mouseRef.current = mouse
 
-  // Track the mouse position continuously so the bubble can open right next
-  // to the cursor the moment a printable key lands while unfocused. Once the
-  // bubble is open it stays anchored at the position it appeared — it must
-  // not follow the cursor, otherwise the user can never reach the buttons.
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY }
@@ -87,14 +82,23 @@ export function useFloatingPrompt() {
   const openBubble = useCallback((initialChar: string) => {
     setMouse({ ...mouseRef.current })
     setText(initialChar)
+    setPinnedPos(null)
     setOpen(true)
   }, [])
 
+  // Reopen via hotkey (Alt+Space): open with existing text preserved, at the
+  // last pinned position if there is one, otherwise anchor to the cursor.
+  const reopenBubble = useCallback(() => {
+    if (!pinnedPos) setMouse({ ...mouseRef.current })
+    setOpen(true)
+  }, [pinnedPos])
+
+  // Close without clearing text (Escape, or clicking outside).
   const closeBubble = useCallback(() => {
     setOpen(false)
-    setText('')
   }, [])
 
+  // Close and clear text (after a successful send).
   const sendAndClose = useCallback(() => {
     const trimmed = text
     if (trimmed) {
@@ -104,6 +108,7 @@ export function useFloatingPrompt() {
     }
     setOpen(false)
     setText('')
+    setPinnedPos(null)
   }, [text, history])
 
   const clearHistory = useCallback(() => {
@@ -115,17 +120,34 @@ export function useFloatingPrompt() {
     setText(item)
   }, [])
 
-  // Global key listener: open the bubble when a printable key is typed while
-  // the focus is not inside a text-entry element. Escape closes it.
+  // Called by the component when the user finishes dragging — pins the
+  // position so it persists until the bubble is closed.
+  const pinPosition = useCallback((pos: FloatingPromptPosition) => {
+    setPinnedPos(pos)
+  }, [])
+
+  // Global key listener:
+  //  - Alt+Space: reopen the bubble (regardless of focus).
+  //  - Escape (while open): close without clearing.
+  //  - printable key (while closed, unfocused): open seeded with the char.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Alt+Space: always reopen (even if focus is in a terminal/editor).
+      if (e.altKey && e.code === 'Space') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!open) {
+          reopenBubble()
+        }
+        return
+      }
+
       if (open) {
         if (e.key === 'Escape') {
           e.preventDefault()
           e.stopPropagation()
           closeBubble()
         }
-        // While open, let the textarea handle all other keys — don't intercept.
         return
       }
 
@@ -134,33 +156,31 @@ export function useFloatingPrompt() {
       if (!isPrintableKey(e)) return
       if (!isFocusInTextContext()) return
 
-      // Don't open while a modifier-driven hotkey is in flight (handled above),
-      // or while a drag is happening, etc. The key is printable and the focus
-      // is in the void — open the bubble seeded with this character.
       e.preventDefault()
       e.stopPropagation()
       openBubble(e.key)
     }
 
-    // Use capture so we intercept before xterm/Monaco/etc. could claim it.
-    // We only act when focus is NOT in those elements, so this is safe.
     window.addEventListener('keydown', onKeyDown, true)
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [open, openBubble, closeBubble])
+  }, [open, openBubble, closeBubble, reopenBubble])
 
   return {
     open,
     text,
     mouse,
+    pinnedPos,
     history,
     offset: OFFSET,
     setText,
     openBubble,
+    reopenBubble,
     closeBubble,
     sendAndClose,
     clearHistory,
     insertFromHistory,
+    pinPosition,
   }
 }
