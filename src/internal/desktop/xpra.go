@@ -35,6 +35,18 @@ func windowsXpraDirs() []string {
 	return dirs
 }
 
+// windowsXpraCandidates returns the full candidate paths for Xpra.exe in
+// well-known Windows install locations (the installer lays out
+// <root>\Xpra\Xpra.exe).
+func windowsXpraCandidates() []string {
+	dirs := windowsXpraDirs()
+	candidates := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		candidates = append(candidates, filepath.Join(dir, "Xpra", "Xpra.exe"))
+	}
+	return candidates
+}
+
 // xpraPath resolves the absolute path of the xpra executable, returning ""
 // when it cannot be found. On Windows it falls back to well-known install
 // locations when the directory is missing from PATH.
@@ -45,8 +57,7 @@ func xpraPath() string {
 	if runtime.GOOS != "windows" {
 		return ""
 	}
-	for _, dir := range windowsXpraDirs() {
-		candidate := filepath.Join(dir, "Xpra.exe")
+	for _, candidate := range windowsXpraCandidates() {
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate
 		}
@@ -76,8 +87,7 @@ func xpraDebugInfo() string {
 	}
 	b.WriteString("lookpath=none")
 	if runtime.GOOS == "windows" {
-		for _, dir := range windowsXpraDirs() {
-			candidate := filepath.Join(dir, "Xpra.exe")
+		for _, candidate := range windowsXpraCandidates() {
 			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 				fmt.Fprintf(&b, " found=%s", candidate)
 				return b.String()
