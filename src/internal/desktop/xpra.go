@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,35 @@ func xpraPath() string {
 // packages (e.g. the agent registry) share the same detection.
 func Available() bool {
 	return xpraPath() != ""
+}
+
+// xpraDebugInfo returns a human-readable trace of a detection attempt: the
+// LookPath result, the running executable, and each Windows fallback
+// location with its stat outcome. Used by the status endpoint to diagnose
+// false "not installed" reports.
+func xpraDebugInfo() string {
+	var b strings.Builder
+	if exe, err := os.Executable(); err == nil {
+		fmt.Fprintf(&b, "exe=%s ", exe)
+	}
+	if p, err := exec.LookPath(xpraBinary); err == nil {
+		fmt.Fprintf(&b, "lookpath=%s", p)
+		return b.String()
+	}
+	b.WriteString("lookpath=none")
+	if runtime.GOOS == "windows" {
+		for _, dir := range windowsXpraDirs() {
+			candidate := filepath.Join(dir, "Xpra.exe")
+			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+				fmt.Fprintf(&b, " found=%s", candidate)
+				return b.String()
+			}
+			fmt.Fprintf(&b, " miss=%s", candidate)
+		}
+	} else {
+		b.WriteString(" (non-windows: no fallback locations)")
+	}
+	return b.String()
 }
 
 // xpraAvailable reports whether the xpra executable can be found. Used
