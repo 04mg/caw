@@ -258,7 +258,9 @@ export class XpraClient {
       'vrefresh': 60,
       'file-chunks': 0,
       'setting-change': true,
-      'rencodeplus': false,
+      // The vendored rencode.js implements rencode+; the server must decode
+      // our packets with it (proto_flags=0x10) or it rejects the hello.
+      'rencodeplus': true,
       'brotli': false,
       'lz4': true,
       'compression_level': 1,
