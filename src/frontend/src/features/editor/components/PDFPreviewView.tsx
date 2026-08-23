@@ -94,6 +94,16 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
     return () => observer.disconnect()
   }, [status, numPages, renderPage])
 
+  // Re-render already-visible pages when zoom changes so they stay crisp.
+  useEffect(() => {
+    if (status !== 'ready') return
+    const previouslyRendered = Array.from(renderedRef.current)
+    renderTasksRef.current.forEach((task) => task.cancel())
+    renderTasksRef.current.clear()
+    renderedRef.current.clear()
+    previouslyRendered.forEach((pageNum) => renderPage(pageNum))
+  }, [zoom, status, renderPage])
+
   useEffect(() => {
     let active = true
     const renderTasks = renderTasksRef.current
@@ -264,11 +274,7 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
       >
         <div className="mx-auto flex flex-col items-center gap-4 py-4">
           {pages.map((pageNum) => (
-            <div
-              key={pageNum}
-              className="shrink-0 bg-background shadow-lg border border-border"
-              style={{ padding: '12px' }}
-            >
+            <div key={pageNum} className="shrink-0">
               <canvas
                 ref={(el) => {
                   pageRefs.current[pageNum - 1] = el
