@@ -1,14 +1,18 @@
-import { useState, useCallback, useRef, useEffect, type PointerEvent } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 
 import { WorkspacePickerDialog } from './WorkspacePickerDialog'
 import { WorkspaceEditDialog } from './WorkspaceEditDialog'
+import { WorkspaceFolderDialog } from './WorkspaceFolderDialog'
+import { WorkspaceContextMenu } from './WorkspaceContextMenu'
+import { FolderMenu } from './FolderMenu'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { WorkspacePreview, type PreviewAnchor } from './WorkspacePreview'
-import { type Workspace } from '@/features/workspaces/types'
+import { type Workspace, type WorkspaceFolder } from '@/features/workspaces/types'
+import { buildSidebarRows, type SidebarState, moveToFolderEnd, setWorkspaceFolder, moveEntryRelative, placeAdjacentFlat } from '@/features/workspaces/utils/sidebarFolders'
 import { collectLeafIds } from '@/features/shared/utils/layout'
 import { useAgentStatuses } from '@/features/agents/hooks/useAgentStatuses'
 import { getAgentStatusDot, getStrongestStatus } from '@/features/agents/utils/statusDot'
@@ -24,18 +28,25 @@ const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '�
 const PREVIEW_HOVER_DELAY_MS = 1000
 const PREVIEW_HIDE_GRACE_MS = 150
 
+type DropZone = 'before' | 'after' | 'into'
+
 function getIsMobile() {
   return window.innerWidth < 768
 }
 
 interface WorkspacePanelProps {
   workspaces: Workspace[]
+  folders?: WorkspaceFolder[]
+  sidebarOrder?: string[]
   activeWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
   onAddWorkspace: (path: string, name: string, emoji: string) => void
   onDeleteWorkspace: (id: string) => void
   onEditWorkspace: (id: string, name: string, emoji: string) => void
-  onReorderWorkspaces: (from: number, to: number) => void
+  onCreateFolder?: (name: string, emoji: string, workspaceIds?: string[]) => void
+  onEditFolder?: (id: string, name: string, emoji: string) => void
+  onDeleteFolder?: (id: string) => void
+  onSidebarMutation?: (fn: (s: SidebarState) => SidebarState) => void
   collapsed: boolean
   onToggle: () => void
   noHeader?: boolean
@@ -47,12 +58,17 @@ interface WorkspacePanelProps {
 
 export function WorkspacePanel({
   workspaces,
+  folders,
+  sidebarOrder,
   activeWorkspaceId,
   onSelectWorkspace,
   onAddWorkspace,
   onDeleteWorkspace,
   onEditWorkspace,
-  onReorderWorkspaces,
+  onCreateFolder,
+  onEditFolder,
+  onDeleteFolder,
+  onSidebarMutation,
   collapsed,
   onToggle,
   noHeader,
@@ -65,14 +81,39 @@ export function WorkspacePanel({
   const pickerOpen = externalPickerOpen ?? internalPickerOpen
   const setPickerOpen = onPickerOpenChange ?? setInternalPickerOpen
   const [editTarget, setEditTarget] = useState<Workspace | null>(null)
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set())
+  const [folderDialog, setFolderDialog] = useState<
+    { mode: 'create'; assignWsId?: string } | { mode: 'edit'; folder: WorkspaceFolder } | null
+  >(null)
+  const allFolders = useMemo(() => folders ?? [], [folders])
+  const order = useMemo(() => sidebarOrder ?? [], [sidebarOrder])
+
   const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ index: number; zone: DropZone } | null>(null)
   const [dragOffset, setDragOffset] = useState(0)
   const dragStartYRef = useRef(0)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
+  const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null)
   const [generalContextMenu, setGeneralContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isMobile, setIsMobile] = useState(getIsMobile)
+
+  // Visible sidebar rows: folders interleaved with loose workspaces at the
+  // root level, children indented right below their folder. While a folder
+  // is being dragged its children are hidden so the whole group moves as
+  // one visual unit.
+  const baseRows = useMemo(
+    () => buildSidebarRows(workspaces, allFolders, order, collapsedFolderIds),
+    [workspaces, allFolders, order, collapsedFolderIds],
+  )
+  const rows = useMemo(() => {
+    if (dragIndex === null || dragIndex >= baseRows.length) return baseRows
+    const dragged = baseRows[dragIndex]
+    if (dragged.kind !== 'folder') return baseRows
+    const eff = new Set(collapsedFolderIds)
+    eff.add(dragged.folder.id)
+    return buildSidebarRows(workspaces, allFolders, order, eff)
+  }, [baseRows, dragIndex, collapsedFolderIds, workspaces, allFolders, order])
 
   // Hover-preview state: which workspace's thumbnail is showing and where it
   // is anchored. previewVisibleRef mirrors previewWsId for synchronous checks
@@ -101,6 +142,13 @@ export function WorkspacePanel({
   }, [contextMenu])
 
   useEffect(() => {
+    if (!folderContextMenu) return
+    const onDown = () => setFolderContextMenu(null)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [folderContextMenu])
+
+  useEffect(() => {
     if (!generalContextMenu) return
     const onDown = () => setGeneralContextMenu(null)
     document.addEventListener('mousedown', onDown)
@@ -123,12 +171,43 @@ export function WorkspacePanel({
     [editTarget, onEditWorkspace],
   )
 
+  const handleFolderSave = useCallback(
+    (name: string, emoji: string) => {
+      if (!folderDialog) return
+      if (folderDialog.mode === 'edit') {
+        onEditFolder?.(folderDialog.folder.id, name, emoji)
+      } else {
+        onCreateFolder?.(name, emoji, folderDialog.assignWsId ? [folderDialog.assignWsId] : undefined)
+      }
+      setFolderDialog(null)
+    },
+    [folderDialog, onCreateFolder, onEditFolder],
+  )
+
+  const toggleFolder = useCallback((folderId: string) => {
+    setCollapsedFolderIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
+      return next
+    })
+  }, [])
+
+  const moveToFolderCb = useCallback(
+    (wsId: string, folderId: string | null) => {
+      onSidebarMutation?.((s) =>
+        folderId ? moveToFolderEnd(s, wsId, folderId) : setWorkspaceFolder(s, wsId, null),
+      )
+    },
+    [onSidebarMutation],
+  )
+
   const onPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>, index: number) => {
       if (e.button !== 0) return
       dragStartYRef.current = e.clientY
       setDragIndex(index)
-      setDragOverIndex(null)
+      setDropTarget(null)
       setDragOffset(0)
       ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
     },
@@ -142,36 +221,86 @@ export function WorkspacePanel({
       setDragOffset(delta)
 
       const myY = e.clientY
-      let hoverIdx = -1
-      for (let i = 0; i < workspaces.length; i++) {
+      const draggingIsFolder = baseRows[index]?.kind === 'folder'
+      let hit: { index: number; zone: DropZone } | null = null
+      for (let i = 0; i < rows.length; i++) {
         if (i === dragIndex) continue
         const r = itemRefs.current[i]?.getBoundingClientRect()
-        if (!r) continue
+        if (!r || r.height === 0) continue
         if (myY >= r.top && myY <= r.bottom) {
-          hoverIdx = i
+          const rel = (myY - r.top) / r.height
+          const row = rows[i]
+          let zone: DropZone
+          if (row.kind === 'folder') {
+            if (draggingIsFolder) zone = rel < 0.5 ? 'before' : 'after'
+            else zone = rel < 0.3 ? 'before' : rel > 0.7 ? 'after' : 'into'
+          } else {
+            zone = rel < 0.5 ? 'before' : 'after'
+          }
+          hit = { index: i, zone }
           break
         }
       }
 
-      if (hoverIdx >= 0 && hoverIdx !== dragOverIndex) {
-        setDragOverIndex(hoverIdx)
-      }
+      const nextKey = hit ? `${hit.index}:${hit.zone}` : ''
+      const prevKey = dropTarget ? `${dropTarget.index}:${dropTarget.zone}` : ''
+      if (nextKey !== prevKey) setDropTarget(hit)
     },
-    [dragIndex, dragOverIndex, workspaces.length],
+    [dragIndex, baseRows, rows, dropTarget],
   )
+
+  const performDrop = useCallback(() => {
+    if (dragIndex === null || !dropTarget || dropTarget.index === dragIndex) return
+    const dragRow = rows[dragIndex]
+    const targetRow = rows[dropTarget.index]
+    const zone = dropTarget.zone
+    if (!dragRow || !targetRow) return
+
+    if (!onSidebarMutation) return
+
+    if (dragRow.kind === 'folder') {
+      if (zone === 'into') return
+      let anchorId: string | null = null
+      if (targetRow.kind === 'folder') anchorId = targetRow.folder.id
+      else if (targetRow.depth === 0) anchorId = targetRow.ws.id
+      else anchorId = targetRow.ws.folderId ?? null
+      if (!anchorId || anchorId === dragRow.folder.id) return
+      onSidebarMutation((s) => moveEntryRelative(s, dragRow.folder.id, anchorId!, zone))
+      return
+    }
+
+    const wsId = dragRow.ws.id
+    if (zone === 'into') {
+      if (targetRow.kind !== 'folder') return
+      onSidebarMutation((s) => moveToFolderEnd(s, wsId, targetRow.folder.id))
+      return
+    }
+    if (targetRow.kind === 'folder') {
+      onSidebarMutation((s) => moveEntryRelative(setWorkspaceFolder(s, wsId, null), wsId, targetRow.folder.id, zone))
+      return
+    }
+    if (targetRow.depth === 0) {
+      onSidebarMutation((s) => {
+        const out = setWorkspaceFolder(s, wsId, null)
+        const flat = placeAdjacentFlat(out, wsId, targetRow.ws.id, zone)
+        return moveEntryRelative(flat, wsId, targetRow.ws.id, zone)
+      })
+      return
+    }
+    const fid = targetRow.ws.folderId ?? null
+    onSidebarMutation((s) => placeAdjacentFlat(setWorkspaceFolder(s, wsId, fid), wsId, targetRow.ws.id, zone))
+  }, [dragIndex, dropTarget, rows, onSidebarMutation])
 
   const onPointerUp = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
-      if (dragIndex !== null && dragOverIndex !== null && dragOverIndex !== dragIndex) {
-        onReorderWorkspaces(dragIndex, dragOverIndex)
-      }
+      performDrop()
       setDragIndex(null)
-      setDragOverIndex(null)
+      setDropTarget(null)
       setDragOffset(0)
       dragStartYRef.current = 0
     },
-    [dragIndex, dragOverIndex, onReorderWorkspaces],
+    [performDrop],
   )
 
   const clearPreviewTimers = useCallback(() => {
@@ -230,7 +359,7 @@ export function WorkspacePanel({
   // Rows the preview must not trigger for: mobile (no hover) and while a
   // drag-reorder or context menu is active. The active workspace previews
   // too — as a static image snapshot instead of a second live terminal grid.
-  const previewSuppressed = isMobile || dragIndex !== null || !!contextMenu || !!generalContextMenu
+  const previewSuppressed = isMobile || dragIndex !== null || !!contextMenu || !!folderContextMenu || !!generalContextMenu
 
   const handleRowMouseEnter = useCallback(
     (wsId: string, rowEl: HTMLElement | null) => {
@@ -265,6 +394,68 @@ export function WorkspacePanel({
     },
     [hidePreview, onSelectWorkspace],
   )
+
+  const renderContextMenuPortal = (menu: { x: number; y: number; workspaceId: string } | null) => {
+    if (!menu) return null
+    const ws = workspaces.find((w) => w.id === menu.workspaceId)
+    if (!ws) return null
+    return (
+      <WorkspaceContextMenu
+        x={menu.x}
+        y={menu.y}
+        ws={ws}
+        folders={allFolders}
+        onEdit={() => { setContextMenu(null); setEditTarget(ws) }}
+        onDelete={() => { setContextMenu(null); onDeleteWorkspace(ws.id) }}
+        onMoveToFolder={(fid) => { setContextMenu(null); moveToFolderCb(ws.id, fid) }}
+        onRemoveFromFolder={() => { setContextMenu(null); moveToFolderCb(ws.id, null) }}
+        onNewFolder={() => { setContextMenu(null); setFolderDialog({ mode: 'create', assignWsId: ws.id }) }}
+      />
+    )
+  }
+
+  const renderFolderContextMenuPortal = () => {
+    if (!folderContextMenu) return null
+    const folder = allFolders.find((f) => f.id === folderContextMenu.folderId)
+    if (!folder) return null
+    return createPortal(
+      <div
+        className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
+        style={{ left: folderContextMenu.x, top: folderContextMenu.y }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); setFolderDialog({ mode: 'edit', folder }) }}
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit folder
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); onDeleteFolder?.(folder.id) }}
+          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete folder
+        </button>
+      </div>,
+      document.body,
+    )
+  }
+
+  const renderFolderDialog = () => {
+    if (!folderDialog) return null
+    return (
+      <WorkspaceFolderDialog
+        open={true}
+        onOpenChange={() => setFolderDialog(null)}
+        initialName={folderDialog.mode === 'edit' ? folderDialog.folder.name : 'New Folder'}
+        initialEmoji={folderDialog.mode === 'edit' ? folderDialog.folder.emoji || '' : ''}
+        onSave={handleFolderSave}
+      />
+    )
+  }
 
   if (collapsed) {
     return (
@@ -321,33 +512,7 @@ export function WorkspacePanel({
             </div>
           ))}
         </div>
-        {contextMenu && (() => {
-          const ws = workspaces.find((w) => w.id === contextMenu.workspaceId)
-          if (!ws) return null
-          return createPortal(
-            <div
-              className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
-              style={{ left: contextMenu.x, top: contextMenu.y }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditTarget(ws) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-                Edit workspace
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setContextMenu(null); onDeleteWorkspace(ws.id) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete workspace
-              </button>
-            </div>,
-            document.body
-          )
-        })(        )}
+        {renderContextMenuPortal(contextMenu)}
         {previewWsId && previewAnchor && (() => {
           const ws = workspaces.find((w) => w.id === previewWsId)
           // No thumbnail for the workspace that's already open in the main area.
@@ -373,6 +538,7 @@ export function WorkspacePanel({
             onSave={handleEditSave}
           />
         )}
+        {renderFolderDialog()}
       </div>
     )
   }
@@ -411,18 +577,72 @@ export function WorkspacePanel({
         </div>
       )}
 
-      {workspaces.length === 0 ? (
+      {baseRows.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <p className="text-xs text-muted-foreground italic">No workspaces.</p>
         </div>
       ) : (
         <ScrollArea className="flex-1">
           <div onMouseLeave={handleRowsMouseLeave}>
-            {workspaces.map((ws, i) => {
+            {rows.map((row, i) => {
+              const isDragging = dragIndex === i
+              const isDropTarget = dropTarget !== null && dropTarget.index === i && dragIndex !== null && dragIndex !== i
+              const isBefore = isDropTarget && dropTarget!.zone === 'before'
+              const isAfter = isDropTarget && dropTarget!.zone === 'after'
+              const isInto = isDropTarget && dropTarget!.zone === 'into'
+              const baseClasses = `group flex items-center gap-1.5 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
+                i === 0 ? 'border-t-0' : ''
+              } ${isBefore ? 'border-t-2 border-t-primary' : ''} ${isAfter ? 'border-b-2 border-b-primary' : ''} ${
+                isDragging ? 'opacity-60 z-10' : ''
+              }`
+              const dragStyle = {
+                userSelect: 'none' as const,
+                ...(isDragging ? { transform: `translateY(${dragOffset}px)`, transition: 'none' } : {}),
+              }
+              const pointerHandlers = {
+                onPointerDown: (e: PointerEvent<HTMLDivElement>) => { hidePreview(true); onPointerDown(e, i) },
+                onPointerMove: (e: PointerEvent<HTMLDivElement>) => onPointerMove(e, i),
+                onPointerUp: (e: PointerEvent<HTMLDivElement>) => onPointerUp(e),
+              }
+
+              if (row.kind === 'folder') {
+                return (
+                  <div
+                    key={`folder-${row.folder.id}`}
+                    ref={(el) => { itemRefs.current[i] = el }}
+                    onClick={() => toggleFolder(row.folder.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setFolderContextMenu({ x: e.clientX, y: e.clientY, folderId: row.folder.id })
+                    }}
+                    {...pointerHandlers}
+                    className={`${baseClasses} pl-2 cursor-pointer ${
+                      isInto ? 'bg-accent/70 ring-1 ring-inset ring-primary' : 'hover:bg-accent/40 text-muted-foreground'
+                    }`}
+                    style={dragStyle}
+                  >
+                    <ChevronRight
+                      className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform ${row.collapsed ? '' : 'rotate-90'}`}
+                    />
+                    <span className="text-base leading-none shrink-0">{row.folder.emoji || '\u{1F4C1}'}</span>
+                    <span className="truncate flex-1 font-medium">{row.folder.name}</span>
+                    <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+                      <div className={`absolute inset-0 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <FolderMenu
+                          onEdit={() => setFolderDialog({ mode: 'edit', folder: row.folder })}
+                          onDelete={() => onDeleteFolder?.(row.folder.id)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
+              const ws = row.ws
               const isActive = ws.id === activeWorkspaceId
               const label = ws.name || ws.path || 'Workspace'
-              const isDragging = dragIndex === i
-              const isDragOver = dragOverIndex === i && dragIndex !== null && dragIndex !== i
+              const flatIdx = workspaces.indexOf(ws)
               // Aggregate the strongest agent status across all panes in this
               // workspace (leaf ids = session ids). Used for the roll-up dot.
               const wsStatuses: AgentStatus[] = []
@@ -446,22 +666,13 @@ export function WorkspacePanel({
                     e.stopPropagation()
                     setContextMenu({ x: e.clientX, y: e.clientY, workspaceId: ws.id })
                   }}
-                  onPointerDown={(e) => { hidePreview(true); onPointerDown(e, i) }}
-                  onPointerMove={(e) => onPointerMove(e, i)}
-                  onPointerUp={(e) => onPointerUp(e)}
-                  className={`group flex items-center gap-1.5 pl-2 pr-3 py-1.5 text-sm select-none transition-transform duration-150 border-t border-border ${
-                    i === 0 ? 'border-t-0' : ''
-                  } ${isDragOver ? 'border-t-2 border-t-primary' : ''} ${
+                  {...pointerHandlers}
+                  className={`${baseClasses} ${row.depth > 0 ? 'pl-7' : 'pl-2'} ${
                     isActive ? 'bg-accent/70 text-accent-foreground' : 'hover:bg-accent/40 text-muted-foreground'
-                  } ${isDragging ? 'opacity-60 z-10' : ''}`}
-                  style={{
-                    userSelect: 'none',
-                    ...(isDragging
-                      ? { transform: `translateY(${dragOffset}px)`, transition: 'none' }
-                      : {}),
-                  }}
+                  }`}
+                  style={dragStyle}
                 >
-                  <span className="text-base leading-none shrink-0">{ws.emoji || commonEmojis[i % commonEmojis.length]}</span>
+                  <span className="text-base leading-none shrink-0">{ws.emoji || commonEmojis[flatIdx % commonEmojis.length]}</span>
                   <span className="truncate flex-1">{label}</span>
                   {/* Status dot + three-dots share the exact same 20x20 slot.
                       On hover the dot fades out and the kebab fades in, both
@@ -490,6 +701,11 @@ export function WorkspacePanel({
                       <WorkspaceMenu
                         onDelete={() => onDeleteWorkspace(ws.id)}
                         onEdit={() => setEditTarget(ws)}
+                        folders={allFolders}
+                        currentFolderId={ws.folderId ?? null}
+                        onMoveToFolder={(fid) => moveToFolderCb(ws.id, fid)}
+                        onRemoveFromFolder={() => moveToFolderCb(ws.id, null)}
+                        onNewFolder={() => setFolderDialog({ mode: 'create', assignWsId: ws.id })}
                       />
                     </div>
                   </div>
@@ -500,33 +716,9 @@ export function WorkspacePanel({
         </ScrollArea>
       )}
 
-      {contextMenu && (() => {
-        const ws = workspaces.find((w) => w.id === contextMenu.workspaceId)
-        if (!ws) return null
-        return createPortal(
-          <div
-            className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditTarget(ws) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-              Edit workspace
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setContextMenu(null); onDeleteWorkspace(ws.id) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete workspace
-            </button>
-          </div>,
-          document.body
-        )
-      })()}
+      {renderContextMenuPortal(contextMenu)}
+
+      {renderFolderContextMenuPortal()}
 
       {generalContextMenu && (() => {
         return createPortal(
@@ -540,8 +732,15 @@ export function WorkspacePanel({
               onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setPickerOpen(true) }}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
             >
-              <FolderPlus className="h-3.5 w-3.5" />
+              <Plus className="h-3.5 w-3.5" />
               New Workspace
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setFolderDialog({ mode: 'create' }) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              New Folder
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); onOpenSettings?.() }}
@@ -581,6 +780,8 @@ export function WorkspacePanel({
           onSave={handleEditSave}
         />
       )}
+
+      {renderFolderDialog()}
     </div>
   )
 }
