@@ -417,6 +417,12 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	var lastToolNames []string
 
 	runningTasks := make(map[string]bool)
+	// pendingArtifactApproval is set when a PLANNER_RESPONSE issues a
+	// write_to_file whose ArtifactMetadata carries RequestFeedback=true. This
+	// is Antigravity's plan/artifact-approval flow: the agent ends its turn
+	// and waits for the user to approve or reject the artifact. It is cleared
+	// once a new USER_INPUT starts a fresh turn.
+	pendingArtifactApproval := false
 
 	for _, line := range lines {
 		var step antigravityStep
@@ -441,12 +447,18 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			if p != "" && sessionTitle == "" {
 				sessionTitle = p
 			}
+			// A new user turn starts after an artifact-approval request; the
+			// user has responded, so the pending approval is resolved.
+			pendingArtifactApproval = false
 		case "PLANNER_RESPONSE":
 			lastType = step.Type
 			lastToolNames = nil
 			for _, tc := range step.ToolCalls {
 				if tc.Name != "" {
 					lastToolNames = append(lastToolNames, tc.Name)
+				}
+				if tc.Name == "write_to_file" && antigravityArtifactRequestsFeedback(tc.Args) {
+					pendingArtifactApproval = true
 				}
 			}
 		default:
@@ -554,16 +566,17 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 
 	case "PLANNER_RESPONSE":
 		if len(lastToolNames) == 0 {
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
+			// A PLANNER_RESPONSE with no tool calls is a final answer: the
+			// planner's turn is over. When that answer accompanies a pending
+			// artifact-approval request (write_to_file with RequestFeedback),
+			// the agent is blocked waiting for the user to approve the plan →
+			// waiting_input. Otherwise it is idle. A still-running background
+			// task does NOT make this "executing": the agent has finished
+			// speaking and will be re-prompted when the task completes.
+			if pendingArtifactApproval {
+				callback("waiting_input", "write_to_file", "", sessionTitle)
 				return
 			}
-			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
 			callback("idle", "", "", sessionTitle)
 			return
 		}
@@ -574,6 +587,13 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				callback("waiting_input", name, "", sessionTitle)
 				return
 			}
+		}
+		// A PLANNER_RESPONSE that requests artifact feedback (write_to_file
+		// with RequestFeedback) ends the turn and waits for the user, even
+		// though it carries a tool call.
+		if pendingArtifactApproval {
+			callback("waiting_input", "write_to_file", "", sessionTitle)
+			return
 		}
 		// Planner issued tool calls; tool results not yet written → executing.
 		callback("executing", lastToolNames[0], "", sessionTitle)
@@ -601,13 +621,8 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		}
 
 		if seenFinalAnswer {
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
+			if pendingArtifactApproval {
+				callback("waiting_input", "write_to_file", "", sessionTitle)
 				return
 			}
 			callback("idle", "", "", sessionTitle)
@@ -637,6 +652,39 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		// Unknown step type — stay thinking.
 		callback("thinking", "", "", sessionTitle)
 	}
+}
+
+// antigravityArtifactRequestsFeedback reports whether a write_to_file tool
+// call's args request user feedback on the artifact it creates. Antigravity's
+// plan-approval flow sets ArtifactMetadata to a JSON object with a truthy
+// RequestFeedback field; when present, the agent ends its turn and waits for
+// the user to approve or reject the artifact.
+func antigravityArtifactRequestsFeedback(args map[string]any) bool {
+	if args == nil {
+		return false
+	}
+	raw, ok := args["ArtifactMetadata"]
+	if !ok || raw == nil {
+		return false
+	}
+	var metadata string
+	switch v := raw.(type) {
+	case string:
+		metadata = v
+	case map[string]any:
+		if b, ok := v["RequestFeedback"].(bool); ok {
+			return b
+		}
+		return false
+	default:
+		return false
+	}
+	var parsed map[string]any
+	if json.Unmarshal([]byte(metadata), &parsed) != nil {
+		return false
+	}
+	b, _ := parsed["RequestFeedback"].(bool)
+	return b
 }
 
 // uriToPath converts a file:// URI as stored in the Antigravity
