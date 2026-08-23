@@ -2189,7 +2189,7 @@ export function AppLayout() {
             }}
             onOpenOverview={() => setLimitsOverviewOpen(true)}
             hideControlCenter
-            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
+            onSendText={(text) => floatingPrompt.openWithText(text)}
           />
         </div>
       ) : (
@@ -2405,7 +2405,7 @@ export function AppLayout() {
             }}
             onOpenOverview={() => setLimitsOverviewOpen(true)}
             controlCenterButtonRef={controlCenterBtnRef}
-            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
+            onSendText={(text) => floatingPrompt.openWithText(text)}
           />
         </>
       )}

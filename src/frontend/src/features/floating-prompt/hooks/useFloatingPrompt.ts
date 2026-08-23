@@ -95,6 +95,16 @@ export function useFloatingPrompt() {
     setOpen(true)
   }, [pinnedPos])
 
+  // Open the bubble and insert text (used by voice mode so the transcript
+  // lands in the bubble like typed input, rather than going straight to the
+  // terminal). Appends to any preserved draft, mirroring openBubble.
+  const openWithText = useCallback((value: string) => {
+    setMouse({ ...mouseRef.current })
+    setText((prev) => prev + value)
+    setPinnedPos(null)
+    setOpen(true)
+  }, [])
+
   // Close without clearing text (Escape, or clicking outside).
   const closeBubble = useCallback(() => {
     setOpen(false)
@@ -178,6 +188,7 @@ export function useFloatingPrompt() {
     offset: OFFSET,
     setText,
     openBubble,
+    openWithText,
     reopenBubble,
     closeBubble,
     sendAndClose,
