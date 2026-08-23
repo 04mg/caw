@@ -1613,14 +1613,12 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   { id: 'zed', label: 'Zed', icon: ZedIcon, show: true },
                 ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
-                  const isProviderDisabled = disabledProviders.includes(prov.id)
                   return (
                     <SettingsItem
                       key={prov.id}
                       icon={Icon}
                       label={prov.label}
                       testId={`settings-provider-${prov.id}`}
-                      badge={isProviderDisabled ? 'Disabled' : undefined}
                       onClick={() => {
                         setSelectedLimitProvider(prov.id as QuotaProviderId)
                         setLimitStep(2)

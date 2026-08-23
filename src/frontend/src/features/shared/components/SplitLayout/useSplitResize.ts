@@ -132,7 +132,7 @@ export function useSplitResize({
       window.addEventListener('pointerup', onPointerUp)
       window.addEventListener('pointercancel', onPointerUp)
     },
-    [orientation, reverse, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
+    [orientation, sizes, minSizes, maxSizes, onPointerMove, onPointerUp],
   )
 
   return { onSeparatorPointerDown, dragRef }

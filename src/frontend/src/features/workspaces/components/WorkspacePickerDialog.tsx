@@ -409,6 +409,7 @@ export function WorkspacePickerDialog({ open, onOpenChange, onChoose }: Workspac
                         <Pencil className="h-3.5 w-3.5" />
                         Rename
                       </button>
+                      <div className="my-0.5 border-t border-border" />
                       <button
                         onClick={(e) => {
                           e.stopPropagation()

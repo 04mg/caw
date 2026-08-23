@@ -28,6 +28,9 @@ const BTN_SIZE = 26
 const BTN_GAP = 6
 const ROW_GAP = 4
 const MARGIN = 8
+// Pointer must move this far (px) before a press becomes a drag, so clicks
+// still reach buttons and place the textarea caret.
+const DRAG_THRESHOLD = 4
 
 export function FloatingPromptBubble({
   open,
@@ -46,6 +49,7 @@ export function FloatingPromptBubble({
 }: FloatingPromptBubbleProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: BUBBLE_MIN_W, h: BUBBLE_MIN_H })
   const [showHistory, setShowHistory] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
@@ -70,11 +74,15 @@ export function FloatingPromptBubble({
     }
   }, [open])
 
-  // Close history dropdown when clicking outside.
+  // Close history dropdown when clicking outside. The "inside" area is the
+  // whole composite (button rows included) — the History button itself lives
+  // OUTSIDE the bubble div, so testing only the bubble would treat pressing
+  // History as an outside click: mousedown closes, then the click handler
+  // toggles it straight back open, making the button unable to close it.
   useEffect(() => {
     if (!showHistory) return
     const onDown = (e: MouseEvent) => {
-      if (bubbleRef.current?.contains(e.target as Node)) return
+      if (wrapRef.current?.contains(e.target as Node)) return
       setShowHistory(false)
     }
     document.addEventListener('mousedown', onDown)
@@ -135,38 +143,72 @@ export function FloatingPromptBubble({
   // The effective position: pinned (dragged) wins over auto.
   const effectivePos = pinnedPos ?? { x: autoPos.x, y: autoPos.y }
 
-  // Drag: attach window listeners imperatively on mousedown so the drag
-  // starts immediately, independent of React effect timing. Every move pins
-  // the live position in the hook, so it persists after release.
-  const startDrag = (e: React.MouseEvent) => {
-    if (e.button !== 0) return
+  // Unified pointer-drag controller. A single handler on the composite
+  // wrapper makes the ENTIRE bubble draggable from anywhere — textarea,
+  // buttons, padding — instead of relying on scattered onMouseDown handlers
+  // with per-element exclusions.
+  //
+  // A small movement threshold keeps plain clicks working (caret placement,
+  // button clicks): a press without movement is left untouched, any real
+  // gesture becomes a drag. Once dragging starts we capture the pointer so
+  // tracking cannot be lost outside the bubble, cancel whatever text
+  // selection that press began inside the textarea, and swallow the trailing
+  // click so dragged buttons don't also fire their onClick.
+  const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     const target = e.target as HTMLElement
-    if (target.closest('button, textarea, a, input, [role="button"]')) return
-    e.preventDefault()
+    if (target.closest('[data-no-drag]')) return
 
+    const el = e.currentTarget
     const startX = e.clientX
     const startY = e.clientY
     const originX = effectivePos.x
     const originY = effectivePos.y
     let lastPos: FloatingPromptPosition = { x: originX, y: originY }
+    let dragging = false
 
-    const onMove = (ev: MouseEvent) => {
-      lastPos = clampToViewport(originX + ev.clientX - startX, originY + ev.clientY - startY)
+    // After a real drag, eat the click that follows release so buttons under
+    // the pointer don't trigger; auto-cleans if no click is dispatched.
+    const swallowClick = (ev: MouseEvent) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      window.removeEventListener('click', swallowClick, true)
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      if (!dragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+      if (!dragging) {
+        dragging = true
+        try { el.setPointerCapture(ev.pointerId) } catch { /* noop */ }
+        window.getSelection()?.removeAllRanges()
+        setIsDragging(true)
+      }
+      ev.preventDefault()
+      lastPos = clampToViewport(originX + dx, originY + dy)
       onPinPosition(lastPos)
     }
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      onPinPosition(lastPos)
-      setIsDragging(false)
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      if (dragging) {
+        try { el.releasePointerCapture(ev.pointerId) } catch { /* noop */ }
+        onPinPosition(lastPos)
+        setIsDragging(false)
+        window.addEventListener('click', swallowClick, true)
+        setTimeout(() => window.removeEventListener('click', swallowClick, true), 0)
+      }
     }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    setIsDragging(true)
+    window.addEventListener('pointermove', onMove, { passive: false })
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   const topButtons = (
-    <div className={cn('flex items-center', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
+    <div className="flex items-center" style={{ gap: BTN_GAP }}>
       <CircleButton
         label="History"
         disabled={history.length === 0}
@@ -182,7 +224,7 @@ export function FloatingPromptBubble({
   )
 
   const bottomButtons = (
-    <div className={cn('flex items-center', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: BTN_GAP }} onMouseDown={startDrag}>
+    <div className="flex items-center" style={{ gap: BTN_GAP }}>
       <CircleButton
         label="Send"
         disabled={!canSend || text.trim().length === 0}
@@ -198,15 +240,12 @@ export function FloatingPromptBubble({
     <div
       ref={bubbleRef}
       data-floating-prompt
-      className={cn(
-        'relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl',
-        isDragging ? 'cursor-grabbing' : 'cursor-grab',
-      )}
+      className="relative z-10 rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl"
       style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
-      onMouseDown={startDrag}
     >
       <textarea
         ref={taRef}
+        data-no-drag
         value={text}
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={(e) => {
@@ -227,11 +266,11 @@ export function FloatingPromptBubble({
           'placeholder:text-muted-foreground/60 focus:outline-none',
           'max-h-40 overflow-y-auto scrollbar-none',
         )}
-        style={{ minHeight: BUBBLE_MIN_H }}
+        style={{ minHeight: BUBBLE_MIN_H, touchAction: 'auto' }}
       />
 
       {showHistory && history.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border/70 bg-popover/95 backdrop-blur-md shadow-lg">
+        <div data-no-drag className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border/70 bg-popover/95 backdrop-blur-md shadow-lg">
           <div className="flex items-center justify-between px-2 py-1 border-b border-border/50">
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">History</span>
             <button
@@ -270,7 +309,12 @@ export function FloatingPromptBubble({
           exit={{ opacity: 0, scale: 0.92 }}
           transition={{ duration: 0.12 }}
         >
-          <div className={cn('flex flex-col items-start pointer-events-auto', isDragging ? 'cursor-grabbing' : 'cursor-grab')} style={{ gap: ROW_GAP }}>
+          <div
+            ref={wrapRef}
+            className={cn('flex flex-col items-start pointer-events-auto touch-none', isDragging ? 'cursor-grabbing select-none' : 'cursor-grab')}
+            style={{ gap: ROW_GAP }}
+            onPointerDown={startDrag}
+          >
             {autoPos.flip ? (
               <>
                 {bottomButtons}

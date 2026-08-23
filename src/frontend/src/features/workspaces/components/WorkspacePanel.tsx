@@ -432,6 +432,7 @@ export function WorkspacePanel({
           <Pencil className="h-3.5 w-3.5" />
           Edit folder
         </button>
+        <div className="my-0.5 border-t border-border" />
         <button
           onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); onDeleteFolder?.(folder.id) }}
           className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
@@ -735,6 +736,7 @@ export function WorkspacePanel({
               <Plus className="h-3.5 w-3.5" />
               New Workspace
             </button>
+            <div className="my-0.5 border-t border-border" />
             <button
               onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setFolderDialog({ mode: 'create' }) }}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
@@ -742,6 +744,7 @@ export function WorkspacePanel({
               <FolderPlus className="h-3.5 w-3.5" />
               New Folder
             </button>
+            <div className="my-0.5 border-t border-border" />
             <button
               onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); onOpenSettings?.() }}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
