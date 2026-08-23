@@ -30,8 +30,6 @@ import { normalizeSidebar, deleteFolder as removeFolderFromState, type SidebarSt
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
-import { destroyDesktop, setOnDesktopExit, isDesktopExited } from '@/features/desktop/services/desktopRegistry'
-import { setDesktopSurfacesInert, setDesktopSurfacesVisible } from '@/features/desktop/services/desktopSurface'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { Folder, Menu, Plus, SquareTerminal, GitBranch, FileCode, Terminal, Settings, PanelLeft, PanelRight, X } from 'lucide-react'
 import { Button } from '@/components/button'
@@ -153,10 +151,6 @@ export function AppLayout() {
       setDragMousePos(null)
       return
     }
-    // Desktop session iframes live above the panes in their own layer and
-    // would swallow pointermove/pointerup mid-drag; make them pass-through
-    // so the drop overlays keep tracking the cursor.
-    setDesktopSurfacesInert(true)
     const handleGlobalPointerMove = (e: PointerEvent) => {
       setDragMousePos({ x: e.clientX, y: e.clientY })
     }
@@ -169,20 +163,10 @@ export function AppLayout() {
     window.addEventListener('pointermove', handleGlobalPointerMove)
     window.addEventListener('pointerup', handleGlobalPointerUp)
     return () => {
-      setDesktopSurfacesInert(false)
       window.removeEventListener('pointermove', handleGlobalPointerMove)
       window.removeEventListener('pointerup', handleGlobalPointerUp)
     }
   }, [draggedTabId])
-
-  // The Kanban overlay is trapped in a lower stacking context than the
-  // body-level desktop surface layer, so its z-index alone can't cover
-  // live iframes. Hide the layer while the board is open instead —
-  // sessions keep running and reappear instantly on close.
-  useEffect(() => {
-    setDesktopSurfacesVisible(!(agentBoardOpen || kanbanClosing))
-    return () => setDesktopSurfacesVisible(true)
-  }, [agentBoardOpen, kanbanClosing])
 
   // Mobile layout state variables
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -1137,9 +1121,7 @@ export function AppLayout() {
       let agentBranch: string | undefined = undefined
       let baseBranch: string | undefined = undefined
 
-      // Desktop apps don't need a git worktree (they're graphical apps, not
-      // agents editing the repo), so skip the workspace setup call.
-      if (agentId && view !== 'desktop') {
+      if (agentId) {
         try {
           const res = await fetch('/api/agents', {
             method: 'POST',
@@ -1210,12 +1192,9 @@ export function AppLayout() {
       const tabIndex = activeWorkspace.layouts.findIndex((l) => l.id === tabId)
       if (tabIndex < 0) return
       const tab = activeWorkspace.layouts[tabIndex]
-      // Tear down every leaf session; destroyDesktop is a no-op for
-      // non-desktop leaves, and skipping it leaked xpra processes when a
-      // tab containing a desktop pane was closed.
+      // Tear down every leaf session.
       for (const leafId of collectLeafIds(tab.layout)) {
         destroyTerminal(leafId, deleteBranch)
-        destroyDesktop(leafId)
       }
 
       patchWorkspace(activeWorkspace.id, (ws) => {
@@ -1594,7 +1573,6 @@ export function AppLayout() {
   const forceClosePane = useCallback(
     (id: string, deleteBranch?: boolean) => {
       destroyTerminal(id, deleteBranch)
-      destroyDesktop(id)
       if (!activeWorkspace || !activeTab) return
       const newLayout = removeLeaf(activeTab.layout, id)
       const remaining = collectLeafIds(newLayout)
@@ -1631,7 +1609,7 @@ export function AppLayout() {
       // If the terminal process has already exited (e.g. the agent crashed),
       // skip all confirmation dialogs and close the pane immediately —
       // there's nothing to save and the pane is just showing a dead terminal.
-      if (isTerminalExited(id) || isDesktopExited(id)) {
+      if (isTerminalExited(id)) {
         forceClosePane(id)
         return
       }
@@ -1864,11 +1842,6 @@ export function AppLayout() {
   useEffect(() => {
     setOnTerminalExit((leafId) => handleClosePane(leafId))
     return () => setOnTerminalExit(null)
-  }, [handleClosePane])
-
-  useEffect(() => {
-    setOnDesktopExit((leafId) => handleClosePane(leafId))
-    return () => setOnDesktopExit(null)
   }, [handleClosePane])
 
   if (!loaded) {
@@ -2437,7 +2410,6 @@ export function AppLayout() {
         onOpenFile={openFile}
         onAddTerminal={addTab}
         onAddAgent={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
-        onAddDesktopApp={(cmd, appId, label, env) => addTab(cmd, appId, label, undefined, env, 'desktop')}
         onOpenWorkspacePicker={() => setPickerOpen(true)}
         enableWorktrees={activeWorkspace?.enableWorktrees ?? false}
         onToggleWorktrees={toggleWorktrees}

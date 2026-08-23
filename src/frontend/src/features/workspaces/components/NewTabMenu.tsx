@@ -3,7 +3,6 @@ import { Terminal, Plus, Workflow } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { type LeafView } from '@/features/shared/utils/layout'
 import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
-import { DesktopAppIcon } from '@/features/desktop/components/DesktopAppIcon'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -35,7 +34,6 @@ export function NewTabMenu({
   triggerTitle = 'New tab/agent',
 }: NewTabMenuProps): ReactNode {
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
-  const [availableDesktopApps, setAvailableDesktopApps] = useState<any[]>([])
 
   useEffect(() => {
     fetch('/api/agents')
@@ -47,20 +45,7 @@ export function NewTabMenu({
         }
       })
       .catch(() => {})
-    fetch('/api/agents/desktop')
-      .then((res) => res.ok ? res.json() : Promise.resolve({ data: [] }))
-      .then((json) => {
-        const data = json?.data
-        if (Array.isArray(data)) {
-          setAvailableDesktopApps(data)
-        }
-      })
-      .catch(() => {})
   }, [])
-
-  // The backend returns the user-configured desktop apps (Desktop settings
-  // section), already filtered by binary availability and xpra presence.
-  const desktopApps = availableDesktopApps
 
   return (
     <DropdownMenu>
@@ -104,20 +89,6 @@ export function NewTabMenu({
             </>
           )
         })()}
-        {desktopApps.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {desktopApps.map((appInfo) => (
-              <DropdownMenuItem
-                key={appInfo.id}
-                onClick={() => onAdd(appInfo.cmd, appInfo.id, appInfo.label, undefined, appInfo.env, 'desktop')}
-              >
-                <DesktopAppIcon appId={appInfo.id} icon={appInfo.icon} iconColor={appInfo.iconColor} size={16} className="h-4 w-4" />
-                <span>{appInfo.label}</span>
-              </DropdownMenuItem>
-            ))}
-          </>
-        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={(e) => {

@@ -4,9 +4,7 @@ import { X, Columns2, Rows2 } from 'lucide-react'
 import { type LayoutNode } from '@/features/shared/utils/layout'
 import { TerminalPanel } from './TerminalPanel'
 import { EditorPanel } from '@/features/editor/components/EditorPanel'
-import { DesktopPanel } from '@/features/desktop/components/DesktopPanel'
 import { destroyTerminal } from '@/features/terminal/services/terminalRegistry'
-import { destroyDesktop } from '@/features/desktop/services/desktopRegistry'
 import { SplitGroup } from './SplitGroup'
 
 
@@ -23,8 +21,7 @@ interface TerminalGridProps {
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
   onOpenFile?: (filePath: string, line?: number, column?: number) => void
-  // Preview mode (workspace hover thumbnails): panes render inert/static —
-  // desktop leaves show a placeholder instead of spawning a session.
+  // Preview mode (workspace hover thumbnails): panes render inert/static.
   preview?: boolean
 }
 
@@ -53,11 +50,10 @@ export function TerminalGrid({
   if (node.type === 'leaf') {
     const isActive = activePaneId === node.id
     // Resolve the view type. The layout's normalizeLayout fills `view`
-    // (terminal/editor/desktop); fall back to the legacy isEditor/filePath
+    // (terminal/editor); fall back to the legacy isEditor/filePath
     // heuristic for leaves constructed before the field existed.
     const view = node.view ?? (!!node.filePath || node.isDiff ? 'editor' : 'terminal')
     const isEditor = view === 'editor'
-    const isDesktop = view === 'desktop'
     return (
       <div
         className="relative h-full overflow-hidden"
@@ -68,21 +64,16 @@ export function TerminalGrid({
       >
         {isEditor ? (
           <EditorPanel filePath={node.filePath} isDiff={node.isDiff} cwd={node.cwd || cwd} gitStatuses={gitStatuses} onOpenDiff={onOpenDiff} onOpenFile={onOpenFile} />
-        ) : isDesktop ? (
-          <DesktopPanel leafId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} preview={preview} onFocusPane={onFocus} onClose={onClose} />
         ) : (
           <TerminalPanel terminalId={node.id} cwd={node.cwd || cwd} cmd={node.cmd} env={node.env} isActive={isActive} />
         )}
 
-        {!isEditor && !isDesktop && (
+        {!isEditor && (
           <div className="absolute top-1 right-1 z-20 flex gap-0.5 opacity-0 hover:opacity-100 transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (!isEditor) {
-                  if (isDesktop) destroyDesktop(node.id)
-                  else destroyTerminal(node.id)
-                }
+                destroyTerminal(node.id)
                 onClose(node.id)
               }}
               className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"

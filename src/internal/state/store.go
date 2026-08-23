@@ -144,7 +144,7 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_enabled INTEGER NOT NULL DEFAULT 0")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_needs_input INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_finished INTEGER NOT NULL DEFAULT 1")
-	// View column: discriminates terminal/editor/desktop leaf rendering.
+	// View column: discriminates terminal/editor leaf rendering.
 	// Existing leaves default to "" which loadLayoutTree normalizes to the
 	// legacy terminal/editor heuristic (isDiff/filePath => editor).
 	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN view TEXT DEFAULT ''")
@@ -264,7 +264,6 @@ func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	_ = json.Unmarshal([]byte(sizesJSON), &ln.Sizes)
 	// Normalize legacy leaves with no explicit view: editor leaves
 	// (filePath or isDiff) become "editor", everything else "terminal".
-	// "desktop" leaves only exist when explicitly set by the frontend.
 	if ln.View == "" {
 		if ln.FilePath != "" || ln.IsDiff {
 			ln.View = "editor"
@@ -321,7 +320,6 @@ func (s *Store) Set(as AppState) {
 		"vapid_public_key", "vapid_private_key",
 		"pref_default_new_agent", "pref_disabled_agents", "pref_disabled_providers", "pref_agent_cmds",
 		"pref_default_shell", "pref_parked_terminals", "pref_hotkeys", "pref_pets", "pref_customization",
-		"pref_desktop_apps",
 	} {
 		var val string
 		if err := tx.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val); err == nil {

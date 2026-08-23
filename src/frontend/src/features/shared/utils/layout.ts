@@ -1,4 +1,4 @@
-export type LeafView = 'terminal' | 'editor' | 'desktop'
+export type LeafView = 'terminal' | 'editor'
 
 export type LayoutNode =
   | { type: 'leaf'; id: string; cwd: string; cmd?: string[]; env?: [string, string][]; agentId?: string; filePath?: string; isDiff?: boolean; agentBranch?: string; baseBranch?: string; petSlug?: string; revealLine?: number; revealColumn?: number; view?: LeafView }
@@ -20,7 +20,7 @@ export function normalizeLayout(node: unknown): LayoutNode {
     const filePath = typeof n.filePath === 'string' ? n.filePath : undefined
     const isDiff = typeof n.isDiff === 'boolean' ? n.isDiff : undefined
     let view: LeafView | undefined
-    if (n.view === 'terminal' || n.view === 'editor' || n.view === 'desktop') {
+    if (n.view === 'terminal' || n.view === 'editor') {
       view = n.view as LeafView
     } else if (filePath || isDiff) {
       view = 'editor'
