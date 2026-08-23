@@ -65,6 +65,12 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
 
+// Per-device "last viewed workspace". Stored in localStorage so each browser
+// opens where IT left off, independently of other devices sharing the same
+// backend state. Only used as the fresh-load bootstrap default; the live
+// active-workspace selection stays per-client in React state.
+const LAST_WORKSPACE_KEY = 'caw:lastWorkspaceId'
+
 function findActiveLeaf(node: LayoutNode, activeId: string): any | null {
   if (node.type === 'leaf' && node.id === activeId) {
     return node
@@ -255,13 +261,17 @@ export function AppLayout() {
         setWorkspaceFolders(s.workspaceFolders ?? [])
         setSidebarOrder(s.sidebarOrder ?? [])
       }
-      // Selection is per-client: prefer the local focus we just seeded,
-      // falling back to the backend's last-writer value only to pick the
-      // initial workspace. Other devices switching workspaces must never
-      // clobber this client's active workspace.
-      const initialWs = s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
-        ? s.activeWorkspaceId
-        : (parsedWorkspaces[0]?.id ?? null)
+      // Selection is per-device: prefer this browser's own last-viewed
+      // workspace so each device opens where it left off. Fall back to the
+      // backend's shared last-writer value (or the first workspace) only when
+      // there's no local record yet. Other devices switching workspaces must
+      // never clobber this client's active workspace.
+      const lastWsId = localStorage.getItem(LAST_WORKSPACE_KEY)
+      const localWs = lastWsId && parsedWorkspaces.some((w) => w.id === lastWsId) ? lastWsId : null
+      const initialWs = localWs
+        ?? (s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
+          ? s.activeWorkspaceId
+          : (parsedWorkspaces[0]?.id ?? null))
       setActiveWorkspaceId(initialWs)
       setLoaded(true)
     })
@@ -618,6 +628,12 @@ export function AppLayout() {
       }
     }
   }, [activeWorkspace])
+
+  useEffect(() => {
+    if (loaded && activeWorkspaceId) {
+      localStorage.setItem(LAST_WORKSPACE_KEY, activeWorkspaceId)
+    }
+  }, [loaded, activeWorkspaceId])
 
   useEffect(() => {
     if (!loadedRef.current) return
