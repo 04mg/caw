@@ -49,6 +49,7 @@ export function FloatingPromptBubble({
 }: FloatingPromptBubbleProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: BUBBLE_MIN_W, h: BUBBLE_MIN_H })
   const [showHistory, setShowHistory] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
@@ -73,11 +74,15 @@ export function FloatingPromptBubble({
     }
   }, [open])
 
-  // Close history dropdown when clicking outside.
+  // Close history dropdown when clicking outside. The "inside" area is the
+  // whole composite (button rows included) — the History button itself lives
+  // OUTSIDE the bubble div, so testing only the bubble would treat pressing
+  // History as an outside click: mousedown closes, then the click handler
+  // toggles it straight back open, making the button unable to close it.
   useEffect(() => {
     if (!showHistory) return
     const onDown = (e: MouseEvent) => {
-      if (bubbleRef.current?.contains(e.target as Node)) return
+      if (wrapRef.current?.contains(e.target as Node)) return
       setShowHistory(false)
     }
     document.addEventListener('mousedown', onDown)
@@ -235,7 +240,7 @@ export function FloatingPromptBubble({
     <div
       ref={bubbleRef}
       data-floating-prompt
-      className="relative rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl"
+      className="relative z-10 rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl"
       style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
     >
       <textarea
@@ -304,6 +309,7 @@ export function FloatingPromptBubble({
           transition={{ duration: 0.12 }}
         >
           <div
+            ref={wrapRef}
             className={cn('flex flex-col items-start pointer-events-auto touch-none', isDragging ? 'cursor-grabbing select-none' : 'cursor-grab')}
             style={{ gap: ROW_GAP }}
             onPointerDown={startDrag}
