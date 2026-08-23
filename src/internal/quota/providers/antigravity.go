@@ -74,7 +74,8 @@ func init() {
 }
 
 func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
-	// 1. Try to find an already running agy process (user-opened or our background one)
+	// 1. Try to find an already running agy process (user-opened or our background one).
+	// A running instance exposes the richest quota data via its local endpoint.
 	pids, err := findAgyPids()
 	if err == nil && len(pids) > 0 {
 		ports, err := findPortsForPids(pids)
@@ -85,15 +86,17 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 	}
 
-	// 2. No running agy found — spawn a temporary background instance for this query
+	// 2. Query the Google Cloud quota API directly with OAuth credentials read
+	// from disk (written by the agy CLI at login time) or a manually configured
+	// apiKey. This avoids spawning an agy process entirely.
+	if res, err := fetchQuotaFromStoredCredentials(config); err == nil {
+		return res, nil
+	}
+
+	// 3. Last resort: spawn a temporary background instance for this query.
 	spawned, err := ensureBgAgy()
 	if err != nil {
-		// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
-		token := config["apiKey"]
-		if token != "" {
-			return fetchQuotaViaOAuth(token)
-		}
-		return nil, fmt.Errorf("agy is not running")
+		return nil, fmt.Errorf("agy is not running: %w", err)
 	}
 	// Close the spawned instance once the quota has been queried so it does
 	// not linger in the background consuming resources. A user-opened agy
@@ -114,12 +117,80 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 		}
 	}
 
-	// 3. Fallback to Google Cloud OAuth API if apiKey/token is configured in Settings
-	token := config["apiKey"]
-	if token != "" {
-		return fetchQuotaViaOAuth(token)
+	return nil, fmt.Errorf("agy did not expose a quota endpoint")
+}
+
+type agyStoredToken struct {
+	Token struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Expiry       string `json:"expiry"`
+	} `json:"token"`
+}
+
+// agyTokenPath returns the location of the OAuth credential file the agy CLI
+// writes after a successful login.
+func agyTokenPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
 	}
-	return nil, fmt.Errorf("agy is not running")
+	return filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), nil
+}
+
+func readAgyStoredToken() (*agyStoredToken, error) {
+	path, err := agyTokenPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var t agyStoredToken
+	if err := json.Unmarshal(data, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// bestToken returns the cached access token while it is still valid and falls
+// back to the refresh token otherwise. getAccessToken accepts both forms.
+func (t *agyStoredToken) bestToken() string {
+	if t.Token.AccessToken == "" {
+		return t.Token.RefreshToken
+	}
+	if exp, err := time.Parse(time.RFC3339Nano, t.Token.Expiry); err == nil && time.Now().Before(exp.Add(-30*time.Second)) {
+		return t.Token.AccessToken
+	}
+	return t.Token.RefreshToken
+}
+
+// fetchQuotaFromStoredCredentials queries the quota API directly using locally
+// stored OAuth credentials instead of starting an agy process. It tries the
+// token file written by the agy CLI first, then a manually configured apiKey.
+func fetchQuotaFromStoredCredentials(config map[string]string) (*quota.QuotaResponse, error) {
+	var lastErr error
+	if t, err := readAgyStoredToken(); err == nil {
+		if token := t.bestToken(); token != "" {
+			res, err := fetchQuotaViaOAuth(token)
+			if err == nil {
+				return res, nil
+			}
+			lastErr = err
+		}
+	}
+	if token := config["apiKey"]; token != "" {
+		res, err := fetchQuotaViaOAuth(token)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no antigravity oauth credentials found")
 }
 
 // ensureBgAgy starts a temporary background agy PTY instance to query the
@@ -187,15 +258,15 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("api error: %w", err)
 	}
-	fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3-pro-high", "gemini-3-pro-low")
+	fiveHourQuota, err := getModelQuota(modelsResponse, "gemini-3.1-pro-high", "gemini-3-pro-high", "gemini-3.1-pro-low", "gemini-3-pro-low")
 	if err != nil {
 		return nil, err
 	}
-	weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-5-thinking", "claude-opus-4-5")
+	weeklyQuota, err := getModelQuota(modelsResponse, "claude-opus-4-6-thinking", "claude-opus-4-5-thinking", "claude-opus-4-6", "claude-opus-4-5")
 	if err != nil {
 		return nil, err
 	}
-	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3-pro-image")
+	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3.6-flash-high", "gemini-3-pro-image")
 	if err != nil {
 		return nil, err
 	}
@@ -207,8 +278,15 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 }
 
 func (p *AntigravityProvider) IsInstalled() bool {
-	_, err := findAgyPath()
-	return err == nil
+	// The provider works both with an agy binary and with OAuth credentials
+	// left on disk by a previous agy login.
+	if _, err := findAgyPath(); err == nil {
+		return true
+	}
+	if t, err := readAgyStoredToken(); err == nil && t.bestToken() != "" {
+		return true
+	}
+	return false
 }
 
 func findAgyPids() ([]int, error) {
@@ -554,18 +632,9 @@ func getAccessToken(token string) (string, error) {
 }
 
 func fetchAvailableModels(accessToken string) (*GoogleAvailableModelsResponse, error) {
-	bodyData := map[string]string{
-		"ideName":       "antigravity",
-		"extensionName": "antigravity",
-		"locale":        "en",
-		"ideVersion":    "unknown",
-	}
-	bodyBytes, err := json.Marshal(bodyData)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", bytes.NewBuffer(bodyBytes))
+	// The endpoint rejects any request body fields; an empty JSON object is
+	// the expected payload. It also requires an Antigravity User-Agent.
+	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
