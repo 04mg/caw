@@ -660,56 +660,76 @@ export function FolderSidebar({
         </div>
       </ScrollArea>
 
-      {contextMenu && (
-        <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
-          {contextMenu.isDir && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'file' }) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <FileCode className="h-3.5 w-3.5" />
-                New File
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'dir' }) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-                New Folder
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setUploadTarget(p); setTimeout(() => fileInputRef.current?.click(), 0) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Upload
-              </button>
-              {!contextMenu.isRoot && <div className="my-0.5 border-t border-border" />}
-            </>
-          )}
-          {!contextMenu.isRoot && !isMultiAction && (
+      {contextMenu && (() => {
+        // Collect only the options that apply to the right-clicked node, then
+        // interleave a divider between every pair so all context menu
+        // variants (file, folder, root, multi-select) show consistent
+        // borders between their options.
+        const itemClass = 'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60'
+        const sepClass = 'my-0.5 border-t border-border'
+        const items: Array<[string, React.ReactNode]> = []
+        if (contextMenu.isDir) {
+          items.push(['new-file',
             <button
+              key="new-file"
+              onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'file' }) }}
+              className={itemClass}
+            >
+              <FileCode className="h-3.5 w-3.5" />
+              New File
+            </button>,
+          ])
+          items.push(['new-folder',
+            <button
+              key="new-folder"
+              onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setCreateTarget({ parentPath: p, type: 'dir' }) }}
+              className={itemClass}
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              New Folder
+            </button>,
+          ])
+          items.push(['upload',
+            <button
+              key="upload"
+              onClick={(e) => { e.stopPropagation(); const p = contextMenu.path; setContextMenu(null); setUploadTarget(p); setTimeout(() => fileInputRef.current?.click(), 0) }}
+              className={itemClass}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Upload
+            </button>,
+          ])
+        }
+        if (!contextMenu.isRoot && !isMultiAction) {
+          items.push(['rename',
+            <button
+              key="rename"
               onClick={(e) => { e.stopPropagation(); setContextMenu(null); setEditingPath(contextMenu.path) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              className={itemClass}
             >
               <Pencil className="h-3.5 w-3.5" />
               Rename
-            </button>
-          )}
-          {!contextMenu.isRoot && (
+            </button>,
+          ])
+        }
+        if (!contextMenu.isRoot) {
+          items.push(['copy',
             <button
+              key="copy"
               onClick={(e) => { e.stopPropagation(); handleCopy(actionPaths) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              className={itemClass}
             >
               <Copy className="h-3.5 w-3.5" />
               Copy{isMultiAction ? ` (${actionPaths.length})` : ''}
-            </button>
-          )}
-          {!isWorktree && !contextMenu.isRoot && (
+            </button>,
+          ])
+        }
+        if (!isWorktree && !contextMenu.isRoot) {
+          items.push(['copy-worktrees',
             <button
+              key="copy-worktrees"
               onClick={(e) => { e.stopPropagation(); handleToggleCopyToWorktrees(actionPaths) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              className={itemClass}
             >
               {allCopied ? (
                 <>
@@ -725,38 +745,54 @@ export function FolderSidebar({
                     : (copiedCount > 0 ? ' (mixed)' : '')}
                 </>
               )}
-            </button>
-          )}
-          {clipboard && contextMenu.isDir && (
+            </button>,
+          ])
+        }
+        if (clipboard && contextMenu.isDir) {
+          items.push(['paste',
             <button
+              key="paste"
               onClick={(e) => { e.stopPropagation(); handlePaste(contextMenu.path) }}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+              className={itemClass}
             >
               <ClipboardPaste className="h-3.5 w-3.5" />
               Paste
-            </button>
-          )}
+            </button>,
+          ])
+        }
+        items.push(['download',
           <button
+            key="download"
             onClick={(e) => { e.stopPropagation(); handleDownload(actionPaths) }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            className={itemClass}
           >
             <Download className="h-3.5 w-3.5" />
             Download{isMultiAction ? ` (${actionPaths.length})` : ''}
-          </button>
-          {!contextMenu.isRoot && (
-            <>
-              <div className="border-t border-border my-0.5" />
-              <button
-                onClick={() => { setContextMenu(null); setDeleteTarget({ paths: actionPaths, name: contextMenu.name, isDir: contextMenu.isDir }) }}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete{isMultiAction ? ` (${actionPaths.length})` : ''}
-              </button>
-            </>
-          )}
-        </SmartContextMenu>
-      )}
+          </button>,
+        ])
+        if (!contextMenu.isRoot) {
+          items.push(['delete',
+            <button
+              key="delete"
+              onClick={() => { setContextMenu(null); setDeleteTarget({ paths: actionPaths, name: contextMenu.name, isDir: contextMenu.isDir }) }}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete{isMultiAction ? ` (${actionPaths.length})` : ''}
+            </button>,
+          ])
+        }
+        return (
+          <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
+            {items.map(([key, node], i) => (
+              <React.Fragment key={key}>
+                {i > 0 && <div className={sepClass} />}
+                {node}
+              </React.Fragment>
+            ))}
+          </SmartContextMenu>
+        )
+      })()}
 
       <DeleteDialog
         target={deleteTarget}
