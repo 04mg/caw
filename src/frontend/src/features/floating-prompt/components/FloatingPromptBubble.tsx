@@ -24,9 +24,8 @@ interface FloatingPromptBubbleProps {
 const BUBBLE_MIN_W = 200
 const BUBBLE_MAX_W = 320
 // Upper bounds once the user manually resizes: a wider, taller bubble for
-// long prompts. Height is additionally capped at 60% of the viewport.
+// long prompts. Height is additionally capped by the viewport.
 const BUBBLE_MAX_W_RESIZED = 520
-const TEXTAREA_AUTO_MAX_H = 220
 const BUBBLE_MIN_H = 44
 const BTN_SIZE = 26
 const BTN_GAP = 6
@@ -63,26 +62,15 @@ export function FloatingPromptBubble({
   // compact (mirroring how the pinned position resets).
   const [userSize, setUserSize] = useState<{ w: number; h: number } | null>(null)
 
-  // Auto-grow the textarea with its content (measure natural height, clamp
-  // between the bubble minimum and the auto-grow cap), then measure the
-  // resulting bubble so position clamping tracks the real size. A manual
-  // resize fixes the height instead — content scrolls inside it.
+  // Measure the bubble after it renders / layout-affecting state changes so
+  // we can clamp. The input keeps a fixed height (no auto-grow): content
+  // scrolls inside it, and only the resize grip changes its size.
   useLayoutEffect(() => {
-    const ta = taRef.current
-    if (ta) {
-      if (userSize) {
-        ta.style.height = `${Math.max(userSize.h, BUBBLE_MIN_H)}px`
-      } else {
-        ta.style.height = 'auto'
-        const h = Math.min(Math.max(ta.scrollHeight, BUBBLE_MIN_H), TEXTAREA_AUTO_MAX_H)
-        ta.style.height = `${h}px`
-      }
-    }
     const el = bubbleRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
     setSize({ w: Math.ceil(r.width), h: Math.ceil(r.height) })
-  }, [text, open, showHistory, userSize])
+  }, [open, showHistory, userSize])
 
   useEffect(() => {
     if (!open) setUserSize(null)
@@ -137,11 +125,11 @@ export function FloatingPromptBubble({
     const minX = MARGIN
     const maxX = Math.max(minX, vw - MARGIN - fullW)
 
-    // Preferred: below-right of the cursor; fall back to above-left.
+    // Preferred: below-right of the cursor; fall back to above-left. Row
+    // order never changes — only the placement flips, not the layout.
     let y = mouse.y + offset
     const aboveY = mouse.y - offset - fullH
-    const flip = y + fullH > vh - MARGIN && aboveY >= minY
-    if (flip) y = aboveY
+    if (y + fullH > vh - MARGIN && aboveY >= minY) y = aboveY
 
     let x = mouse.x + offset
     if (x + fullW > vw - MARGIN) x = mouse.x - offset - fullW
@@ -150,7 +138,7 @@ export function FloatingPromptBubble({
     y = Math.min(Math.max(y, minY), maxY)
     x = Math.min(Math.max(x, minX), maxX)
 
-    return { x, y, flip }
+    return { x, y }
   }, [mouse, offset, size, compositeBounds])
 
   // Clamp an arbitrary absolute position so the composite stays visible.
@@ -349,7 +337,11 @@ export function FloatingPromptBubble({
           'placeholder:text-muted-foreground/60 focus:outline-none',
           'overflow-y-auto scrollbar-none',
         )}
-        style={{ minHeight: BUBBLE_MIN_H, touchAction: 'auto' }}
+        style={{
+          minHeight: BUBBLE_MIN_H,
+          height: userSize ? Math.max(userSize.h, BUBBLE_MIN_H) : undefined,
+          touchAction: 'auto',
+        }}
       />
 
       {/* Corner grip: drag to resize the bubble. */}
@@ -410,19 +402,9 @@ export function FloatingPromptBubble({
             style={{ gap: ROW_GAP }}
             onPointerDown={startDrag}
           >
-            {autoPos.flip ? (
-              <>
-                {bottomButtons}
-                {topButtons}
-                {bubble}
-              </>
-            ) : (
-              <>
-                {topButtons}
-                {bubble}
-                {bottomButtons}
-              </>
-            )}
+            {topButtons}
+            {bubble}
+            {bottomButtons}
           </div>
         </motion.div>
       )}
