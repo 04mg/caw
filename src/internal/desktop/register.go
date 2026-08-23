@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
@@ -89,13 +88,6 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		if v := xpraVersion(); v != "" {
 			resp["xpraVersion"] = v
 		}
-	} else {
-		// Debug aid: report the running exe and every location that was
-		// checked, both to the server log and in the response, so a
-		// stale binary or missed install path is immediately visible.
-		debug := xpraDebugInfo()
-		log.Printf("[desktop] xpra not detected: %s", debug)
-		resp["xpraDebug"] = debug
 	}
 	httpx.RespondJSON(w, resp)
 }

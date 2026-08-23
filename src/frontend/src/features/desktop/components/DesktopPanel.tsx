@@ -272,11 +272,6 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
         (function () {
           var maximized = {};
           var attempts = 0;
-          var screenElement = null;
-          var resizeObserver = null;
-          var resizeTimer = null;
-          var lastWidth = 0;
-          var lastHeight = 0;
           var timer = setInterval(function () {
             attempts += 1;
             var client = window.client;
@@ -290,33 +285,6 @@ export function DesktopPanel({ leafId, cwd, cmd, env, isActive, preview, onFocus
               if (!maximized[wid]) {
                 maximized[wid] = true;
                 try { client.id_to_window[wid].set_maximized(true); } catch (e) {}
-              }
-            }
-            // The xpra HTML5 client only re-maxes windows on a browser
-            // window resize (jQuery(window).resize). When a Caw pane
-            // separator is dragged, only the iframe's #screen container
-            // changes size, so the client never re-fills its maximized
-            // windows to the new pane. Watch the container and re-run the
-            // client's resize handler (debounced) so maximized windows
-            // follow the pane as it grows/shrinks.
-            if (any && !resizeObserver && client._screen_resized) {
-              screenElement = document.getElementById('screen');
-              if (screenElement && typeof ResizeObserver !== 'undefined') {
-                resizeObserver = new ResizeObserver(function () {
-                  var w = screenElement.clientWidth;
-                  var h = screenElement.clientHeight;
-                  if (w === lastWidth && h === lastHeight) return;
-                  lastWidth = w;
-                  lastHeight = h;
-                  if (resizeTimer) clearTimeout(resizeTimer);
-                  resizeTimer = setTimeout(function () {
-                    try {
-                      var c = window.client;
-                      if (c && c._screen_resized) c._screen_resized({});
-                    } catch (e) {}
-                  }, 150);
-                });
-                resizeObserver.observe(screenElement);
               }
             }
             if (any && attempts > 100) clearInterval(timer);
