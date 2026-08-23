@@ -24,24 +24,56 @@ const DialogOverlay = React.forwardRef<
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
+// Whether a Radix floating portal (dropdown/select/picker popper wrapper)
+// was open during the most recent pointerdown. Radix defers a modal dialog's
+// outside-dismissal until the following click, but a dropdown opened above
+// the dialog dismisses on the pointerdown itself — so by the time the
+// dialog's deferred dispatch runs, the picker portal is already unmounted
+// and a DOM query would miss it. Without this snapshot, clicking anywhere
+// (the dialog surface lands on the overlay because the open picker disables
+// its pointer events) to close an open picker also dismissed the dialog.
+let popperOpenAtPointerDown = false
+let lastPointerDown: Event | null = null
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      lastPointerDown = event
+      popperOpenAtPointerDown = !!document.querySelector('[data-radix-popper-content-wrapper]')
+    },
+    true,
+  )
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideClose?: boolean }
 >(({ className, children, hideClose, onPointerDownOutside, onFocusOutside, ...props }, ref) => {
   // Radix renders dropdown/select/picker content into body-level
   // [data-radix-popper-content-wrapper] portals; interacting with them must
-  // never dismiss the dialog. NOTE: Radix dispatches pointerDownOutside /
-  // focusOutside as CustomEvents ON the dialog node itself, so the real
-  // interaction target lives in event.detail.originalEvent.target — checking
-  // event.target alone always sees the dialog and never matches.
+  // never dismiss the dialog. Radix dispatches pointerDownOutside /
+  // focusOutside as CustomEvents on the interaction target and exposes the
+  // native event via event.detail.originalEvent — prefer its target, falling
+  // back to event.target.
   const isPortalInteraction = (target: EventTarget | null): boolean =>
     !!((target as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper]'))
+
+  // True when the dismissal stems from a pointerdown that happened while a
+  // picker portal was open (its deferred dispatch fires after the picker has
+  // closed), or from an interaction inside such a portal.
+  const shouldKeepDialogOpen = (event: {
+    detail?: { originalEvent?: Event }
+    target: EventTarget | null
+  }): boolean => {
+    const original = event.detail?.originalEvent
+    if (isPortalInteraction(original?.target ?? event.target)) return true
+    return original != null && original === lastPointerDown && popperOpenAtPointerDown
+  }
 
   const handlePointerDownOutside = (
     event: Parameters<NonNullable<React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>['onPointerDownOutside']>>[0],
   ) => {
-    const original = (event.detail as { originalEvent?: Event } | undefined)?.originalEvent
-    if (isPortalInteraction(original?.target ?? event.target)) {
+    if (shouldKeepDialogOpen(event)) {
       event.preventDefault()
       return
     }
@@ -51,8 +83,7 @@ const DialogContent = React.forwardRef<
   const handleFocusOutside = (
     event: Parameters<NonNullable<React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>['onFocusOutside']>>[0],
   ) => {
-    const original = (event.detail as { originalEvent?: Event } | undefined)?.originalEvent
-    if (isPortalInteraction(original?.target ?? event.target)) {
+    if (shouldKeepDialogOpen(event)) {
       event.preventDefault()
       return
     }
