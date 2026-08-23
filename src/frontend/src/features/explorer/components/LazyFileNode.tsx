@@ -259,7 +259,7 @@ export function LazyFileNode({
         data-path={path}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => onHoverPath?.(path)}
-        draggable
+        draggable={!isMobile}
         onDragStart={(e) => {
           e.stopPropagation()
           const inSelection = selectedPaths?.some((p) => normalizePath(p) === normalizePath(path))
