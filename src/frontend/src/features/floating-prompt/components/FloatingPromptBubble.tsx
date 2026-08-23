@@ -245,6 +245,7 @@ export function FloatingPromptBubble({
     >
       <textarea
         ref={taRef}
+        data-no-drag
         value={text}
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={(e) => {
