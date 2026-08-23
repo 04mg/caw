@@ -16,7 +16,7 @@
   </p>
 
   <p align="center">
-    <img src="assets/caw/banner.png" alt="Caw banner" width="100%" />
+    <img src="assets/caw/banner.webp" alt="Caw banner" width="100%" />
   </p>
 
 ## Features
