@@ -1,11 +1,7 @@
 package desktop
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 )
@@ -16,94 +12,18 @@ import (
 // hidden on hosts where xpra is not installed.
 const xpraBinary = "xpra"
 
-// windowsXpraDirs returns the directories where the Xpra Windows installer
-// commonly places Xpra.exe. The installer does not always update PATH (and
-// an already-running process never sees PATH changes), so LookPath alone
-// misses valid installs on Windows.
-func windowsXpraDirs() []string {
-	dirs := []string{}
-	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
-		if v := os.Getenv(env); v != "" {
-			dirs = append(dirs, v)
-		}
-	}
-	if v := os.Getenv("LOCALAPPDATA"); v != "" {
-		dirs = append(dirs, filepath.Join(v, "Programs"))
-	} else if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dirs = append(dirs, filepath.Join(home, "AppData", "Local", "Programs"))
-	}
-	return dirs
-}
-
-// xpraPath resolves the absolute path of the xpra executable, returning ""
-// when it cannot be found. On Windows it falls back to well-known install
-// locations when the directory is missing from PATH.
-func xpraPath() string {
-	if p, err := exec.LookPath(xpraBinary); err == nil {
-		return p
-	}
-	if runtime.GOOS != "windows" {
-		return ""
-	}
-	for _, dir := range windowsXpraDirs() {
-		candidate := filepath.Join(dir, "Xpra.exe")
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-	}
-	return ""
-}
-
-// Available reports whether the xpra executable can be found on PATH (or,
-// on Windows, in a well-known install location). Exported so other
-// packages (e.g. the agent registry) share the same detection.
-func Available() bool {
-	return xpraPath() != ""
-}
-
-// xpraDebugInfo returns a human-readable trace of a detection attempt: the
-// LookPath result, the running executable, and each Windows fallback
-// location with its stat outcome. Used by the status endpoint to diagnose
-// false "not installed" reports.
-func xpraDebugInfo() string {
-	var b strings.Builder
-	if exe, err := os.Executable(); err == nil {
-		fmt.Fprintf(&b, "exe=%s ", exe)
-	}
-	if p, err := exec.LookPath(xpraBinary); err == nil {
-		fmt.Fprintf(&b, "lookpath=%s", p)
-		return b.String()
-	}
-	b.WriteString("lookpath=none")
-	if runtime.GOOS == "windows" {
-		for _, dir := range windowsXpraDirs() {
-			candidate := filepath.Join(dir, "Xpra.exe")
-			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-				fmt.Fprintf(&b, " found=%s", candidate)
-				return b.String()
-			}
-			fmt.Fprintf(&b, " miss=%s", candidate)
-		}
-	} else {
-		b.WriteString(" (non-windows: no fallback locations)")
-	}
-	return b.String()
-}
-
-// xpraAvailable reports whether the xpra executable can be found. Used
-// internally by the desktop package.
+// xpraAvailable reports whether the xpra executable can be found on PATH.
+// Used by the agent registry to filter desktop apps out of the New Tab menu
+// on hosts that don't have xpra installed.
 func xpraAvailable() bool {
-	return Available()
+	_, err := exec.LookPath(xpraBinary)
+	return err == nil
 }
 
 // xpraVersion returns the xpra version string (e.g. "6.3.6") or an empty
 // string if it cannot be determined.
 func xpraVersion() string {
-	exe := xpraPath()
-	if exe == "" {
-		return ""
-	}
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := exec.Command(xpraBinary, "--version").Output()
 	if err != nil {
 		return ""
 	}

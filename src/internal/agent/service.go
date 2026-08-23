@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/04mg/caw/internal/desktop"
 	"github.com/04mg/caw/internal/prefs"
 )
 
@@ -63,8 +62,10 @@ func (s *Service) ListDesktopApps() []DesktopApp {
 	}
 	// Only show desktop apps if xpra itself is installed; otherwise the
 	// menu entry would launch a desktop session that can never start.
-	if len(available) > 0 && !desktop.Available() {
-		return []DesktopApp{}
+	if len(available) > 0 {
+		if _, err := exec.LookPath("xpra"); err != nil {
+			return []DesktopApp{}
+		}
 	}
 	return available
 }
