@@ -23,6 +23,10 @@ interface FloatingPromptBubbleProps {
 
 const BUBBLE_MIN_W = 200
 const BUBBLE_MAX_W = 320
+// Upper bounds once the user manually resizes: a wider, taller bubble for
+// long prompts. Height is additionally capped at 60% of the viewport.
+const BUBBLE_MAX_W_RESIZED = 520
+const TEXTAREA_AUTO_MAX_H = 220
 const BUBBLE_MIN_H = 44
 const BTN_SIZE = 26
 const BTN_GAP = 6
@@ -53,14 +57,36 @@ export function FloatingPromptBubble({
   const [size, setSize] = useState({ w: BUBBLE_MIN_W, h: BUBBLE_MIN_H })
   const [showHistory, setShowHistory] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  // Manual size set by dragging the corner grip. While null the bubble
+  // auto-sizes to its content; while set it overrides both default width and
+  // auto-grow height. Reset when the bubble closes so every open starts
+  // compact (mirroring how the pinned position resets).
+  const [userSize, setUserSize] = useState<{ w: number; h: number } | null>(null)
 
-  // Measure the bubble after it renders / text changes so we can clamp.
+  // Auto-grow the textarea with its content (measure natural height, clamp
+  // between the bubble minimum and the auto-grow cap), then measure the
+  // resulting bubble so position clamping tracks the real size. A manual
+  // resize fixes the height instead — content scrolls inside it.
   useLayoutEffect(() => {
+    const ta = taRef.current
+    if (ta) {
+      if (userSize) {
+        ta.style.height = `${Math.max(userSize.h, BUBBLE_MIN_H)}px`
+      } else {
+        ta.style.height = 'auto'
+        const h = Math.min(Math.max(ta.scrollHeight, BUBBLE_MIN_H), TEXTAREA_AUTO_MAX_H)
+        ta.style.height = `${h}px`
+      }
+    }
     const el = bubbleRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
     setSize({ w: Math.ceil(r.width), h: Math.ceil(r.height) })
-  }, [text, open, showHistory])
+  }, [text, open, showHistory, userSize])
+
+  useEffect(() => {
+    if (!open) setUserSize(null)
+  }, [open])
 
   // Focus the textarea when the bubble opens and place the caret at the end.
   useEffect(() => {
@@ -128,9 +154,11 @@ export function FloatingPromptBubble({
   }, [mouse, offset, size, compositeBounds])
 
   // Clamp an arbitrary absolute position so the composite stays visible.
+  // Dims default to the measured bubble size; the resize grip passes the
+  // in-progress size so the position re-clamps as the bubble grows.
   const clampToViewport = useCallback(
-    (x: number, y: number): FloatingPromptPosition => {
-      const { fullW, fullH } = compositeBounds(size.w, size.h)
+    (x: number, y: number, w?: number, h?: number): FloatingPromptPosition => {
+      const { fullW, fullH } = compositeBounds(w ?? size.w, h ?? size.h)
       const vw = window.innerWidth
       const vh = window.innerHeight
       const cx = Math.min(Math.max(x, MARGIN), Math.max(MARGIN, vw - MARGIN - fullW))
@@ -207,6 +235,57 @@ export function FloatingPromptBubble({
     window.addEventListener('pointercancel', onUp)
   }
 
+  // Corner-grip resize, mirroring startDrag's pointer-capture controller.
+  // Deltas apply to the size captured at press and clamp to sensible bounds
+  // (and the viewport). While pinned, the position is re-clamped against the
+  // growing size so the composite never hangs off-screen.
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const el = bubbleRef.current
+    if (!el) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const rect = el.getBoundingClientRect()
+    const originW = rect.width
+    const originH = rect.height
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const maxW = Math.min(BUBBLE_MAX_W_RESIZED, Math.max(BUBBLE_MIN_W, vw - MARGIN * 2))
+    const maxH = Math.max(BUBBLE_MIN_H, vh - MARGIN * 2 - BTN_SIZE * 2 - ROW_GAP * 2)
+    let lastSize = { w: originW, h: originH }
+
+    const apply = (w: number, h: number) => {
+      lastSize = {
+        w: Math.min(Math.max(w, BUBBLE_MIN_W), maxW),
+        h: Math.min(Math.max(h, BUBBLE_MIN_H), maxH),
+      }
+      setUserSize(lastSize)
+      if (pinnedPos) {
+        onPinPosition(clampToViewport(pinnedPos.x, pinnedPos.y, lastSize.w, lastSize.h))
+      }
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      ev.preventDefault()
+      try { el.setPointerCapture(ev.pointerId) } catch { /* noop */ }
+      apply(originW + (ev.clientX - startX), originH + (ev.clientY - startY))
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      try { el.releasePointerCapture(ev.pointerId) } catch { /* noop */ }
+      apply(lastSize.w, lastSize.h)
+    }
+    window.addEventListener('pointermove', onMove, { passive: false })
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
   const topButtons = (
     <div className="flex items-center" style={{ gap: BTN_GAP }}>
       <CircleButton
@@ -241,7 +320,11 @@ export function FloatingPromptBubble({
       ref={bubbleRef}
       data-floating-prompt
       className="relative z-10 rounded-xl border border-border/70 bg-secondary/90 backdrop-blur-md shadow-xl"
-      style={{ minWidth: BUBBLE_MIN_W, maxWidth: BUBBLE_MAX_W }}
+      style={{
+        minWidth: BUBBLE_MIN_W,
+        maxWidth: userSize ? BUBBLE_MAX_W_RESIZED : BUBBLE_MAX_W,
+        width: userSize?.w,
+      }}
     >
       <textarea
         ref={taRef}
@@ -264,10 +347,22 @@ export function FloatingPromptBubble({
         className={cn(
           'block w-full resize-none bg-transparent px-2.5 py-2 text-xs leading-relaxed text-foreground',
           'placeholder:text-muted-foreground/60 focus:outline-none',
-          'max-h-40 overflow-y-auto scrollbar-none',
+          'overflow-y-auto scrollbar-none',
         )}
         style={{ minHeight: BUBBLE_MIN_H, touchAction: 'auto' }}
       />
+
+      {/* Corner grip: drag to resize the bubble. */}
+      <div
+        data-no-drag
+        onPointerDown={startResize}
+        title="Resize"
+        className="absolute bottom-0 right-0 z-20 cursor-nwse-resize touch-none p-1 text-muted-foreground/40 hover:text-muted-foreground"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M9 1 L1 9 M9 5 L5 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+        </svg>
+      </div>
 
       {showHistory && history.length > 0 && (
         <div data-no-drag className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border/70 bg-popover/95 backdrop-blur-md shadow-lg">
