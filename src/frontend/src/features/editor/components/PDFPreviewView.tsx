@@ -25,51 +25,74 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
   const [status, setStatus] = useState<PreviewStatus>('loading')
   const [error, setError] = useState<string | null>(null)
   const [numPages, setNumPages] = useState(0)
-  const [currentPage, setCurrentPage] = useState(1)
   const [zoom, setZoom] = useState(1)
   const [refreshCounter, setRefreshCounter] = useState(0)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const pdfRef = useRef<any>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const renderTaskRef = useRef<any>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const pageRefs = useRef<Array<HTMLCanvasElement | null>>([])
+  const renderTasksRef = useRef(new Map<number, any>())
+  const renderedRef = useRef(new Set<number>())
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const disposePdfRef = useRef<() => void>(() => {})
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
 
-  const renderPage = useCallback(
-    (pageNum: number) => {
-      const pdf = pdfRef.current
-      const canvas = canvasRef.current
-      if (!pdf || !canvas) return
+  const renderPage = useCallback((pageNum: number) => {
+    const pdf = pdfRef.current
+    const canvas = pageRefs.current[pageNum - 1]
+    if (!pdf || !canvas) return
 
-      if (renderTaskRef.current) {
-        renderTaskRef.current.cancel()
-      }
+    const zoomVal = zoomRef.current
+    const scale = window.devicePixelRatio * zoomVal
 
-      const scale = window.devicePixelRatio * zoom
-      pdf.getPage(pageNum).then((page: any) => {
-        const viewport = page.getViewport({ scale })
-        canvas.width = Math.floor(viewport.width)
-        canvas.height = Math.floor(viewport.height)
-        canvas.style.width = '100%'
-        canvas.style.maxWidth = `${Math.floor(viewport.width / (window.devicePixelRatio * zoom))}px`
-        canvas.style.height = 'auto'
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        const task = page.render({ canvasContext: ctx, viewport })
-        renderTaskRef.current = task
-        task.promise
-          .then(() => {
-            renderTaskRef.current = null
-          })
-          .catch((err: any) => {
-            if (err?.name !== 'RenderingCancelledException') {
-              console.error(err)
-            }
-          })
-      })
-    },
-    [zoom],
-  )
+    pdf.getPage(pageNum).then((page: any) => {
+      const viewport = page.getViewport({ scale })
+      canvas.width = Math.floor(viewport.width)
+      canvas.height = Math.floor(viewport.height)
+      canvas.style.width = `${Math.floor(viewport.width / window.devicePixelRatio)}px`
+      canvas.style.height = `${Math.floor(viewport.height / window.devicePixelRatio)}px`
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const task = page.render({ canvasContext: ctx, viewport })
+      renderTasksRef.current.set(pageNum, task)
+      task.promise
+        .then(() => {
+          renderTasksRef.current.delete(pageNum)
+          renderedRef.current.add(pageNum)
+        })
+        .catch((err: any) => {
+          if (err?.name !== 'RenderingCancelledException') {
+            console.error(err)
+          }
+        })
+    })
+  }, [])
+
+  // Render pages lazily as they enter the viewport.
+  useEffect(() => {
+    if (status !== 'ready') return
+    const scrollEl = scrollRef.current
+    if (!scrollEl) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const idx = Number((entry.target as HTMLElement).dataset.pageIndex)
+          if (renderedRef.current.has(idx)) continue
+          renderPage(idx)
+        }
+      },
+      { root: scrollEl, rootMargin: '200px 0px' },
+    )
+
+    pageRefs.current.forEach((canvas) => {
+      if (canvas) observer.observe(canvas)
+    })
+
+    return () => observer.disconnect()
+  }, [status, numPages, renderPage])
 
   useEffect(() => {
     let active = true
@@ -77,7 +100,6 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
     setStatus('loading')
     setError(null)
     setNumPages(0)
-    setCurrentPage(1)
 
     fetch(`/api/workspaces/files?path=${encodeURIComponent(filePath)}&download=true`)
       .then((r) => {
@@ -97,7 +119,7 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
           if (!active) return
           pdfRef.current = doc
           disposePdfRef.current = () => {
-            doc.destroy()
+            task.destroy()
             URL.revokeObjectURL(blobUrl)
           }
           setNumPages(doc.numPages)
@@ -110,18 +132,14 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
 
     return () => {
       active = false
-      if (renderTaskRef.current) renderTaskRef.current.cancel()
+      renderTasksRef.current.forEach((task) => task.cancel())
+      renderTasksRef.current.clear()
+      renderedRef.current.clear()
       disposePdfRef.current()
       disposePdfRef.current = () => {}
       pdfRef.current = null
     }
   }, [filePath, refreshCounter])
-
-  useEffect(() => {
-    if (status === 'ready' && currentPage > 0 && currentPage <= numPages) {
-      renderPage(currentPage)
-    }
-  }, [status, currentPage, numPages, renderPage])
 
   useEffect(() => {
     if (!filePath || !cwd) return
@@ -142,6 +160,11 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
   }, [filePath, cwd])
+
+  const scrollToPage = useCallback((pageNum: number) => {
+    const canvas = pageRefs.current[pageNum - 1]
+    if (canvas) canvas.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }, [])
 
   if (status === 'loading') {
     return (
@@ -164,6 +187,8 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
     )
   }
 
+  const pages = Array.from({ length: numPages }, (_, i) => i + 1)
+
   return (
     <div className="flex h-full w-full flex-col bg-background overflow-hidden">
       {/* Toolbar */}
@@ -171,16 +196,13 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
         <span className="text-[11px] font-mono text-muted-foreground truncate flex-1">
           {filePath}
         </span>
-        <span className="text-[11px] text-muted-foreground">
-          {currentPage}/{numPages}
-        </span>
+        <span className="text-[11px] text-muted-foreground">{numPages} pages</span>
         <Button
           variant="ghost"
           size="sm"
           className="h-6 w-6 p-0"
-          onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-          disabled={currentPage <= 1}
-          title="Previous page"
+          onClick={() => scrollToPage(1)}
+          title="First page"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
@@ -188,9 +210,8 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
           variant="ghost"
           size="sm"
           className="h-6 w-6 p-0"
-          onClick={() => setCurrentPage((p) => Math.min(p + 1, numPages))}
-          disabled={currentPage >= numPages}
-          title="Next page"
+          onClick={() => scrollToPage(numPages)}
+          title="Last page"
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </Button>
@@ -230,15 +251,31 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
           </a>
         )}
       </div>
-      {/* PDF canvas */}
+      {/* PDF document */}
       <div
-        className="flex-1 min-h-0 overflow-auto flex items-start justify-center p-4 bg-muted/5"
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-auto bg-muted/5"
         style={{
           backgroundImage: 'repeating-conic-gradient(#80808015 0% 25%, transparent 0% 50%)',
           backgroundSize: '20px 20px',
         }}
       >
-        <canvas ref={canvasRef} />
+        <div className="mx-auto flex flex-col items-center gap-4 py-4">
+          {pages.map((pageNum) => (
+            <div
+              key={pageNum}
+              className="shrink-0 bg-background shadow-lg border border-border"
+              style={{ padding: '12px' }}
+            >
+              <canvas
+                ref={(el) => {
+                  pageRefs.current[pageNum - 1] = el
+                }}
+                data-page-index={pageNum}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
