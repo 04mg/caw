@@ -644,6 +644,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
             <RotateCw size={14} />
             <span>Reload</span>
           </button>
+          <div className="my-0.5 border-t border-border" />
           <button
             onClick={handleCopy}
             disabled={!savedSelection}

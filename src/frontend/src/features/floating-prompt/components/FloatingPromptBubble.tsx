@@ -138,31 +138,44 @@ export function FloatingPromptBubble({
   // Drag: attach window listeners imperatively on mousedown so the drag
   // starts immediately, independent of React effect timing. Every move pins
   // the live position in the hook, so it persists after release.
+  //
+  // The whole bubble is draggable, including the buttons. To keep button
+  // clicks working, a drag only begins once the pointer moves past a small
+  // threshold; a plain click (no movement) is left to the button's onClick.
+  // Text selection inside the textarea is preserved by excluding it.
   const startDrag = (e: React.MouseEvent) => {
     if (e.button !== 0) return
     const target = e.target as HTMLElement
-    if (target.closest('button, textarea, a, input, [role="button"]')) return
-    e.preventDefault()
+    if (target.closest('textarea, input, a, [contenteditable="true"]')) return
 
     const startX = e.clientX
     const startY = e.clientY
     const originX = effectivePos.x
     const originY = effectivePos.y
     let lastPos: FloatingPromptPosition = { x: originX, y: originY }
+    let dragging = false
 
     const onMove = (ev: MouseEvent) => {
-      lastPos = clampToViewport(originX + ev.clientX - startX, originY + ev.clientY - startY)
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      if (!dragging && Math.hypot(dx, dy) < 4) return
+      if (!dragging) {
+        dragging = true
+        setIsDragging(true)
+      }
+      lastPos = clampToViewport(originX + dx, originY + dy)
       onPinPosition(lastPos)
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
-      onPinPosition(lastPos)
-      setIsDragging(false)
+      if (dragging) {
+        onPinPosition(lastPos)
+        setIsDragging(false)
+      }
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-    setIsDragging(true)
   }
 
   const topButtons = (

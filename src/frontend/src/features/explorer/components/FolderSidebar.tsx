@@ -685,7 +685,7 @@ export function FolderSidebar({
                 <Upload className="h-3.5 w-3.5" />
                 Upload
               </button>
-              {!contextMenu.isRoot && <div className="border-b border-border my-1 mx-1" />}
+              {!contextMenu.isRoot && <div className="my-0.5 border-t border-border" />}
             </>
           )}
           {!contextMenu.isRoot && !isMultiAction && (

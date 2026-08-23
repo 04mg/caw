@@ -81,7 +81,9 @@ export function useFloatingPrompt() {
 
   const openBubble = useCallback((initialChar: string) => {
     setMouse({ ...mouseRef.current })
-    setText(initialChar)
+    // Append the typed character to any preserved text so closing the bubble
+    // never loses what was already written. Text is only cleared on send.
+    setText((prev) => prev + initialChar)
     setPinnedPos(null)
     setOpen(true)
   }, [])
