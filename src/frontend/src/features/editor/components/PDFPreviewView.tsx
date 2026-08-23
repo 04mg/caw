@@ -96,6 +96,8 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
 
   useEffect(() => {
     let active = true
+    const renderTasks = renderTasksRef.current
+    const rendered = renderedRef.current
 
     setStatus('loading')
     setError(null)
@@ -132,9 +134,9 @@ export function PDFPreviewView({ filePath, cwd }: PDFPreviewViewProps) {
 
     return () => {
       active = false
-      renderTasksRef.current.forEach((task) => task.cancel())
-      renderTasksRef.current.clear()
-      renderedRef.current.clear()
+      renderTasks.forEach((task) => task.cancel())
+      renderTasks.clear()
+      rendered.clear()
       disposePdfRef.current()
       disposePdfRef.current = () => {}
       pdfRef.current = null
