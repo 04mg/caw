@@ -5,9 +5,10 @@ interface SettingsItemProps {
   label: string
   onClick: () => void
   testId?: string
+  badge?: string
 }
 
-export function SettingsItem({ icon: Icon, label, onClick, testId }: SettingsItemProps) {
+export function SettingsItem({ icon: Icon, label, onClick, testId, badge }: SettingsItemProps) {
   return (
     <button
       onClick={onClick}
@@ -21,6 +22,7 @@ export function SettingsItem({ icon: Icon, label, onClick, testId }: SettingsIte
         <p className="text-xs font-semibold text-foreground">{label}</p>
       </div>
       <div className="text-muted-foreground group-hover:text-primary transition-colors text-xs font-semibold flex items-center gap-1.5 pr-1">
+        {badge && <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{badge}</span>}
         Configure &rarr;
       </div>
     </button>

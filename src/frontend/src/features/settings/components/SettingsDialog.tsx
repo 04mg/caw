@@ -1611,14 +1611,16 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   { id: 'openrouter', label: 'OpenRouter', icon: OpenRouterIcon, show: true },
                   { id: 'commandcode', label: 'Command Code', icon: CommandCodeIcon, show: true },
                   { id: 'zed', label: 'Zed', icon: ZedIcon, show: true },
-                ].filter(p => p.show && !disabledProviders.includes(p.id)).map((prov) => {
+                ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
+                  const isProviderDisabled = disabledProviders.includes(prov.id)
                   return (
                     <SettingsItem
                       key={prov.id}
                       icon={Icon}
                       label={prov.label}
                       testId={`settings-provider-${prov.id}`}
+                      badge={isProviderDisabled ? 'Disabled' : undefined}
                       onClick={() => {
                         setSelectedLimitProvider(prov.id as QuotaProviderId)
                         setLimitStep(2)
