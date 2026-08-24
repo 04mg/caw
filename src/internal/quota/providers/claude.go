@@ -103,13 +103,64 @@ func (p *ClaudeProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 	}, nil
 }
 
+func (p *ClaudeProvider) ImportLogin() (map[string]string, error) {
+	creds, err := findClaudeCredentialsFile()
+	if err != nil {
+		return nil, fmt.Errorf("no active Claude login found on disk (~/.claude/.credentials.json); run 'claude login' in your terminal first")
+	}
+
+	data, err := os.ReadFile(creds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Claude credentials: %w", err)
+	}
+
+	var parsed struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"access_token"`
+		} `json:"claudeAiOauth"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse Claude credentials: %w", err)
+	}
+	token := parsed.ClaudeAiOauth.AccessToken
+	if token == "" {
+		token = parsed.AccessToken
+	}
+	if token == "" {
+		return nil, fmt.Errorf("no access token in Claude credentials; run 'claude login' in your terminal first")
+	}
+
+	return map[string]string{
+		"accessToken":     token,
+		"credentialsJson": string(data),
+		"importedAt":      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func resolveClaudeAccessToken(config map[string]string) (string, error) {
-	// 1. Manual override from settings
+	// 1. Direct token or credentialsJson override from account config
 	if token := config["accessToken"]; token != "" {
 		return token, nil
 	}
 	if token := config["apiKey"]; token != "" {
 		return token, nil
+	}
+	if raw := config["credentialsJson"]; raw != "" {
+		var parsed struct {
+			ClaudeAiOauth struct {
+				AccessToken string `json:"access_token"`
+			} `json:"claudeAiOauth"`
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+			if parsed.ClaudeAiOauth.AccessToken != "" {
+				return parsed.ClaudeAiOauth.AccessToken, nil
+			}
+			if parsed.AccessToken != "" {
+				return parsed.AccessToken, nil
+			}
+		}
 	}
 
 	// 2. Read from ~/.claude/.credentials.json

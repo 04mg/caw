@@ -107,7 +107,6 @@ export const QUOTA_WINDOW_LABELS: Record<QuotaProviderId, Partial<Record<QuotaMe
   antigravity: {
     fiveHour: '5h Limit',
     weekly: 'Weekly Limit',
-    monthly: 'Monthly Limit',
   },
   opencode: {
     fiveHour: '5h Limit',

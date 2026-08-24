@@ -84,14 +84,67 @@ func (p *CodexProvider) GetQuotas(config map[string]string) (*quota.QuotaRespons
 	}, nil
 }
 
+func (p *CodexProvider) ImportLogin() (map[string]string, error) {
+	authFile, err := findCodexAuthFile()
+	if err != nil {
+		return nil, fmt.Errorf("no active Codex auth file found on disk (~/.codex/auth.json); run 'codex login' in your terminal first")
+	}
+
+	data, err := os.ReadFile(authFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Codex auth file: %w", err)
+	}
+
+	var parsed struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse Codex auth file: %w", err)
+	}
+	token := parsed.Tokens.AccessToken
+	if token == "" {
+		token = parsed.AccessToken
+	}
+	if token == "" {
+		return nil, fmt.Errorf("no access token found in Codex auth file; run 'codex login' in your terminal first")
+	}
+
+	return map[string]string{
+		"accessToken":     token,
+		"credentialsJson": string(data),
+		"importedAt":      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func resolveCodexAccessToken(config map[string]string) (string, error) {
+	// 1. Direct token or credentialsJson override from account config
 	if token := config["accessToken"]; token != "" {
 		return token, nil
 	}
 	if token := config["apiKey"]; token != "" {
 		return token, nil
 	}
+	if raw := config["credentialsJson"]; raw != "" {
+		var parsed struct {
+			Tokens struct {
+				AccessToken string `json:"access_token"`
+			} `json:"tokens"`
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+			if parsed.Tokens.AccessToken != "" {
+				return parsed.Tokens.AccessToken, nil
+			}
+			if parsed.AccessToken != "" {
+				return parsed.AccessToken, nil
+			}
+		}
+	}
 
+	// 2. Read from ~/.codex/auth.json
 	authFile, err := findCodexAuthFile()
 	if err != nil {
 		return "", fmt.Errorf("codex auth.json not found: %w", err)

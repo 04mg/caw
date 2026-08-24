@@ -73,7 +73,35 @@ func init() {
 	quota.RegisterProvider("antigravity", &AntigravityProvider{})
 }
 
+func (p *AntigravityProvider) ImportLogin() (map[string]string, error) {
+	t, err := readAgyStoredToken()
+	if err != nil {
+		return nil, fmt.Errorf("no active Antigravity login found on disk (~/.gemini/antigravity-cli/antigravity-oauth-token); run 'agy login' in your terminal first")
+	}
+	best := t.bestToken()
+	if best == "" {
+		return nil, fmt.Errorf("no valid token found in Antigravity credential file; run 'agy login' in your terminal first")
+	}
+	raw, err := readAgyStoredTokenRaw()
+	if err != nil {
+		raw = []byte("{}")
+	}
+	return map[string]string{
+		"credentialsJson": string(raw),
+		"accessToken":     t.Token.AccessToken,
+		"refreshToken":    t.Token.RefreshToken,
+		"expiry":          t.Token.Expiry,
+		"importedAt":      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
+	// If the account has explicit credentials (e.g. imported login or configured token),
+	// query Google Cloud quota API directly with those credentials.
+	if hasExplicitAntigravityCredentials(config) {
+		return fetchQuotaFromExplicitCredentials(config)
+	}
+
 	// 1. Try to find an already running agy process (user-opened or our background one).
 	// A running instance exposes the richest quota data via its local endpoint.
 	pids, err := findAgyPids()
@@ -120,6 +148,45 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	return nil, fmt.Errorf("agy did not expose a quota endpoint")
 }
 
+func hasExplicitAntigravityCredentials(config map[string]string) bool {
+	if len(config) == 0 {
+		return false
+	}
+	return config["credentialsJson"] != "" || config["refreshToken"] != "" || config["accessToken"] != "" || config["apiKey"] != "" || config["token"] != ""
+}
+
+func fetchQuotaFromExplicitCredentials(config map[string]string) (*quota.QuotaResponse, error) {
+	token := resolveExplicitAntigravityToken(config)
+	if token == "" {
+		return nil, fmt.Errorf("no antigravity oauth token configured for account")
+	}
+	return fetchQuotaViaOAuth(token)
+}
+
+func resolveExplicitAntigravityToken(config map[string]string) string {
+	if raw := config["credentialsJson"]; raw != "" {
+		var t agyStoredToken
+		if err := json.Unmarshal([]byte(raw), &t); err == nil {
+			if best := t.bestToken(); best != "" {
+				return best
+			}
+		}
+	}
+	if t := config["refreshToken"]; t != "" {
+		return t
+	}
+	if t := config["accessToken"]; t != "" {
+		return t
+	}
+	if t := config["apiKey"]; t != "" {
+		return t
+	}
+	if t := config["token"]; t != "" {
+		return t
+	}
+	return ""
+}
+
 type agyStoredToken struct {
 	Token struct {
 		AccessToken  string `json:"access_token"`
@@ -138,12 +205,16 @@ func agyTokenPath() (string, error) {
 	return filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), nil
 }
 
-func readAgyStoredToken() (*agyStoredToken, error) {
+func readAgyStoredTokenRaw() ([]byte, error) {
 	path, err := agyTokenPath()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	return os.ReadFile(path)
+}
+
+func readAgyStoredToken() (*agyStoredToken, error) {
+	data, err := readAgyStoredTokenRaw()
 	if err != nil {
 		return nil, err
 	}
@@ -167,28 +238,12 @@ func (t *agyStoredToken) bestToken() string {
 }
 
 // fetchQuotaFromStoredCredentials queries the quota API directly using locally
-// stored OAuth credentials instead of starting an agy process. It tries the
-// token file written by the agy CLI first, then a manually configured apiKey.
+// stored OAuth credentials instead of starting an agy process.
 func fetchQuotaFromStoredCredentials(config map[string]string) (*quota.QuotaResponse, error) {
-	var lastErr error
 	if t, err := readAgyStoredToken(); err == nil {
 		if token := t.bestToken(); token != "" {
-			res, err := fetchQuotaViaOAuth(token)
-			if err == nil {
-				return res, nil
-			}
-			lastErr = err
+			return fetchQuotaViaOAuth(token)
 		}
-	}
-	if token := config["apiKey"]; token != "" {
-		res, err := fetchQuotaViaOAuth(token)
-		if err == nil {
-			return res, nil
-		}
-		lastErr = err
-	}
-	if lastErr != nil {
-		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no antigravity oauth credentials found")
 }
@@ -266,14 +321,9 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3.6-flash-high", "gemini-3-pro-image")
-	if err != nil {
-		return nil, err
-	}
 	return &quota.QuotaResponse{
 		FiveHour: fiveHourQuota,
 		Weekly:   weeklyQuota,
-		Monthly:  monthlyQuota,
 	}, nil
 }
 
@@ -519,7 +569,6 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 	res := &quota.QuotaResponse{
 		FiveHour: quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 		Weekly:   quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
-		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}
 
 	var groups []quota.QuotaGroup
@@ -587,7 +636,7 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 			if is5h {
 				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			} else if isWeekly {
-				res.Monthly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
 		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
 			if isWeekly {
