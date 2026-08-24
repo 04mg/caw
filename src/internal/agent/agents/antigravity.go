@@ -166,7 +166,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				// Prefer the exact conversation id persisted for this leaf by
 				// a previous Caw process so a reopened pane follows its own
 				// conversation when several panes share a cwd.
-				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" && antigravityConversationMatchesWorkspace(exact, cwd) {
 					if exactPath := antigravityTranscriptForConversation(dir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, claimCwd, exactPath, sessionID) {
 						watchedFilePath = exactPath
 						lastFileSize = 0
@@ -394,6 +394,34 @@ func antigravityConversationWorkspace(convID string) []string {
 	return foundPaths
 }
 
+// antigravityConversationMatchesWorkspace reports whether the given conversation ID
+// belongs to the specified workspace directory (cwd). If cwd is empty, returns true.
+// If the conversation's workspace is unknown, returns true.
+func antigravityConversationMatchesWorkspace(convID, cwd string) bool {
+	if convID == "" {
+		return false
+	}
+	if cwd == "" {
+		return true
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err == nil {
+		absCwd = filepath.Clean(absCwd)
+	} else {
+		absCwd = filepath.Clean(cwd)
+	}
+	wsPaths := antigravityConversationWorkspace(convID)
+	if len(wsPaths) == 0 {
+		return true
+	}
+	for _, p := range wsPaths {
+		if p == absCwd {
+			return true
+		}
+	}
+	return false
+}
+
 // findAntigravityTranscripts walks the brain directory looking for the most
 // recently modified transcript.jsonl files whose modification time is after
 // the given threshold, filtered by cwd, and returns candidates sorted oldest-first.
@@ -533,7 +561,7 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			sub := step.Content[idx+len("USER Objective:"):]
 			parts := strings.Split(strings.TrimSpace(sub), "\n")
 			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				sessionTitle = strings.TrimSpace(parts[0])
+				sessionTitle = CleanPrompt(parts[0])
 			}
 		}
 

@@ -353,3 +353,45 @@ func TestAntigravityMultiInstanceSameWorkspaceDistinctClaims(t *testing.T) {
 		t.Fatal("leaf-2 must not steal candidate 0 from leaf-1")
 	}
 }
+
+func TestAntigravityConversationMatchesWorkspace(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	convsDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "conversations")
+	_ = os.MkdirAll(convsDir, 0755)
+
+	convID := "test-conv-match-ws"
+	ws := filepath.Join(tempHome, "my-repo")
+	_ = os.MkdirAll(ws, 0755)
+
+	dbPath := filepath.Join(convsDir, convID+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	_, _ = db.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	uri := "file://" + ws
+	var blob []byte
+	blob = append(blob, 0x0a, byte(len(uri)))
+	blob = append(blob, []byte(uri)...)
+	_, _ = db.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blob)
+	db.Close()
+
+	if !antigravityConversationMatchesWorkspace(convID, ws) {
+		t.Fatalf("expected conv to match workspace %s", ws)
+	}
+	otherWs := filepath.Join(tempHome, "other-repo")
+	if antigravityConversationMatchesWorkspace(convID, otherWs) {
+		t.Fatalf("conv should NOT match other workspace %s", otherWs)
+	}
+}
+
+func TestCleanPromptMentionsAndNewlines(t *testing.T) {
+	input := "<USER_REQUEST>\n/caw-feature Right now we have @[src/file.go] running.\\nAlso next line.\n</USER_REQUEST>"
+	got := CleanPrompt(input)
+	want := "/caw-feature Right now we have src/file.go running. Also next line."
+	if got != want {
+		t.Fatalf("CleanPrompt(%q) = %q, want %q", input, got, want)
+	}
+}

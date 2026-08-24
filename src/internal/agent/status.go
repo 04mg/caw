@@ -619,9 +619,9 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 	// Info line renders as clean plain text regardless of which agent
 	// produced it. Titles are already cleaned by CleanPrompt upstream, but
 	// details (assistant text excerpts) can contain **bold**, `code`, [links],
-	// # headings, etc.
+	// # headings, etc. CleanTitle ensures the title has no newlines or formatting.
 	details = StripMarkdown(details)
-	title = StripMarkdown(title)
+	title = CleanTitle(StripMarkdown(title))
 
 	statusesMu.Lock()
 	prev, exists := statuses[sessionID]
