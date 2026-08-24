@@ -52,10 +52,12 @@ type QuotaSummary struct {
 }
 
 type QuotaSummaryResponse struct {
-	Code         interface{}   `json:"code"`
-	Message      string        `json:"message"`
-	QuotaSummary *QuotaSummary `json:"quotaSummary"`
-	Response     *QuotaSummary `json:"response"`
+	Code         interface{}          `json:"code"`
+	Message      string               `json:"message"`
+	QuotaSummary *QuotaSummary        `json:"quotaSummary"`
+	Response     *QuotaSummary        `json:"response"`
+	Groups       []QuotaSummaryGroup  `json:"groups"`
+	Description  string               `json:"description"`
 }
 
 type AntigravityProvider struct{}
@@ -309,6 +311,15 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth error: %w", err)
 	}
+
+	// 1. Prefer retrieveUserQuotaSummary directly via Cloud API.
+	// This returns the exact same rich quota summary as the local language server,
+	// including gemini-weekly, gemini-5h, 3p-weekly, and 3p-5h.
+	if qs, err := fetchUserQuotaSummaryAPI(accessToken); err == nil && qs != nil {
+		return mapQuotaSummaryToResponse(qs), nil
+	}
+
+	// 2. Fallback to fetchAvailableModels
 	modelsResponse, err := fetchAvailableModels(accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("api error: %w", err)
@@ -325,6 +336,48 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 		FiveHour: fiveHourQuota,
 		Weekly:   weeklyQuota,
 	}, nil
+}
+
+func fetchUserQuotaSummaryAPI(accessToken string) (*QuotaSummary, error) {
+	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", strings.NewReader("{}"))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "antigravity/1.11.9 windows/amd64")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var qResp QuotaSummaryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&qResp); err != nil {
+		return nil, err
+	}
+
+	summary := qResp.QuotaSummary
+	if summary == nil {
+		summary = qResp.Response
+	}
+	if summary == nil && len(qResp.Groups) > 0 {
+		summary = &QuotaSummary{
+			Groups:      qResp.Groups,
+			Description: qResp.Description,
+		}
+	}
+	if summary == nil {
+		return nil, fmt.Errorf("quotaSummary missing in response")
+	}
+	return summary, nil
 }
 
 func (p *AntigravityProvider) IsInstalled() bool {
@@ -421,22 +474,50 @@ func findPortsForPids(pids []int) ([]int, error) {
 			}
 		}
 	} else {
-		for _, pid := range pids {
-			cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", strconv.Itoa(pid))
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			if err := cmd.Run(); err == nil {
-				lines := strings.Split(out.String(), "\n")
-				for _, line := range lines {
-					if strings.Contains(line, "(LISTEN)") {
+		// Linux: Try ss first (standard on Linux distributions without requiring lsof)
+		ssCmd := exec.Command("ss", "-tlpn", "-H")
+		var ssOut bytes.Buffer
+		ssCmd.Stdout = &ssOut
+		if err := ssCmd.Run(); err == nil {
+			for _, line := range strings.Split(ssOut.String(), "\n") {
+				for _, pid := range pids {
+					pidPattern := fmt.Sprintf("pid=%d,", pid)
+					pidPatternEnd := fmt.Sprintf("pid=%d)", pid)
+					if strings.Contains(line, pidPattern) || strings.Contains(line, pidPatternEnd) {
 						fields := strings.Fields(line)
-						if len(fields) >= 9 {
-							name := fields[8]
-							idx := strings.LastIndex(name, ":")
+						if len(fields) >= 4 {
+							addr := fields[3]
+							idx := strings.LastIndex(addr, ":")
 							if idx != -1 {
-								portStr := name[idx+1:]
+								portStr := addr[idx+1:]
 								if port, err := strconv.Atoi(portStr); err == nil {
 									ports = append(ports, port)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Fallback to lsof if ss found nothing
+		if len(ports) == 0 {
+			for _, pid := range pids {
+				cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", strconv.Itoa(pid))
+				var out bytes.Buffer
+				cmd.Stdout = &out
+				if err := cmd.Run(); err == nil {
+					lines := strings.Split(out.String(), "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "(LISTEN)") {
+							fields := strings.Fields(line)
+							if len(fields) >= 9 {
+								name := fields[8]
+								idx := strings.LastIndex(name, ":")
+								if idx != -1 {
+									portStr := name[idx+1:]
+									if port, err := strconv.Atoi(portStr); err == nil {
+										ports = append(ports, port)
+									}
 								}
 							}
 						}
@@ -482,9 +563,9 @@ func findAgyPath() (string, error) {
 	} else {
 		paths = []string{
 			filepath.Join(home, ".local", "bin", "agy"),
-			"/opt/homebrew/bin/agy",
-			"/usr/local/bin/agy",
 			filepath.Join(home, "bin", "agy"),
+			"/usr/local/bin/agy",
+			"/usr/bin/agy",
 		}
 	}
 
@@ -494,10 +575,8 @@ func findAgyPath() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("agy binary not found")
+	return "", fmt.Errorf("agy binary not found in PATH or standard locations")
 }
-
-
 
 func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 	tr := &http.Transport{
@@ -548,6 +627,12 @@ func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 			summary := qResp.QuotaSummary
 			if summary == nil {
 				summary = qResp.Response
+			}
+			if summary == nil && len(qResp.Groups) > 0 {
+				summary = &QuotaSummary{
+					Groups:      qResp.Groups,
+					Description: qResp.Description,
+				}
 			}
 
 			if summary == nil {
@@ -638,8 +723,12 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 			} else if isWeekly {
 				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
-		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
-			if isWeekly {
+		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") || strings.Contains(groupName, "3p") {
+			// Only set 5h or Weekly from 3p/Claude/GPT if Gemini did not set a reset time or if 3p usage is higher
+			if is5h && (res.FiveHour.ResetTime == "" || float64(used) > res.FiveHour.Used) {
+				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+			}
+			if isWeekly && (res.Weekly.ResetTime == "" || float64(used) > res.Weekly.Used) {
 				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
 		}
