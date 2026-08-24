@@ -76,11 +76,11 @@ func init() {
 func (p *AntigravityProvider) ImportLogin() (map[string]string, error) {
 	t, err := readAgyStoredToken()
 	if err != nil {
-		return nil, fmt.Errorf("no active Antigravity login found on disk (~/.gemini/antigravity-cli/antigravity-oauth-token); run 'agy login' in your terminal first")
+		return nil, fmt.Errorf("no active Antigravity login found on disk (~/.gemini/antigravity-cli/antigravity-oauth-token); log in with Antigravity in your terminal first")
 	}
 	best := t.bestToken()
 	if best == "" {
-		return nil, fmt.Errorf("no valid token found in Antigravity credential file; run 'agy login' in your terminal first")
+		return nil, fmt.Errorf("no valid token found in Antigravity credential file; log in with Antigravity in your terminal first")
 	}
 	raw, err := readAgyStoredTokenRaw()
 	if err != nil {

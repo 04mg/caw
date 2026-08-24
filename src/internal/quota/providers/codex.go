@@ -87,7 +87,7 @@ func (p *CodexProvider) GetQuotas(config map[string]string) (*quota.QuotaRespons
 func (p *CodexProvider) ImportLogin() (map[string]string, error) {
 	authFile, err := findCodexAuthFile()
 	if err != nil {
-		return nil, fmt.Errorf("no active Codex auth file found on disk (~/.codex/auth.json); run 'codex login' in your terminal first")
+		return nil, fmt.Errorf("no active Codex auth file found on disk (~/.codex/auth.json); log in with Codex in your terminal first")
 	}
 
 	data, err := os.ReadFile(authFile)
@@ -109,7 +109,7 @@ func (p *CodexProvider) ImportLogin() (map[string]string, error) {
 		token = parsed.AccessToken
 	}
 	if token == "" {
-		return nil, fmt.Errorf("no access token found in Codex auth file; run 'codex login' in your terminal first")
+		return nil, fmt.Errorf("no access token found in Codex auth file; log in with Codex in your terminal first")
 	}
 
 	return map[string]string{

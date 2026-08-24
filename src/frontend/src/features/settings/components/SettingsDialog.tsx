@@ -1778,7 +1778,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         {selectedLimitConfig.importedAt ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                             <Check className="h-3 w-3" />
-                            Imported {new Date(selectedLimitConfig.importedAt).toLocaleDateString()}
+                            Imported
                           </span>
                         ) : selectedLimitAccount.id === 'default' ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
@@ -1791,7 +1791,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Log in to Claude in your terminal (<code className="px-1 py-0.5 rounded bg-secondary/50 font-mono text-[10px]">claude login</code>), then click <strong>Import Current Login</strong> to snapshot credentials for this account.
+                        Log in to Claude in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
 
                       {importError && selectedLimitProvider === 'claude' && (
@@ -1825,7 +1825,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         {selectedLimitConfig.importedAt ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                             <Check className="h-3 w-3" />
-                            Imported {new Date(selectedLimitConfig.importedAt).toLocaleDateString()}
+                            Imported
                           </span>
                         ) : selectedLimitAccount.id === 'default' ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
@@ -1838,7 +1838,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Log in to Codex in your terminal (<code className="px-1 py-0.5 rounded bg-secondary/50 font-mono text-[10px]">codex login</code>), then click <strong>Import Current Login</strong> to snapshot credentials for this account.
+                        Log in to Codex in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
 
                       {importError && selectedLimitProvider === 'codex' && (
@@ -1977,7 +1977,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         {selectedLimitConfig.importedAt ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                             <Check className="h-3 w-3" />
-                            Imported {new Date(selectedLimitConfig.importedAt).toLocaleDateString()}
+                            Imported
                           </span>
                         ) : selectedLimitAccount.id === 'default' ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
@@ -1990,7 +1990,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Log in to Antigravity in your terminal (<code className="px-1 py-0.5 rounded bg-secondary/50 font-mono text-[10px]">agy login</code>), then click <strong>Import Current Login</strong> to snapshot credentials for this account.
+                        Log in to Antigravity in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
 
                       {importError && selectedLimitProvider === 'antigravity' && (

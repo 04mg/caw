@@ -106,7 +106,7 @@ func (p *ClaudeProvider) GetQuotas(config map[string]string) (*quota.QuotaRespon
 func (p *ClaudeProvider) ImportLogin() (map[string]string, error) {
 	creds, err := findClaudeCredentialsFile()
 	if err != nil {
-		return nil, fmt.Errorf("no active Claude login found on disk (~/.claude/.credentials.json); run 'claude login' in your terminal first")
+		return nil, fmt.Errorf("no active Claude login found on disk (~/.claude/.credentials.json); log in with Claude in your terminal first")
 	}
 
 	data, err := os.ReadFile(creds)
@@ -128,7 +128,7 @@ func (p *ClaudeProvider) ImportLogin() (map[string]string, error) {
 		token = parsed.AccessToken
 	}
 	if token == "" {
-		return nil, fmt.Errorf("no access token in Claude credentials; run 'claude login' in your terminal first")
+		return nil, fmt.Errorf("no access token in Claude credentials; log in with Claude in your terminal first")
 	}
 
 	return map[string]string{
