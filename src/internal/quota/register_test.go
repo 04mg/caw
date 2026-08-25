@@ -117,3 +117,56 @@ func TestServiceAccountSettingsReturnsStoredAccounts(t *testing.T) {
 		t.Fatalf("unexpected accounts order/content: %#v", got)
 	}
 }
+
+type quotaTestImporter struct{}
+
+func (quotaTestImporter) GetQuotas(config map[string]string) (*QuotaResponse, error) {
+	return &QuotaResponse{}, nil
+}
+
+func (quotaTestImporter) ImportLogin() (map[string]string, error) {
+	return map[string]string{
+		"accessToken": "imported-token-123",
+		"importedAt":  "2026-08-25T00:00:00Z",
+	}, nil
+}
+
+func TestServiceImportLogin(t *testing.T) {
+	dir, err := os.MkdirTemp(".", ".quota-service-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	store := state.NewStore(filepath.Join(dir, "state.db"))
+	defer store.Close()
+
+	previous, hadPrevious := registry["import-test"]
+	registry["import-test"] = quotaTestImporter{}
+	defer func() {
+		if hadPrevious {
+			registry["import-test"] = previous
+		} else {
+			delete(registry, "import-test")
+		}
+	}()
+
+	svc := NewService(store)
+	res, err := svc.ImportLogin("import-test", "work")
+	if err != nil {
+		t.Fatalf("ImportLogin: %v", err)
+	}
+	if !res.OK || res.AccountID != "work" || res.Config["accessToken"] != "imported-token-123" {
+		t.Fatalf("unexpected import response: %#v", res)
+	}
+
+	accounts, err := svc.AccountSettings()
+	if err != nil {
+		t.Fatalf("AccountSettings: %v", err)
+	}
+	got := accounts["import-test"]
+	if len(got) != 1 || got[0].Name != "work" || got[0].Config["accessToken"] != "imported-token-123" {
+		t.Fatalf("unexpected stored accounts: %#v", got)
+	}
+}
+

@@ -52,10 +52,12 @@ type QuotaSummary struct {
 }
 
 type QuotaSummaryResponse struct {
-	Code         interface{}   `json:"code"`
-	Message      string        `json:"message"`
-	QuotaSummary *QuotaSummary `json:"quotaSummary"`
-	Response     *QuotaSummary `json:"response"`
+	Code         interface{}          `json:"code"`
+	Message      string               `json:"message"`
+	QuotaSummary *QuotaSummary        `json:"quotaSummary"`
+	Response     *QuotaSummary        `json:"response"`
+	Groups       []QuotaSummaryGroup  `json:"groups"`
+	Description  string               `json:"description"`
 }
 
 type AntigravityProvider struct{}
@@ -73,7 +75,35 @@ func init() {
 	quota.RegisterProvider("antigravity", &AntigravityProvider{})
 }
 
+func (p *AntigravityProvider) ImportLogin() (map[string]string, error) {
+	t, err := readAgyStoredToken()
+	if err != nil {
+		return nil, fmt.Errorf("no active Antigravity login found on disk (~/.gemini/antigravity-cli/antigravity-oauth-token); log in with Antigravity in your terminal first")
+	}
+	best := t.bestToken()
+	if best == "" {
+		return nil, fmt.Errorf("no valid token found in Antigravity credential file; log in with Antigravity in your terminal first")
+	}
+	raw, err := readAgyStoredTokenRaw()
+	if err != nil {
+		raw = []byte("{}")
+	}
+	return map[string]string{
+		"credentialsJson": string(raw),
+		"accessToken":     t.Token.AccessToken,
+		"refreshToken":    t.Token.RefreshToken,
+		"expiry":          t.Token.Expiry,
+		"importedAt":      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaResponse, error) {
+	// If the account has explicit credentials (e.g. imported login or configured token),
+	// query Google Cloud quota API directly with those credentials.
+	if hasExplicitAntigravityCredentials(config) {
+		return fetchQuotaFromExplicitCredentials(config)
+	}
+
 	// 1. Try to find an already running agy process (user-opened or our background one).
 	// A running instance exposes the richest quota data via its local endpoint.
 	pids, err := findAgyPids()
@@ -120,6 +150,45 @@ func (p *AntigravityProvider) GetQuotas(config map[string]string) (*quota.QuotaR
 	return nil, fmt.Errorf("agy did not expose a quota endpoint")
 }
 
+func hasExplicitAntigravityCredentials(config map[string]string) bool {
+	if len(config) == 0 {
+		return false
+	}
+	return config["credentialsJson"] != "" || config["refreshToken"] != "" || config["accessToken"] != "" || config["apiKey"] != "" || config["token"] != ""
+}
+
+func fetchQuotaFromExplicitCredentials(config map[string]string) (*quota.QuotaResponse, error) {
+	token := resolveExplicitAntigravityToken(config)
+	if token == "" {
+		return nil, fmt.Errorf("no antigravity oauth token configured for account")
+	}
+	return fetchQuotaViaOAuth(token)
+}
+
+func resolveExplicitAntigravityToken(config map[string]string) string {
+	if raw := config["credentialsJson"]; raw != "" {
+		var t agyStoredToken
+		if err := json.Unmarshal([]byte(raw), &t); err == nil {
+			if best := t.bestToken(); best != "" {
+				return best
+			}
+		}
+	}
+	if t := config["refreshToken"]; t != "" {
+		return t
+	}
+	if t := config["accessToken"]; t != "" {
+		return t
+	}
+	if t := config["apiKey"]; t != "" {
+		return t
+	}
+	if t := config["token"]; t != "" {
+		return t
+	}
+	return ""
+}
+
 type agyStoredToken struct {
 	Token struct {
 		AccessToken  string `json:"access_token"`
@@ -138,12 +207,16 @@ func agyTokenPath() (string, error) {
 	return filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), nil
 }
 
-func readAgyStoredToken() (*agyStoredToken, error) {
+func readAgyStoredTokenRaw() ([]byte, error) {
 	path, err := agyTokenPath()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	return os.ReadFile(path)
+}
+
+func readAgyStoredToken() (*agyStoredToken, error) {
+	data, err := readAgyStoredTokenRaw()
 	if err != nil {
 		return nil, err
 	}
@@ -167,28 +240,12 @@ func (t *agyStoredToken) bestToken() string {
 }
 
 // fetchQuotaFromStoredCredentials queries the quota API directly using locally
-// stored OAuth credentials instead of starting an agy process. It tries the
-// token file written by the agy CLI first, then a manually configured apiKey.
+// stored OAuth credentials instead of starting an agy process.
 func fetchQuotaFromStoredCredentials(config map[string]string) (*quota.QuotaResponse, error) {
-	var lastErr error
 	if t, err := readAgyStoredToken(); err == nil {
 		if token := t.bestToken(); token != "" {
-			res, err := fetchQuotaViaOAuth(token)
-			if err == nil {
-				return res, nil
-			}
-			lastErr = err
+			return fetchQuotaViaOAuth(token)
 		}
-	}
-	if token := config["apiKey"]; token != "" {
-		res, err := fetchQuotaViaOAuth(token)
-		if err == nil {
-			return res, nil
-		}
-		lastErr = err
-	}
-	if lastErr != nil {
-		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no antigravity oauth credentials found")
 }
@@ -254,6 +311,15 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth error: %w", err)
 	}
+
+	// 1. Prefer retrieveUserQuotaSummary directly via Cloud API.
+	// This returns the exact same rich quota summary as the local language server,
+	// including gemini-weekly, gemini-5h, 3p-weekly, and 3p-5h.
+	if qs, err := fetchUserQuotaSummaryAPI(accessToken); err == nil && qs != nil {
+		return mapQuotaSummaryToResponse(qs), nil
+	}
+
+	// 2. Fallback to fetchAvailableModels
 	modelsResponse, err := fetchAvailableModels(accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("api error: %w", err)
@@ -266,15 +332,52 @@ func fetchQuotaViaOAuth(token string) (*quota.QuotaResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	monthlyQuota, err := getModelQuota(modelsResponse, "gemini-3-flash", "gemini-3.6-flash-high", "gemini-3-pro-image")
-	if err != nil {
-		return nil, err
-	}
 	return &quota.QuotaResponse{
 		FiveHour: fiveHourQuota,
 		Weekly:   weeklyQuota,
-		Monthly:  monthlyQuota,
 	}, nil
+}
+
+func fetchUserQuotaSummaryAPI(accessToken string) (*QuotaSummary, error) {
+	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", strings.NewReader("{}"))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "antigravity/1.11.9 windows/amd64")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var qResp QuotaSummaryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&qResp); err != nil {
+		return nil, err
+	}
+
+	summary := qResp.QuotaSummary
+	if summary == nil {
+		summary = qResp.Response
+	}
+	if summary == nil && len(qResp.Groups) > 0 {
+		summary = &QuotaSummary{
+			Groups:      qResp.Groups,
+			Description: qResp.Description,
+		}
+	}
+	if summary == nil {
+		return nil, fmt.Errorf("quotaSummary missing in response")
+	}
+	return summary, nil
 }
 
 func (p *AntigravityProvider) IsInstalled() bool {
@@ -371,22 +474,50 @@ func findPortsForPids(pids []int) ([]int, error) {
 			}
 		}
 	} else {
-		for _, pid := range pids {
-			cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", strconv.Itoa(pid))
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			if err := cmd.Run(); err == nil {
-				lines := strings.Split(out.String(), "\n")
-				for _, line := range lines {
-					if strings.Contains(line, "(LISTEN)") {
+		// Linux: Try ss first (standard on Linux distributions without requiring lsof)
+		ssCmd := exec.Command("ss", "-tlpn", "-H")
+		var ssOut bytes.Buffer
+		ssCmd.Stdout = &ssOut
+		if err := ssCmd.Run(); err == nil {
+			for _, line := range strings.Split(ssOut.String(), "\n") {
+				for _, pid := range pids {
+					pidPattern := fmt.Sprintf("pid=%d,", pid)
+					pidPatternEnd := fmt.Sprintf("pid=%d)", pid)
+					if strings.Contains(line, pidPattern) || strings.Contains(line, pidPatternEnd) {
 						fields := strings.Fields(line)
-						if len(fields) >= 9 {
-							name := fields[8]
-							idx := strings.LastIndex(name, ":")
+						if len(fields) >= 4 {
+							addr := fields[3]
+							idx := strings.LastIndex(addr, ":")
 							if idx != -1 {
-								portStr := name[idx+1:]
+								portStr := addr[idx+1:]
 								if port, err := strconv.Atoi(portStr); err == nil {
 									ports = append(ports, port)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Fallback to lsof if ss found nothing
+		if len(ports) == 0 {
+			for _, pid := range pids {
+				cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", strconv.Itoa(pid))
+				var out bytes.Buffer
+				cmd.Stdout = &out
+				if err := cmd.Run(); err == nil {
+					lines := strings.Split(out.String(), "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "(LISTEN)") {
+							fields := strings.Fields(line)
+							if len(fields) >= 9 {
+								name := fields[8]
+								idx := strings.LastIndex(name, ":")
+								if idx != -1 {
+									portStr := name[idx+1:]
+									if port, err := strconv.Atoi(portStr); err == nil {
+										ports = append(ports, port)
+									}
 								}
 							}
 						}
@@ -432,9 +563,9 @@ func findAgyPath() (string, error) {
 	} else {
 		paths = []string{
 			filepath.Join(home, ".local", "bin", "agy"),
-			"/opt/homebrew/bin/agy",
-			"/usr/local/bin/agy",
 			filepath.Join(home, "bin", "agy"),
+			"/usr/local/bin/agy",
+			"/usr/bin/agy",
 		}
 	}
 
@@ -444,10 +575,8 @@ func findAgyPath() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("agy binary not found")
+	return "", fmt.Errorf("agy binary not found in PATH or standard locations")
 }
-
-
 
 func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 	tr := &http.Transport{
@@ -499,6 +628,12 @@ func queryAgyPorts(ports []int) (*quota.QuotaResponse, error) {
 			if summary == nil {
 				summary = qResp.Response
 			}
+			if summary == nil && len(qResp.Groups) > 0 {
+				summary = &QuotaSummary{
+					Groups:      qResp.Groups,
+					Description: qResp.Description,
+				}
+			}
 
 			if summary == nil {
 				lastErr = fmt.Errorf("quotaSummary missing in response")
@@ -519,7 +654,6 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 	res := &quota.QuotaResponse{
 		FiveHour: quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 		Weekly:   quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
-		Monthly:  quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}
 
 	var groups []quota.QuotaGroup
@@ -587,10 +721,14 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 			if is5h {
 				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			} else if isWeekly {
-				res.Monthly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
-		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") {
-			if isWeekly {
+		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") || strings.Contains(groupName, "3p") {
+			// Only set 5h or Weekly from 3p/Claude/GPT if Gemini did not set a reset time or if 3p usage is higher
+			if is5h && (res.FiveHour.ResetTime == "" || float64(used) > res.FiveHour.Used) {
+				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+			}
+			if isWeekly && (res.Weekly.ResetTime == "" || float64(used) > res.Weekly.Used) {
 				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
 			}
 		}
