@@ -4,6 +4,7 @@ import { agentTypes } from '@/features/agents/services/agentTypes'
 import { useFileDirty } from '@/features/editor/hooks/useFileDirty'
 import { type AgentStatus } from '@/features/agents/types'
 import { getAgentStatusDot } from '@/features/agents/utils/statusDot'
+import { type LeafView } from '@/features/shared/utils/layout'
 
 export interface TabItem {
   id: string
@@ -12,6 +13,7 @@ export interface TabItem {
   filePath?: string
   isDiff?: boolean
   agentStatus?: AgentStatus
+  view?: LeafView
 }
 
 function renderTabIcon(tab: TabItem) {

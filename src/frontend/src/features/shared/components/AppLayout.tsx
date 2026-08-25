@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { SplitLayout } from '@/features/shared/components/SplitLayout'
 import { Toaster, toast } from 'sonner'
-import cawSvg from '@/assets/logo.svg'
 import { WorkspacePanel } from '@/features/workspaces/components/WorkspacePanel'
 import { TerminalGrid } from '@/features/terminal/components/TerminalGrid'
 import { KanbanBoard } from '@/features/kanban/components/KanbanBoard'
@@ -18,6 +17,7 @@ import {
   findAgentLeaves,
   getLeafCwd,
   getLeaf,
+  setLeafFile,
   cyclePane,
 } from '@/features/shared/utils/layout'
 import {
@@ -25,7 +25,8 @@ import {
   persistWorkspaces,
   subscribeRemoteState,
 } from '@/features/workspaces/stores/workspaceStore'
-import { type Workspace, type TabGroupsNode } from '@/features/workspaces/types'
+import { type Workspace, type WorkspaceFolder, type TabGroupsNode } from '@/features/workspaces/types'
+import { normalizeSidebar, deleteFolder as removeFolderFromState, type SidebarState } from '@/features/workspaces/utils/sidebarFolders'
 import { TabGroupTree } from '@/features/workspaces/components/TabGroupTree'
 import { ensureTabGroups, findGroupById, collectGroups, collectTabIds, moveTabToGroup, removeTabFromTree, splitGroup, getTopRightGroupId, findGroupWithTab } from '@/features/workspaces/utils/tabGroups'
 import { destroyTerminal, releaseTerminal, setOnTerminalExit, sendTerminalInput, isTerminalExited } from '@/features/terminal/services/terminalRegistry'
@@ -54,11 +55,19 @@ import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getCustomization, getDefaultNewAgent, getHotkey, loadPrefs, subscribePrefs, getPetsConfig } from '@/features/prefs/stores/prefsStore'
 import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
+import { useFloatingPrompt } from '@/features/floating-prompt/hooks/useFloatingPrompt'
+import { FloatingPromptBubble } from '@/features/floating-prompt/components/FloatingPromptBubble'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
-import { Shortcut } from './Shortcut'
+import { WorkspaceEmptyState } from './WorkspaceEmptyState'
 import { Sounds } from '@/features/shared/utils/sounds'
 import { workspacesEqual } from '@/features/shared/utils/utils'
+
+// Per-device "last viewed workspace". Stored in localStorage so each browser
+// opens where IT left off, independently of other devices sharing the same
+// backend state. Only used as the fresh-load bootstrap default; the live
+// active-workspace selection stays per-client in React state.
+const LAST_WORKSPACE_KEY = 'caw:lastWorkspaceId'
 
 function findActiveLeaf(node: LayoutNode, activeId: string): any | null {
   if (node.type === 'leaf' && node.id === activeId) {
@@ -88,6 +97,8 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([])
+  const [sidebarOrder, setSidebarOrder] = useState<string[]>([])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('caw:sidebarCollapsed') === '1',
   )
@@ -215,13 +226,36 @@ export function AppLayout() {
         return { ...w, tabGroups: tree, activeGroupId }
       })
       setWorkspaces(parsedWorkspaces)
-      // Selection is per-client: prefer the local focus we just seeded,
-      // falling back to the backend's last-writer value only to pick the
-      // initial workspace. Other devices switching workspaces must never
-      // clobber this client's active workspace.
-      const initialWs = s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
-        ? s.activeWorkspaceId
-        : (parsedWorkspaces[0]?.id ?? null)
+      // Sidebar folders: normalize the loaded state so invariants hold
+      // (dangling folderIds cleared, order covers every root entry exactly
+      // once). Old states without folders normalize to a no-op layout.
+      const normalized = normalizeSidebar(parsedWorkspaces, s.workspaceFolders ?? [], s.sidebarOrder ?? [])
+      if (normalized) {
+        const fixed = normalized.workspaces.map((w) => {
+          localFocusRef.current[w.id] = localFocusRef.current[w.id] ?? {
+            tabIndex: Math.max(0, Math.min(w.activeTabIndex, w.layouts.length - 1)),
+            paneId: w.activePaneId,
+          }
+          return w
+        })
+        setWorkspaces(fixed)
+        setWorkspaceFolders(normalized.folders)
+        setSidebarOrder(normalized.order)
+      } else {
+        setWorkspaceFolders(s.workspaceFolders ?? [])
+        setSidebarOrder(s.sidebarOrder ?? [])
+      }
+      // Selection is per-device: prefer this browser's own last-viewed
+      // workspace so each device opens where it left off. Fall back to the
+      // backend's shared last-writer value (or the first workspace) only when
+      // there's no local record yet. Other devices switching workspaces must
+      // never clobber this client's active workspace.
+      const lastWsId = localStorage.getItem(LAST_WORKSPACE_KEY)
+      const localWs = lastWsId && parsedWorkspaces.some((w) => w.id === lastWsId) ? lastWsId : null
+      const initialWs = localWs
+        ?? (s.activeWorkspaceId && parsedWorkspaces.some((w) => w.id === s.activeWorkspaceId)
+          ? s.activeWorkspaceId
+          : (parsedWorkspaces[0]?.id ?? null))
       setActiveWorkspaceId(initialWs)
       setLoaded(true)
     })
@@ -231,6 +265,8 @@ export function AppLayout() {
   useEffect(() => {
     const unsub = subscribeRemoteState((remote) => {
       skipPersistRef.current = true
+      setWorkspaceFolders(remote.workspaceFolders ?? [])
+      setSidebarOrder(remote.sidebarOrder ?? [])
       setWorkspaces((prev) => {
         if (workspacesEqual(prev, remote.workspaces)) {
           return prev
@@ -286,7 +322,6 @@ export function AppLayout() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSidebarOnRight = getCustomization().layout.sidebarOrder === 'explorer-workspace'
-  const logoFilter = getCustomization().logo.filter
   const explorerSidebarOnRight = !workspaceSidebarOnRight
 
   // Top-level SplitLayout sizing strategy
@@ -373,6 +408,9 @@ export function AppLayout() {
   const currentWorkspacePath = (activeTab && activePaneId && getLeafCwd(activeTab.layout, activePaneId)) || activeWorkspace?.path || ''
   const activeLeaf = activeTab && activePaneId ? getLeaf(activeTab.layout, activePaneId) : null
   const activeWorktreeBranch = activeLeaf?.agentBranch ?? undefined
+
+  const floatingPrompt = useFloatingPrompt()
+  const canSendFloating = Boolean(activePaneId)
 
   const fetchGitStatus = useCallback(async () => {
     if (!currentWorkspacePath) {
@@ -576,13 +614,19 @@ export function AppLayout() {
   }, [activeWorkspace])
 
   useEffect(() => {
+    if (loaded && activeWorkspaceId) {
+      localStorage.setItem(LAST_WORKSPACE_KEY, activeWorkspaceId)
+    }
+  }, [loaded, activeWorkspaceId])
+
+  useEffect(() => {
     if (!loadedRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
       return
     }
-    persistWorkspaces(workspaces, activeWorkspaceId)
-  }, [workspaces, activeWorkspaceId])
+    persistWorkspaces(workspaces, activeWorkspaceId, workspaceFolders, sidebarOrder)
+  }, [workspaces, activeWorkspaceId, workspaceFolders, sidebarOrder])
 
   useEffect(() => {
     if (activeWorkspace && workspaces.length > 0) {
@@ -1071,7 +1115,7 @@ export function AppLayout() {
   )
 
   const addTab = useCallback(
-    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][]) => {
+    async (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: import('@/features/shared/utils/layout').LeafView) => {
       if (!activeWorkspace) return
       let cwd = activeWorkspace.path || ''
       let agentBranch: string | undefined = undefined
@@ -1115,6 +1159,7 @@ export function AppLayout() {
           agentId,
           agentBranch,
           baseBranch,
+          view,
         },
       }
       patchWorkspace(activeWorkspace.id, (ws) => {
@@ -1147,7 +1192,10 @@ export function AppLayout() {
       const tabIndex = activeWorkspace.layouts.findIndex((l) => l.id === tabId)
       if (tabIndex < 0) return
       const tab = activeWorkspace.layouts[tabIndex]
-      for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId, deleteBranch)
+      // Tear down every leaf session.
+      for (const leafId of collectLeafIds(tab.layout)) {
+        destroyTerminal(leafId, deleteBranch)
+      }
 
       patchWorkspace(activeWorkspace.id, (ws) => {
         const layouts = ws.layouts.filter((l) => l.id !== tabId)
@@ -1259,6 +1307,44 @@ export function AppLayout() {
             detail: { paneId: existing.layout.id, line, column: column ?? 0 },
           }))
         }
+        return
+      }
+
+      // VS Code parity: when the focused pane is a plain file editor with no
+      // unsaved edits, reuse it — swap the file it shows instead of stacking
+      // yet another tab. Dirty editors (and non-editor panes like terminals
+      // or diffs) still cause a new tab to open.
+      const activeTab = activeWorkspace.layouts[activeWorkspace.activeTabIndex]
+      const reuseLeaf = activeTab
+        ? (findActiveLeaf(activeTab.layout, activeWorkspace.activePaneId) || findFirstLeaf(activeTab.layout))
+        : null
+      if (
+        activeTab &&
+        reuseLeaf &&
+        reuseLeaf.type === 'leaf' &&
+        reuseLeaf.filePath &&
+        !reuseLeaf.isDiff &&
+        !isFileDirty(reuseLeaf.filePath)
+      ) {
+        const tabId = activeTab.id
+        const leafId = reuseLeaf.id
+        patchWorkspace(activeWorkspace.id, (ws) => {
+          const layouts = ws.layouts.map((t) =>
+            t.id === tabId
+              ? { ...t, name, layout: setLeafFile(t.layout, leafId, { filePath, cwd, revealLine: line, revealColumn: column ?? 0 }) }
+              : t,
+          )
+          const { tree } = ensureTabGroups({ ...ws, layouts })
+          const group = findGroupWithTab(tree, tabId)
+          return {
+            ...ws,
+            layouts,
+            tabGroups: tree,
+            activeGroupId: group ? group.id : ws.activeGroupId,
+            activeTabIndex: ws.activeTabIndex,
+            activePaneId: leafId,
+          }
+        })
         return
       }
 
@@ -1667,15 +1753,62 @@ export function AppLayout() {
     })
   }, [])
 
-  const handleReorderWorkspaces = useCallback((from: number, to: number) => {
-    if (from === to || from < 0 || to < 0) return
-    setWorkspaces((prev) => {
-      const next = prev.slice()
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
-      return next
-    })
+  const sidebarStateRef = useRef<SidebarState>({ workspaces: [], folders: [], order: [] })
+  sidebarStateRef.current = { workspaces, folders: workspaceFolders, order: sidebarOrder }
+
+  const handleSidebarMutation = useCallback((fn: (s: SidebarState) => SidebarState) => {
+    const next = fn(sidebarStateRef.current)
+    setWorkspaces(next.workspaces)
+    setWorkspaceFolders(next.folders)
+    setSidebarOrder(next.order)
   }, [])
+
+  const handleCreateFolder = useCallback(
+    (name: string, emoji: string, workspaceIds?: string[]) => {
+      const folder: WorkspaceFolder = { id: crypto.randomUUID(), name, emoji: emoji || undefined }
+      setWorkspaceFolders((prev) => [...prev, folder])
+      setSidebarOrder((prev) => [...prev, folder.id])
+      if (workspaceIds && workspaceIds.length > 0) {
+        const ids = new Set(workspaceIds)
+        setWorkspaces((prev) =>
+          prev.map((w) => (ids.has(w.id) ? { ...w, folderId: folder.id } : w)),
+        )
+        setSidebarOrder((prev) => prev.filter((id) => !ids.has(id)))
+      }
+    },
+    [],
+  )
+
+  const handleEditFolder = useCallback((id: string, name: string, emoji: string) => {
+    setWorkspaceFolders((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, name, emoji: emoji || undefined } : f)),
+    )
+  }, [])
+
+  const handleDeleteFolder = useCallback(
+    (folderId: string) => {
+      const current = sidebarStateRef.current
+      const removedWsIds = new Set(
+        current.workspaces.filter((w) => w.folderId === folderId).map((w) => w.id),
+      )
+      for (const wsId of removedWsIds) {
+        const target = current.workspaces.find((w) => w.id === wsId)
+        if (!target) continue
+        for (const tab of target.layouts) {
+          for (const leafId of collectLeafIds(tab.layout)) destroyTerminal(leafId)
+        }
+      }
+      const next = removeFolderFromState(current, folderId)
+      setWorkspaces(next.workspaces)
+      setWorkspaceFolders(next.folders)
+      setSidebarOrder(next.order)
+      setActiveWorkspaceId((cur) => {
+        if (cur && removedWsIds.has(cur)) return next.workspaces[0]?.id ?? null
+        return cur
+      })
+    },
+    [],
+  )
 
   useHotkeys({
     [getHotkey('closePane')]: () => { if (activePaneId) handleClosePane(activePaneId) },
@@ -1735,52 +1868,16 @@ export function AppLayout() {
       />
     </div>
   ) : activeTab && activeWorkspace && leafCount === 0 ? (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   ) : activeWorkspace && layouts.length === 0 ? (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   ) : (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-      <img src={cawSvg} alt="" className="w-[35%] h-auto max-w-[300px]" style={{ filter: logoFilter }} />
-      <div className="grid grid-cols-2 gap-x-10 gap-y-3 mt-4">
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+→" label="Switch pane" />
-          <Shortcut keys="Alt+T" label="New terminal" />
-          <Shortcut keys="Alt+W" label="Close pane" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Shortcut keys="Alt+H" label="Horizontal split" />
-          <Shortcut keys="Alt+V" label="Vertical split" />
-          <Shortcut keys="Alt+P" label="Command palette" />
-        </div>
-      </div>
+    <div className="flex-1 min-h-0">
+      <WorkspaceEmptyState />
     </div>
   )
 
@@ -1901,6 +1998,8 @@ export function AppLayout() {
             <div className={`absolute top-0 bottom-0 left-0 w-[80%] max-w-[320px] bg-background border-r border-border transition-transform duration-300 ease-out ${workspacesDrawerOpen ? 'translate-x-0 delay-150' : '-translate-x-full'}`}>
               <WorkspacePanel
                 workspaces={workspaces}
+                folders={workspaceFolders}
+                sidebarOrder={sidebarOrder}
                 activeWorkspaceId={activeWorkspaceId}
                 onSelectWorkspace={(id) => {
                   setActiveWorkspaceId(id)
@@ -1909,7 +2008,10 @@ export function AppLayout() {
                 onAddWorkspace={handleAddWorkspace}
                 onDeleteWorkspace={handleDeleteWorkspace}
                 onEditWorkspace={handleEditWorkspace}
-                onReorderWorkspaces={handleReorderWorkspaces}
+                onCreateFolder={handleCreateFolder}
+                onEditFolder={handleEditFolder}
+                onDeleteFolder={handleDeleteFolder}
+                onSidebarMutation={handleSidebarMutation}
                 collapsed={false}
                 onToggle={() => setWorkspacesDrawerOpen(false)}
                 pickerOpen={pickerOpen}
@@ -1990,7 +2092,7 @@ export function AppLayout() {
                     })}
                     {/* Add button reusing the desktop dropdown menu */}
                     <NewTabMenu
-                      onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                      onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                       enableWorktrees={activeWorkspace.enableWorktrees}
                       onToggleWorktrees={toggleWorktrees}
                       triggerClassName="h-[36px] px-2 border-r-0"
@@ -2022,7 +2124,7 @@ export function AppLayout() {
                         </span>
                       </div>
                       <NewTabMenu
-                        onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                        onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                         enableWorktrees={activeWorkspace?.enableWorktrees}
                         onToggleWorktrees={toggleWorktrees}
                         align="center"
@@ -2076,7 +2178,7 @@ export function AppLayout() {
             }}
             onOpenOverview={() => setLimitsOverviewOpen(true)}
             hideControlCenter
-            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
+            onSendText={(text) => floatingPrompt.openWithText(text)}
           />
         </div>
       ) : (
@@ -2102,12 +2204,17 @@ export function AppLayout() {
                     ResizeObserver emitted (issue #691). */}
                 <WorkspacePanel
                   workspaces={workspaces}
+                  folders={workspaceFolders}
+                  sidebarOrder={sidebarOrder}
                   activeWorkspaceId={activeWorkspaceId}
                   onSelectWorkspace={setActiveWorkspaceId}
                   onAddWorkspace={handleAddWorkspace}
                   onDeleteWorkspace={handleDeleteWorkspace}
                   onEditWorkspace={handleEditWorkspace}
-                  onReorderWorkspaces={handleReorderWorkspaces}
+                  onCreateFolder={handleCreateFolder}
+                  onEditFolder={handleEditFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                  onSidebarMutation={handleSidebarMutation}
                   collapsed={sidebarCollapsed}
                   onToggle={toggleSidebar}
                   pickerOpen={pickerOpen}
@@ -2177,7 +2284,7 @@ export function AppLayout() {
                         )}
                         <div className="flex flex-1 h-full">
                           <NewTabMenu
-                            onAdd={(cmd, agentId, label, env) => addTab(cmd, agentId, label, undefined, env)}
+                            onAdd={(cmd, agentId, label, _groupId, env, view) => addTab(cmd, agentId, label, undefined, env, view)}
                             enableWorktrees={activeWorkspace.enableWorktrees}
                             onToggleWorktrees={toggleWorktrees}
                             triggerClassName="h-[33px] px-2 border-r border-border"
@@ -2287,7 +2394,7 @@ export function AppLayout() {
             }}
             onOpenOverview={() => setLimitsOverviewOpen(true)}
             controlCenterButtonRef={controlCenterBtnRef}
-            onSendText={(text) => { if (activePaneId) sendTerminalInput(activePaneId, text) }}
+            onSendText={(text) => floatingPrompt.openWithText(text)}
           />
         </>
       )}
@@ -2431,6 +2538,27 @@ export function AppLayout() {
           )}
         </DialogContent>
       </Dialog>
+
+      <FloatingPromptBubble
+        open={floatingPrompt.open}
+        text={floatingPrompt.text}
+        mouse={floatingPrompt.mouse}
+        offset={floatingPrompt.offset}
+        pinnedPos={floatingPrompt.pinnedPos}
+        history={floatingPrompt.history}
+        canSend={canSendFloating}
+        onTextChange={floatingPrompt.setText}
+        onClose={floatingPrompt.closeBubble}
+        onSend={() => {
+          if (activePaneId && floatingPrompt.text) {
+            sendTerminalInput(activePaneId, floatingPrompt.text)
+          }
+          floatingPrompt.sendAndClose()
+        }}
+        onInsertFromHistory={floatingPrompt.insertFromHistory}
+        onClearHistory={floatingPrompt.clearHistory}
+        onPinPosition={floatingPrompt.pinPosition}
+      />
 
       <svg style={{ width: 0, height: 0, position: 'absolute' }}>
         <linearGradient id="lava-gradient" x1="0%" y1="0%" x2="100%" y2="100%">

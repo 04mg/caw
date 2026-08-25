@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { Terminal, Plus, Workflow } from 'lucide-react'
 import { agentTypes } from '@/features/agents/services/agentTypes'
+import { type LeafView } from '@/features/shared/utils/layout'
 import { getEffectiveAgentCmd, getDisabledAgents } from '@/features/prefs/stores/prefsStore'
 import {
   DropdownMenu,
@@ -12,7 +13,7 @@ import {
 import { Checkbox } from '@/components/checkbox'
 
 interface NewTabMenuProps {
-  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][]) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: LeafView) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   children?: ReactNode
@@ -31,7 +32,7 @@ export function NewTabMenu({
   className,
   triggerClassName,
   triggerTitle = 'New tab/agent',
-}: NewTabMenuProps) {
+}: NewTabMenuProps): ReactNode {
   const [availableAgents, setAvailableAgents] = useState<any[]>([])
 
   useEffect(() => {
@@ -78,7 +79,7 @@ export function NewTabMenu({
                 return (
                   <DropdownMenuItem
                     key={agentInfo.id}
-                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, agent?.env)}
+                    onClick={() => onAdd(getEffectiveAgentCmd(agentInfo.id, agentInfo.cmd), agentInfo.id, agentInfo.label, undefined, agent?.env)}
                   >
                     <IconComponent size={16} className="h-4 w-4" />
                     <span>{agentInfo.label}</span>

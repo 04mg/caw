@@ -64,6 +64,12 @@ export function LazyFileNode({
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [isMobile, setIsMobile] = useState(getIsMobile)
+  // On mobile the row is not draggable by default so a plain tap can toggle a
+  // folder. A long-press arms drag mode, letting the user drag by holding.
+  const [dragEnabled, setDragEnabled] = useState(false)
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pressPosRef = useRef<{ x: number; y: number } | null>(null)
+  const suppressClickRef = useRef(false)
 
   useEffect(() => {
     const onResize = () => setIsMobile(getIsMobile())
@@ -259,11 +265,51 @@ export function LazyFileNode({
         data-path={path}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => onHoverPath?.(path)}
-        draggable
+        onPointerDown={(e) => {
+          if (!isMobile) return
+          if (e.button !== 0 && e.pointerType !== 'touch') return
+          suppressClickRef.current = false
+          pressPosRef.current = { x: e.clientX, y: e.clientY }
+          if (pressTimerRef.current) clearTimeout(pressTimerRef.current)
+          pressTimerRef.current = setTimeout(() => {
+            pressTimerRef.current = null
+            suppressClickRef.current = true
+            setDragEnabled(true)
+          }, 450)
+        }}
+        onPointerMove={(e) => {
+          if (!pressTimerRef.current) return
+          const start = pressPosRef.current
+          if (start && (Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10)) {
+            clearTimeout(pressTimerRef.current)
+            pressTimerRef.current = null
+          }
+        }}
+        onPointerUp={() => {
+          if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current)
+            pressTimerRef.current = null
+          }
+        }}
+        onPointerLeave={() => {
+          if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current)
+            pressTimerRef.current = null
+          }
+        }}
+        onPointerCancel={() => {
+          if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current)
+            pressTimerRef.current = null
+          }
+        }}
+        onDragEnd={() => setDragEnabled(false)}
+        draggable={!isMobile || dragEnabled}
         onDragStart={(e) => {
+          if (isMobile && !dragEnabled) return
           e.stopPropagation()
-          const inSelection = selectedPaths?.some((p) => normalizePath(p) === normalizePath(path))
-          const dragPaths = inSelection ? selectedPaths! : [path]
+          const dataSelection = selectedPaths?.some((p) => normalizePath(p) === normalizePath(path))
+          const dragPaths = dataSelection ? selectedPaths! : [path]
           e.dataTransfer.setData('application/x-caw-paths', dragPaths.join('\n'))
           e.dataTransfer.setData('application/x-caw-path', path)
           e.dataTransfer.effectAllowed = 'move'
@@ -274,6 +320,12 @@ export function LazyFileNode({
       >
         <button
           onClick={(e) => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false
+              e.stopPropagation()
+              e.preventDefault()
+              return
+            }
             onSelectClick?.(path, e)
             if (e.ctrlKey || e.metaKey || e.shiftKey) return
             if (isDir) {

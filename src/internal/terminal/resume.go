@@ -64,8 +64,19 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		// copilot --allow-all-tools --allow-all-paths -> add --continue
 		return appendNonFlag(cmd, "--continue")
 	case "agy":
-		// Antigravity: --continue is the documented short alias for continuing
-		// the most recent conversation.
+		// Antigravity: --conversation <id> reattaches to an exact conversation;
+		// --continue resumes the most recent one.
+		if externalID != "" {
+			for i, a := range cmd {
+				if a == "--conversation" {
+					if i+1 < len(cmd) {
+						return cmd
+					}
+					return append(cmd, externalID)
+				}
+			}
+			return append(cmd, "--conversation", externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "pi":
 		// pi --continue / -c continues the previous session.

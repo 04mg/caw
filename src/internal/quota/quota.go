@@ -47,8 +47,13 @@ type QuotaProvider interface {
 	GetQuotas(config map[string]string) (*QuotaResponse, error)
 }
 
+type LoginImporter interface {
+	ImportLogin() (map[string]string, error)
+}
+
 var registry = make(map[string]QuotaProvider)
 
 func RegisterProvider(name string, provider QuotaProvider) {
 	registry[name] = provider
 }
+

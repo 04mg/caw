@@ -9,7 +9,7 @@ interface DraggableTabBarProps {
   onSwitch: (index: number) => void
   onClose: (index: number) => void
   onReorder: (from: number, to: number) => void
-  onAdd: (cmd?: string[], agentId?: string, label?: string, env?: [string, string][]) => void
+  onAdd: (cmd?: string[], agentId?: string, label?: string, groupId?: string, env?: [string, string][], view?: import('@/features/shared/utils/layout').LeafView) => void
   enableWorktrees?: boolean
   onToggleWorktrees?: () => void
   onDragStart?: (tabId: string) => void

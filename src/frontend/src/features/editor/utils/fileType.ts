@@ -1,13 +1,15 @@
-export type FileCategory = 'text' | 'image' | 'binary-likely'
+export type FileCategory = 'text' | 'image' | 'pdf' | 'binary-likely'
 
 const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'tiff',
 ])
 
+const PDF_EXTENSIONS = new Set(['pdf'])
+
 const KNOWN_BINARY_EXTENSIONS = new Set([
   'exe', 'dll', 'so', 'dylib', 'bin', 'o', 'a', 'lib',
   'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar',
-  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
   'mp3', 'mp4', 'wav', 'ogg', 'flac', 'mkv', 'avi', 'mov',
   'wasm', 'pyc', 'class',
 ])
@@ -15,6 +17,7 @@ const KNOWN_BINARY_EXTENSIONS = new Set([
 export function getFileCategory(path: string): FileCategory {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   if (IMAGE_EXTENSIONS.has(ext)) return 'image'
+  if (PDF_EXTENSIONS.has(ext)) return 'pdf'
   if (KNOWN_BINARY_EXTENSIONS.has(ext)) return 'binary-likely'
   return 'text'
 }

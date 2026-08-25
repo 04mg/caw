@@ -6,6 +6,7 @@ import { getFileCategory, isBinaryContent } from '../utils/fileType'
 import { BinaryFileView } from './BinaryFileView'
 import { ImagePreviewView } from './ImagePreviewView'
 import { MarkdownPreviewView } from './MarkdownPreviewView'
+import { PDFPreviewView } from './PDFPreviewView'
 import { subscribeToFileTree, type FileTreeEvent } from '@/features/explorer/services/fileTreeWs'
 import { pathsEqual } from '@/features/shared/utils/path'
 import { isFileDirty, markFileDirty, clearFileDirty } from '../services/editorDirtyStore'
@@ -408,6 +409,10 @@ export function EditorPanel({ filePath, isDiff, cwd, onSaveSuccess, gitStatuses,
 
   if (!isDiff && filePath && fileCategory === 'image') {
     return <ImagePreviewView filePath={filePath} cwd={cwd} />
+  }
+
+  if (!isDiff && filePath && fileCategory === 'pdf') {
+    return <PDFPreviewView filePath={filePath} cwd={cwd} />
   }
 
   if (!isDiff && filePath && !forceOpenBinary && (fileCategory === 'binary-likely' || isBinaryRuntime)) {

@@ -69,13 +69,15 @@ func New() *Server {
 	// layout without an explicit kill (e.g. the multi-client
 	// releaseTerminal path).
 	state.OnLayoutSaved = func(as state.AppState) {
-		terminal.ReconcileOrphans(as.CollectLeafIDs())
+		known := as.CollectLeafIDs()
+		terminal.ReconcileOrphans(known)
 	}
 	return s
 }
 
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
+	mux := http.NewServeMux()
 	git.RegisterWithService(api, s.gitSvc)
 	quota.Register(api, s.store)
 	push.Register(api, s.store)
@@ -88,7 +90,6 @@ func (s *Server) Handler() http.Handler {
 	workspace.Register(api)
 	version.Register(api)
 
-	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", api))
 
 	mux.HandleFunc("GET /ws", s.mux.HandleMuxWS)

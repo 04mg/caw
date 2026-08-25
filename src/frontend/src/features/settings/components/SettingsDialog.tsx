@@ -5,9 +5,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/checkbox'
 
 import { Palette, Bot, Terminal, Check, ChartSpline, ArrowLeft, LogIn, ExternalLink, Loader2, Folder, Settings as SettingsIcon, X, Bell, Mic, Download, HardDrive, Globe, Trash2, Minus, Plus, RefreshCw, Keyboard, PawPrint, ImagePlus } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
+import { ClaudeIcon } from '@/features/agents/components/ClaudeIcon'
+import { CodexIcon } from '@/features/agents/components/CodexIcon'
+import { GithubCopilotIcon } from '@/features/agents/components/GithubCopilotIcon'
+import { AntigravityIcon } from '@/features/agents/components/AntigravityIcon'
+import { OpenCodeIcon } from '@/features/agents/components/OpenCodeIcon'
+import { OllamaIcon } from '@/features/agents/components/OllamaIcon'
+import { OpenRouterIcon } from '@/features/agents/components/OpenRouterIcon'
 import { agentTypes } from '@/features/agents/services/agentTypes'
 import { getAgentCmdOverrides, getCustomization, setCustomization, setAgentCmdOverride, setDefaultNewAgent as setPrefDefaultNewAgent, setDisabledAgents as setPrefDisabledAgents, setDisabledProviders as setPrefDisabledProviders, setDefaultShell as setPrefDefaultShell, setParkedTerminals as setPrefParkedTerminals, loadPrefs, getHotkey, setHotkey as setPrefHotkey, resetHotkey as resetPrefHotkey, resetAllHotkeys as resetAllPrefHotkeys, DEFAULT_HOTKEYS, HOTKEY_LABELS, DEFAULT_PARKED_TERMINALS } from '@/features/prefs/stores/prefsStore'
 import { applyCustomization, bundledTheme, normalizeCustomization, type CustomizationState } from '@/features/customization/theme'
@@ -123,6 +129,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const [copilotDeviceError, setCopilotDeviceError] = useState('')
   const [selectedLimitProvider, setSelectedLimitProvider] = useState<QuotaProviderId>('claude')
   const [limitStep, setLimitStep] = useState<1 | 2>(1)
+  const [importingProvider, setImportingProvider] = useState<string | null>(null)
+  const [importError, setImportError] = useState('')
   const [agentStep, setAgentStep] = useState<1 | 2>(1)
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
   const [agentCmdDraft, setAgentCmdDraft] = useState<string>('')
@@ -233,6 +241,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   }, [persistQuotaSettings, quotaSettingsMode])
 
   const selectLimitAccount = useCallback((providerId: QuotaProviderId, accountId: string) => {
+    setImportError('')
     const provider = quotaProviders[providerId] || createEmptyQuotaProvider()
     updateQuotaProvider(providerId, (current) => ({
       ...current,
@@ -248,6 +257,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   }, [updateQuotaProvider])
 
   const addLimitAccount = useCallback((providerId: QuotaProviderId) => {
+    setImportError('')
     updateQuotaProvider(providerId, (current) => {
       const account = createQuotaAccount(providerId, current.accounts)
       return {
@@ -259,6 +269,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   }, [updateQuotaProvider])
 
   const deleteLimitAccount = useCallback((providerId: QuotaProviderId) => {
+    setImportError('')
     updateQuotaProvider(providerId, (current) => {
       if (current.accounts.length <= 1) return current
       const accounts = current.accounts.filter((account) => account.id !== current.defaultAccountId)
@@ -323,10 +334,36 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     }
   }, [])
 
+  const handleImportLogin = useCallback(async (providerId: QuotaProviderId, accountId?: string) => {
+    setImportingProvider(providerId)
+    setImportError('')
+    try {
+      const res = await fetch(`/api/quotas/${encodeURIComponent(providerId)}/import-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: accountId || 'default' }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error?.message || json?.error || `Failed to import login (${res.status})`)
+      }
+      await loadQuotaSettings()
+      await loadQuotas()
+      setSaveStatus('success')
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+    } catch (e: any) {
+      setImportError(e?.message || 'Failed to import login')
+    } finally {
+      setImportingProvider(null)
+    }
+  }, [loadQuotaSettings, loadQuotas])
+
   // Reset limitStep when activeSection changes or dialog closes
   useEffect(() => {
     setLimitStep(1)
     setAgentStep(1)
+    setImportError('')
   }, [activeSection, open])
 
   // Track viewport for responsive layout
@@ -699,9 +736,10 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     saveTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
   }
 
-  // PetsSettingsPanel reports its own save outcomes through this callback so
-  // all settings sections share the same floating save toast.
-  const handlePetsSaveStatus = (status: 'idle' | 'success' | 'error') => {
+  // Panels that save through their own stores (pets, desktop) report their
+  // save outcomes through this callback so all settings sections share the
+  // same floating save toast.
+  const handlePanelSaveStatus = (status: 'idle' | 'success' | 'error') => {
     setSaveStatus(status)
     if (status !== 'idle') {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -1278,7 +1316,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             </div>
           )}
 
-          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePetsSaveStatus} />}
+          {activeSection === 'pets' && <PetsSettingsPanel onSaveStatusChange={handlePanelSaveStatus} />}
 
           {activeSection === 'voice' && (
             <div className="flex flex-col gap-4">
@@ -1589,16 +1627,16 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
               <div className="grid grid-cols-1 gap-2.5 mt-2 pb-4">
                 {[
-                  { id: 'claude', label: 'Claude', icon: Claude.Color, show: claudeInstalled },
-                  { id: 'codex', label: 'Codex', icon: Codex.Color, show: codexInstalled },
-                  { id: 'copilot', label: 'GitHub Copilot', icon: GithubCopilot, show: true },
-                  { id: 'antigravity', label: 'Antigravity', icon: Antigravity.Color, show: agyInstalled },
-                  { id: 'opencode', label: 'OpenCode Go', icon: OpenCode, show: true },
-                  { id: 'ollama', label: 'Ollama', icon: Ollama, show: true },
-                  { id: 'openrouter', label: 'OpenRouter', icon: OpenRouter, show: true },
+                  { id: 'claude', label: 'Claude', icon: ClaudeIcon, show: claudeInstalled },
+                  { id: 'codex', label: 'Codex', icon: CodexIcon, show: codexInstalled },
+                  { id: 'copilot', label: 'GitHub Copilot', icon: GithubCopilotIcon, show: true },
+                  { id: 'antigravity', label: 'Antigravity', icon: AntigravityIcon, show: agyInstalled },
+                  { id: 'opencode', label: 'OpenCode Go', icon: OpenCodeIcon, show: true },
+                  { id: 'ollama', label: 'Ollama', icon: OllamaIcon, show: true },
+                  { id: 'openrouter', label: 'OpenRouter', icon: OpenRouterIcon, show: true },
                   { id: 'commandcode', label: 'Command Code', icon: CommandCodeIcon, show: true },
                   { id: 'zed', label: 'Zed', icon: ZedIcon, show: true },
-                ].filter(p => p.show && !disabledProviders.includes(p.id)).map((prov) => {
+                ].filter(p => p.show).map((prov) => {
                   const Icon = prov.icon
                   return (
                     <SettingsItem
@@ -1734,42 +1772,94 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
               <div className="flex flex-col gap-3 pb-4">
                 {selectedLimitProvider === 'claude' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Claude Authentication</label>
+                        {selectedLimitConfig.importedAt ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            <Check className="h-3 w-3" />
+                            Imported
+                          </span>
+                        ) : selectedLimitAccount.id === 'default' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
+                            Live CLI Session
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-medium bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                            Not Imported
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Usage limits are auto-resolved from <code>~/.claude/.credentials.json</code>. Optionally provide an OAuth access token override.
+                        Log in to Claude in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
-                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
-                      <input
-                        type="password"
-                        value={selectedLimitConfig.accessToken || ''}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          updateLimitConfigValue('claude', 'accessToken', val)
-                        }}
-                        placeholder="Enter Claude OAuth access token..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                      />
+
+                      {importError && selectedLimitProvider === 'claude' && (
+                        <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                          {importError}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleImportLogin('claude', selectedLimitAccount.id)}
+                        disabled={importingProvider === 'claude'}
+                        className="flex items-center justify-center gap-2 w-full mt-1 px-3 py-2 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+                      >
+                        {importingProvider === 'claude' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                        {selectedLimitConfig.importedAt ? 'Re-import Current Login' : 'Import Current Login'}
+                      </button>
                     </div>
                   </div>
                 )}
 
                 {selectedLimitProvider === 'codex' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Codex Authentication</label>
+                        {selectedLimitConfig.importedAt ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            <Check className="h-3 w-3" />
+                            Imported
+                          </span>
+                        ) : selectedLimitAccount.id === 'default' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
+                            Live CLI Session
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-medium bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                            Not Imported
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Usage limits are auto-resolved from <code>~/.codex/auth.json</code>. Optionally provide an OAuth access token override.
+                        Log in to Codex in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
-                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">OAuth Access Token (Optional)</label>
-                      <input
-                        type="password"
-                        value={selectedLimitConfig.accessToken || ''}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          updateLimitConfigValue('codex', 'accessToken', val)
-                        }}
-                        placeholder="Enter Codex OAuth access token..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                      />
+
+                      {importError && selectedLimitProvider === 'codex' && (
+                        <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                          {importError}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleImportLogin('codex', selectedLimitAccount.id)}
+                        disabled={importingProvider === 'codex'}
+                        className="flex items-center justify-center gap-2 w-full mt-1 px-3 py-2 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+                      >
+                        {importingProvider === 'codex' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                        {selectedLimitConfig.importedAt ? 'Re-import Current Login' : 'Import Current Login'}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1881,21 +1971,47 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
                 {selectedLimitProvider === 'antigravity' && (
                   <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-secondary/10 shrink-0">
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Antigravity Authentication</label>
+                        {selectedLimitConfig.importedAt ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            <Check className="h-3 w-3" />
+                            Imported
+                          </span>
+                        ) : selectedLimitAccount.id === 'default' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded-full border border-border">
+                            Live CLI Session
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-medium bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                            Not Imported
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-muted-foreground leading-normal">
-                        Usage limits are automatically resolved from your local <code>agy</code> CLI process. Optionally configure a Google OAuth Refresh Token as a manual fallback.
+                        Log in to Antigravity in your terminal, then click <strong>Import Current Login</strong> to snapshot credentials for this account.
                       </p>
-                      <label className="text-[10px] font-semibold text-muted-foreground mt-1.5 uppercase tracking-wider">Refresh Token / Access Token (Optional)</label>
-                      <input
-                        type="password"
-                        value={selectedLimitConfig.apiKey || ''}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          updateLimitConfigValue('antigravity', 'apiKey', val)
-                        }}
-                        placeholder="Enter Antigravity refresh token or access token..."
-                        className="w-full px-3 py-2 rounded-lg border border-input bg-background text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary focus:ring-1 focus:ring-ring transition-all"
-                      />
+
+                      {importError && selectedLimitProvider === 'antigravity' && (
+                        <div className="px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-xs text-red-400">
+                          {importError}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleImportLogin('antigravity', selectedLimitAccount.id)}
+                        disabled={importingProvider === 'antigravity'}
+                        className="flex items-center justify-center gap-2 w-full mt-1 px-3 py-2 rounded-lg border border-border bg-background text-xs font-medium text-foreground hover:bg-accent/30 disabled:opacity-50 transition-all cursor-pointer"
+                      >
+                        {importingProvider === 'antigravity' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                        {selectedLimitConfig.importedAt ? 'Re-import Current Login' : 'Import Current Login'}
+                      </button>
                     </div>
                   </div>
                 )}

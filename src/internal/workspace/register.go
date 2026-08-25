@@ -101,6 +101,9 @@ func (h *Handler) SearchDirs(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Files(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	path := r.URL.Query().Get("path")
+	// Files can change at any time; never let intermediaries (e.g. Cloudflare)
+	// cache responses so clients always see the latest content.
+	w.Header().Set("Cache-Control", "no-store")
 	if q != "" {
 		results, err := h.svc.SearchAll(q, r.URL.Query().Get("root"))
 		if err != nil {

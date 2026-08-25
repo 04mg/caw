@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/04mg/caw/internal/agent"
+	_ "modernc.org/sqlite"
 )
 
 type AntigravityWatcher struct{}
@@ -85,16 +87,20 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	defer ticker.Stop()
 
 	// Antigravity stores transcripts under ~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl
+	// and per-conversation database files under ~/.gemini/antigravity-cli/conversations/<conversationId>.db.
+	// Because storage is located in the central ~/.gemini/antigravity-cli tree without per-cwd subdirectories,
+	// claims are keyed globally (claimCwd = "") so that two Antigravity instances across any workspace in Caw
+	// never bind or track the same conversation transcript.
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
 	const agentID = "agy"
-	// On resume (--continue), the agent reattaches to a pre-existing
-	// conversation whose transcript may predate this watcher. Widen the
-	// search window to 1 hour so the resumed session is found. For a fresh
-	// start, only look for files modified after the watcher started (no
-	// negative offset).
-	lookback := 0 * time.Second
+	const claimCwd = ""
+	// On resume (--continue / --conversation), the agent reattaches to a pre-existing
+	// conversation whose transcript may predate this watcher. Widen the search window
+	// to 1 hour so the resumed session is found. For a fresh start, look back 10s to
+	// avoid missing a transcript created slightly before the watcher started.
+	lookback := 10 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
@@ -115,7 +121,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 
 	defer func() {
 		if watchedFilePath != "" {
-			UnclaimSession(agentID, cwd, watchedFilePath)
+			UnclaimSession(agentID, claimCwd, watchedFilePath)
 		}
 	}()
 
@@ -125,7 +131,7 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		}
 		info, err := os.Stat(watchedFilePath)
 		if err != nil {
-			UnclaimSession(agentID, cwd, watchedFilePath)
+			UnclaimSession(agentID, claimCwd, watchedFilePath)
 			watchedFilePath = ""
 			if notifyCh != nil {
 				notifier.Watch("")
@@ -160,8 +166,8 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				// Prefer the exact conversation id persisted for this leaf by
 				// a previous Caw process so a reopened pane follows its own
 				// conversation when several panes share a cwd.
-				if exact := agent.PersistedExternalSession(sessionID); exact != "" {
-					if exactPath := antigravityTranscriptForConversation(dir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, cwd, exactPath, sessionID) {
+				if exact := agent.PersistedExternalSession(sessionID); exact != "" && antigravityConversationMatchesWorkspace(exact, cwd) {
+					if exactPath := antigravityTranscriptForConversation(dir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, claimCwd, exactPath, sessionID) {
 						watchedFilePath = exactPath
 						lastFileSize = 0
 						lastCheck = time.Now()
@@ -176,28 +182,28 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 					}
 				}
 				if watchedFilePath == "" {
-				// Search for the most recently modified unclaimed transcript.jsonl.
-				candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-				if err == nil && len(candidates) > 0 {
-					for _, c := range candidates {
-						if ClaimSessionForLeaf(agentID, cwd, c, sessionID) {
-							watchedFilePath = c
-							lastFileSize = 0
-							lastCheck = time.Now()
-							if info, err := os.Stat(watchedFilePath); err == nil {
-								lastActivity = info.ModTime()
+					// Search for the earliest unclaimed transcript.jsonl matching this workspace.
+					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
+					if err == nil && len(candidates) > 0 {
+						for _, c := range candidates {
+							if ClaimSessionForLeaf(agentID, claimCwd, c, sessionID) {
+								watchedFilePath = c
+								lastFileSize = 0
+								lastCheck = time.Now()
+								if info, err := os.Stat(watchedFilePath); err == nil {
+									lastActivity = info.ModTime()
+								}
+								silentTicks = 0
+								if notifyCh != nil {
+									notifier.Watch(watchedFilePath)
+								}
+								if conv := antigravityConversationIDForTranscript(dir, c); conv != "" {
+									agent.RecordExternalSession(sessionID, conv)
+								}
+								break
 							}
-							silentTicks = 0
-							if notifyCh != nil {
-								notifier.Watch(watchedFilePath)
-							}
-							if conv := antigravityConversationIDForTranscript(dir, c); conv != "" {
-								agent.RecordExternalSession(sessionID, conv)
-							}
-							break
 						}
 					}
-				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -205,26 +211,29 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 					silentTicks++
 				}
 
-			// Mid-session re bind for /new and /resume. Gated on PTY
-			// activity OR user focus: only the watcher whose PTY is producing
-			// output (or whose pane the user is currently driving) switches,
-			// so a sibling Antigravity in the same cwd writing to its own
-			// transcript can't make this idle, unfocused watcher steal its
-			// session. The focus exemption covers a /new or /resume issued
-			// in the focused pane before the agent emits any PTY output.
-			if silentTicks >= rebindSilenceTicks {
-				focused := agent.IsPtyFocused(sessionID)
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				if time.Since(lastPtyOut) < 3*time.Second || focused {
+				// Mid-session re-bind for /new and /resume. Gated on PTY
+				// activity OR user focus: only the watcher whose PTY is producing
+				// output (or whose pane the user is currently driving) switches,
+				// so a sibling Antigravity writing to its own transcript can't
+				// make this idle, unfocused watcher steal its session. The focus
+				// exemption covers a /new or /resume issued in the focused pane
+				// before the agent emits any PTY output.
+				if silentTicks >= rebindSilenceTicks {
+					focused := agent.IsPtyFocused(sessionID)
+					lastPtyOut := agent.LastPtyActivity(sessionID)
+					if time.Since(lastPtyOut) < 3*time.Second || focused {
 						cands, _ := listAntigravityCandidates(dir, cwd, lastActivity)
 						var others []RebindCandidate
 						for _, c := range cands {
+							if cwd != "" && !c.workspaceOK {
+								continue
+							}
 							others = append(others, RebindCandidate{Key: c.path, ModTime: c.modTime})
 						}
 						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
 						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
-								UnclaimSession(agentID, cwd, watchedFilePath)
+							if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
+								UnclaimSession(agentID, claimCwd, watchedFilePath)
 								watchedFilePath = newKey
 								lastFileSize = 0
 								lastCheck = time.Now()
@@ -275,15 +284,147 @@ func antigravityTranscriptForConversation(brainDir, convID string) string {
 	return ""
 }
 
+// extractWorkspaceURIsFromBlob scans a binary blob (such as trajectory_metadata_blob
+// in an Antigravity conversation database) for file:// URIs encoded as protobuf strings.
+func extractWorkspaceURIsFromBlob(data []byte) []string {
+	var uris []string
+	prefix := []byte("file://")
+	idx := 0
+	for {
+		pos := bytes.Index(data[idx:], prefix)
+		if pos == -1 {
+			break
+		}
+		actualPos := idx + pos
+		if actualPos > 0 {
+			var length int
+			var shift uint
+			varintStart := actualPos - 1
+			if data[varintStart] < 0x80 {
+				length = int(data[varintStart])
+			} else {
+				start := varintStart
+				for start > 0 && data[start-1]&0x80 != 0 {
+					start--
+				}
+				for i := start; i <= varintStart; i++ {
+					b := data[i]
+					length |= int(b&0x7f) << shift
+					shift += 7
+				}
+			}
+			if length > 0 && actualPos+length <= len(data) {
+				uri := string(data[actualPos : actualPos+length])
+				if strings.HasPrefix(uri, "file://") {
+					uris = append(uris, uri)
+				}
+			}
+		}
+		idx = actualPos + len(prefix)
+	}
+	return uris
+}
+
+// antigravityConversationWorkspace finds all workspace filesystem paths associated
+// with a given conversation ID. It inspects:
+// 1. ~/.gemini/antigravity-cli/conversations/<convID>.db (trajectory_metadata_blob) - real-time
+// 2. ~/.gemini/antigravity-cli/conversation_summaries.db (workspace_uris) - fallback
+func antigravityConversationWorkspace(convID string) []string {
+	if convID == "" {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return nil
+	}
+
+	var foundPaths []string
+	seen := make(map[string]bool)
+	addPath := func(p string) {
+		if p == "" {
+			return
+		}
+		clean := filepath.Clean(p)
+		if !seen[clean] {
+			seen[clean] = true
+			foundPaths = append(foundPaths, clean)
+		}
+	}
+
+	// 1. Check real-time per-conversation database.
+	dbPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversations", convID+".db")
+	if info, err := os.Stat(dbPath); err == nil && !info.IsDir() {
+		db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
+		if err == nil {
+			var blob []byte
+			_ = db.QueryRow(`SELECT data FROM trajectory_metadata_blob WHERE id = 'main'`).Scan(&blob)
+			if len(blob) > 0 {
+				uris := extractWorkspaceURIsFromBlob(blob)
+				for _, u := range uris {
+					addPath(uriToPath(u))
+				}
+			}
+			db.Close()
+		}
+	}
+
+	if len(foundPaths) > 0 {
+		return foundPaths
+	}
+
+	// 2. Fallback to conversation_summaries.db (written on session finish/summary).
+	summariesPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db")
+	if info, err := os.Stat(summariesPath); err == nil && !info.IsDir() {
+		db, err := sql.Open("sqlite", "file:"+summariesPath+"?mode=ro&_journal_mode=WAL")
+		if err == nil {
+			var urisJSON string
+			_ = db.QueryRow(`SELECT workspace_uris FROM conversation_summaries WHERE conversation_id = ?`, convID).Scan(&urisJSON)
+			if urisJSON != "" {
+				var uriList []string
+				if json.Unmarshal([]byte(urisJSON), &uriList) == nil {
+					for _, u := range uriList {
+						addPath(uriToPath(u))
+					}
+				}
+			}
+			db.Close()
+		}
+	}
+
+	return foundPaths
+}
+
+// antigravityConversationMatchesWorkspace reports whether the given conversation ID
+// belongs to the specified workspace directory (cwd). If cwd is empty, returns true.
+// If the conversation's workspace is unknown, returns true.
+func antigravityConversationMatchesWorkspace(convID, cwd string) bool {
+	if convID == "" {
+		return false
+	}
+	if cwd == "" {
+		return true
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err == nil {
+		absCwd = filepath.Clean(absCwd)
+	} else {
+		absCwd = filepath.Clean(cwd)
+	}
+	wsPaths := antigravityConversationWorkspace(convID)
+	if len(wsPaths) == 0 {
+		return true
+	}
+	for _, p := range wsPaths {
+		if p == absCwd {
+			return true
+		}
+	}
+	return false
+}
+
 // findAntigravityTranscripts walks the brain directory looking for the most
 // recently modified transcript.jsonl files whose modification time is after
-// the given threshold, optionally filtered by cwd via conversation_summaries.db,
-// and skips any transcript already claimed by another watcher of the same
-// agent type+cwd. Returns candidates sorted oldest-first (workspace-matched
-// still first within that ordering) so the earliest-started watcher claims
-// the earliest qualifying session. The caller claims the first one via
-// ClaimSession — but note this helper claims *all* returned candidates, so
-// it must only be used for the initial-bind path.
+// the given threshold, filtered by cwd, and returns candidates sorted oldest-first.
 func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, agentID string) ([]string, error) {
 	cands, err := listAntigravityCandidates(brainDir, cwd, after)
 	if err != nil {
@@ -291,6 +432,9 @@ func findAntigravityTranscripts(brainDir string, cwd string, after time.Time, ag
 	}
 	var result []string
 	for _, c := range cands {
+		if cwd != "" && !c.workspaceOK {
+			continue
+		}
 		result = append(result, c.path)
 	}
 	return result, nil
@@ -307,51 +451,17 @@ type antigravityCandidate struct {
 }
 
 // listAntigravityCandidates enumerates transcript.jsonl files under brainDir
-// modified after `after`, optionally filtered by cwd, sorted oldest-first
+// modified after `after`, filtered by cwd, sorted oldest-first
 // (workspace-matched entries first within that ordering). It does NOT claim
-// any candidate; callers are responsible for calling ClaimSession.
+// any candidate; callers are responsible for calling ClaimSessionForLeaf.
 func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]antigravityCandidate, error) {
-	workspaceMatch := map[string]bool{}
-	workspaceQueried := false
+	var absCwd string
 	if cwd != "" {
-		home, _ := os.UserHomeDir()
-		dbPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db")
-		if _, err := os.Stat(dbPath); err == nil {
-			db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
-			if err == nil {
-				workspaceQueried = true
-				rows, qerr := db.Query(
-					`SELECT conversation_id, workspace_uris FROM conversation_summaries ORDER BY last_modified_time DESC`,
-				)
-				if qerr == nil {
-					absCwd, _ := filepath.Abs(cwd)
-					absCwd = filepath.Clean(absCwd)
-					for rows.Next() {
-						var convID, uris string
-						if rows.Scan(&convID, &uris) != nil {
-							continue
-						}
-						var uriList []string
-						if json.Unmarshal([]byte(uris), &uriList) != nil {
-							continue
-						}
-						matched := false
-						for _, u := range uriList {
-							p := uriToPath(u)
-							if p == "" {
-								continue
-							}
-							if filepath.Clean(p) == absCwd {
-								matched = true
-								break
-							}
-						}
-						workspaceMatch[convID] = matched
-					}
-					rows.Close()
-				}
-				db.Close()
-			}
+		abs, err := filepath.Abs(cwd)
+		if err == nil {
+			absCwd = filepath.Clean(abs)
+		} else {
+			absCwd = filepath.Clean(cwd)
 		}
 	}
 
@@ -376,16 +486,32 @@ func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]
 				convID = parts[0]
 			}
 		}
-		if cwd != "" && workspaceQueried && convID != "" {
-			if known, ok := workspaceMatch[convID]; ok && !known {
-				return nil
+		if convID == "" {
+			return nil
+		}
+
+		workspaceOK := false
+		if absCwd != "" {
+			wsPaths := antigravityConversationWorkspace(convID)
+			if len(wsPaths) > 0 {
+				for _, p := range wsPaths {
+					if p == absCwd {
+						workspaceOK = true
+						break
+					}
+				}
+				// If the workspace is known for this conversation and does not match absCwd, skip it!
+				if !workspaceOK {
+					return nil
+				}
 			}
 		}
+
 		cands = append(cands, antigravityCandidate{
 			path:        path,
 			convID:      convID,
 			modTime:     info.ModTime(),
-			workspaceOK: workspaceMatch[convID],
+			workspaceOK: workspaceOK,
 		})
 		return nil
 	})
@@ -417,6 +543,12 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 	var lastToolNames []string
 
 	runningTasks := make(map[string]bool)
+	// pendingArtifactApproval is set when a PLANNER_RESPONSE issues a
+	// write_to_file whose ArtifactMetadata carries RequestFeedback=true. This
+	// is Antigravity's plan/artifact-approval flow: the agent ends its turn
+	// and waits for the user to approve or reject the artifact. It is cleared
+	// once a new USER_INPUT starts a fresh turn.
+	pendingArtifactApproval := false
 
 	for _, line := range lines {
 		var step antigravityStep
@@ -429,7 +561,7 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			sub := step.Content[idx+len("USER Objective:"):]
 			parts := strings.Split(strings.TrimSpace(sub), "\n")
 			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				sessionTitle = strings.TrimSpace(parts[0])
+				sessionTitle = CleanPrompt(parts[0])
 			}
 		}
 
@@ -441,12 +573,18 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			if p != "" && sessionTitle == "" {
 				sessionTitle = p
 			}
+			// A new user turn starts after an artifact-approval request; the
+			// user has responded, so the pending approval is resolved.
+			pendingArtifactApproval = false
 		case "PLANNER_RESPONSE":
 			lastType = step.Type
 			lastToolNames = nil
 			for _, tc := range step.ToolCalls {
 				if tc.Name != "" {
 					lastToolNames = append(lastToolNames, tc.Name)
+				}
+				if tc.Name == "write_to_file" && antigravityArtifactRequestsFeedback(tc.Args) {
+					pendingArtifactApproval = true
 				}
 			}
 		default:
@@ -554,16 +692,17 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 
 	case "PLANNER_RESPONSE":
 		if len(lastToolNames) == 0 {
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
+			// A PLANNER_RESPONSE with no tool calls is a final answer: the
+			// planner's turn is over. When that answer accompanies a pending
+			// artifact-approval request (write_to_file with RequestFeedback),
+			// the agent is blocked waiting for the user to approve the plan →
+			// waiting_input. Otherwise it is idle. A still-running background
+			// task does NOT make this "executing": the agent has finished
+			// speaking and will be re-prompted when the task completes.
+			if pendingArtifactApproval {
+				callback("waiting_input", "write_to_file", "", sessionTitle)
 				return
 			}
-			// PLANNER_RESPONSE with no tool calls is a final answer → idle.
 			callback("idle", "", "", sessionTitle)
 			return
 		}
@@ -574,6 +713,13 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 				callback("waiting_input", name, "", sessionTitle)
 				return
 			}
+		}
+		// A PLANNER_RESPONSE that requests artifact feedback (write_to_file
+		// with RequestFeedback) ends the turn and waits for the user, even
+		// though it carries a tool call.
+		if pendingArtifactApproval {
+			callback("waiting_input", "write_to_file", "", sessionTitle)
+			return
 		}
 		// Planner issued tool calls; tool results not yet written → executing.
 		callback("executing", lastToolNames[0], "", sessionTitle)
@@ -601,13 +747,8 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		}
 
 		if seenFinalAnswer {
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
+			if pendingArtifactApproval {
+				callback("waiting_input", "write_to_file", "", sessionTitle)
 				return
 			}
 			callback("idle", "", "", sessionTitle)
@@ -637,6 +778,39 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		// Unknown step type — stay thinking.
 		callback("thinking", "", "", sessionTitle)
 	}
+}
+
+// antigravityArtifactRequestsFeedback reports whether a write_to_file tool
+// call's args request user feedback on the artifact it creates. Antigravity's
+// plan-approval flow sets ArtifactMetadata to a JSON object with a truthy
+// RequestFeedback field; when present, the agent ends its turn and waits for
+// the user to approve or reject the artifact.
+func antigravityArtifactRequestsFeedback(args map[string]any) bool {
+	if args == nil {
+		return false
+	}
+	raw, ok := args["ArtifactMetadata"]
+	if !ok || raw == nil {
+		return false
+	}
+	var metadata string
+	switch v := raw.(type) {
+	case string:
+		metadata = v
+	case map[string]any:
+		if b, ok := v["RequestFeedback"].(bool); ok {
+			return b
+		}
+		return false
+	default:
+		return false
+	}
+	var parsed map[string]any
+	if json.Unmarshal([]byte(metadata), &parsed) != nil {
+		return false
+	}
+	b, _ := parsed["RequestFeedback"].(bool)
+	return b
 }
 
 // uriToPath converts a file:// URI as stored in the Antigravity

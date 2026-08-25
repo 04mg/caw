@@ -39,6 +39,23 @@ func StripMarkdown(s string) string {
 	return strings.TrimSpace(out)
 }
 
+// CleanTitle ensures a session/card title is a single clean line of plain text
+// with no newlines, escaped newlines, or redundant whitespace.
+func CleanTitle(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.ReplaceAll(s, `\r\n`, " ")
+	s = strings.ReplaceAll(s, `\n`, " ")
+	s = strings.ReplaceAll(s, `\r`, " ")
+	s = strings.ReplaceAll(s, `\t`, " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return strings.TrimSpace(s)
+}
+
 func walkText(n ast.Node, src []byte, b *strings.Builder) {
 	_ = ast.Walk(n, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {

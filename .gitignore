@@ -36,9 +36,9 @@ Thumbs.db
 *.db-shm
 
 # Tools
+.agents/
 .commandcode/
 graphify-out/
-.agents/
 .opencode/
 .caw/
 .serena/

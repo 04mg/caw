@@ -1,9 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, type ElementType } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/dialog'
 import { ChevronDown, Layers, X } from 'lucide-react'
-import { Antigravity, OpenCode, Ollama, Claude, Codex, GithubCopilot, OpenRouter } from '@lobehub/icons'
 import { CommandCodeIcon } from '@/features/agents/components/CommandCodeIcon'
 import { ZedIcon } from '@/features/agents/components/ZedIcon'
+import { ClaudeIcon } from '@/features/agents/components/ClaudeIcon'
+import { CodexIcon } from '@/features/agents/components/CodexIcon'
+import { GithubCopilotIcon } from '@/features/agents/components/GithubCopilotIcon'
+import { AntigravityIcon } from '@/features/agents/components/AntigravityIcon'
+import { OpenCodeIcon } from '@/features/agents/components/OpenCodeIcon'
+import { OllamaIcon } from '@/features/agents/components/OllamaIcon'
+import { OpenRouterIcon } from '@/features/agents/components/OpenRouterIcon'
 import { cn } from '@/features/shared/utils/utils'
 import { getDisabledProviders, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 import {
@@ -22,13 +28,13 @@ import {
 } from '@/features/shared/utils/quotaLimits'
 
 const PROVIDER_ICONS: Record<QuotaProviderId, ElementType> = {
-	claude: Claude.Color,
-	codex: Codex.Color,
-	copilot: GithubCopilot,
-	antigravity: Antigravity.Color,
-	opencode: OpenCode,
-	ollama: Ollama,
-	openrouter: OpenRouter,
+	claude: ClaudeIcon,
+	codex: CodexIcon,
+	copilot: GithubCopilotIcon,
+	antigravity: AntigravityIcon,
+	opencode: OpenCodeIcon,
+	ollama: OllamaIcon,
+	openrouter: OpenRouterIcon,
 	commandcode: CommandCodeIcon,
 	zed: ZedIcon,
 }

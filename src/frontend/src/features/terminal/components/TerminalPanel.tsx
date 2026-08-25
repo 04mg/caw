@@ -644,6 +644,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
             <RotateCw size={14} />
             <span>Reload</span>
           </button>
+          <div className="my-0.5 border-t border-border" />
           <button
             onClick={handleCopy}
             disabled={!savedSelection}
@@ -654,6 +655,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
             <Copy size={14} />
             <span>Copy</span>
           </button>
+          <div className="my-0.5 border-t border-border" />
           <button
             onClick={handleCopyTui}
             disabled={!tuiClipboard}
@@ -664,6 +666,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
             <Copy size={14} />
             <span>Copy TUI Clipboard</span>
           </button>
+          <div className="my-0.5 border-t border-border" />
           <button
             onClick={handlePaste}
             className="flex items-center w-full px-3 py-1.5 text-xs text-foreground/80 hover:bg-accent hover:text-foreground text-left cursor-pointer gap-2"

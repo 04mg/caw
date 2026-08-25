@@ -1,4 +1,4 @@
-import { type Workspace, type BackendState } from '../types'
+import { type Workspace, type WorkspaceFolder, type BackendState } from '../types'
 import { normalizeLayout } from '@/features/shared/utils/layout'
 import { wsMux } from '@/features/shared/services/wsMultiplexer'
 
@@ -51,12 +51,23 @@ function ensureMux() {
 
 function remoteStatesEqual(a: BackendState, b: BackendState): boolean {
   if (a.activeWorkspaceId !== b.activeWorkspaceId) return false
-  if (a.workspaces.length !== b.workspaces.length) return false
+  if ((a.workspaceFolders?.length ?? 0) !== (b.workspaceFolders?.length ?? 0)) return false
+  if ((a.sidebarOrder?.length ?? 0) !== (b.sidebarOrder?.length ?? 0)) return false
+  const ao = a.sidebarOrder ?? []
+  const bo = b.sidebarOrder ?? []
+  for (let i = 0; i < ao.length; i++) {
+    if (ao[i] !== bo[i]) return false
+  }
+  const af = a.workspaceFolders ?? []
+  const bf = b.workspaceFolders ?? []
+  for (let i = 0; i < af.length; i++) {
+    if (af[i].id !== bf[i].id || af[i].name !== bf[i].name || af[i].emoji !== bf[i].emoji) return false
+  }
   for (let i = 0; i < a.workspaces.length; i++) {
     const aw = a.workspaces[i]
     const bw = b.workspaces[i]
     if (aw.id !== bw.id || aw.activeTabIndex !== bw.activeTabIndex ||
-        aw.activePaneId !== bw.activePaneId) return false
+        aw.activePaneId !== bw.activePaneId || aw.folderId !== bw.folderId) return false
     if ((aw.copyToWorktrees || []).join('\u0000') !== (bw.copyToWorktrees || []).join('\u0000')) return false
     if (aw.layouts.length !== bw.layouts.length) return false
     for (let j = 0; j < aw.layouts.length; j++) {
@@ -84,14 +95,21 @@ export async function loadState(): Promise<BackendState> {
     return {
       workspaces: data.workspaces,
       activeWorkspaceId: data.activeWorkspaceId ?? (data.workspaces[0]?.id ?? null),
+      workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
+      sidebarOrder: Array.isArray(data.sidebarOrder) ? data.sidebarOrder : [],
     }
   } catch {
     return { ...empty }
   }
 }
 
-export function persistWorkspaces(workspaces: Workspace[], activeWorkspaceId: string | null) {
-  pendingSend = { workspaces, activeWorkspaceId }
+export function persistWorkspaces(
+  workspaces: Workspace[],
+  activeWorkspaceId: string | null,
+  workspaceFolders: WorkspaceFolder[] = [],
+  sidebarOrder: string[] = [],
+) {
+  pendingSend = { workspaces, activeWorkspaceId, workspaceFolders, sidebarOrder }
   if (sendTimer) clearTimeout(sendTimer)
   sendTimer = setTimeout(() => {
     if (!pendingSend) return

@@ -1,6 +1,8 @@
 package quota
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
@@ -11,6 +13,7 @@ import (
 	"github.com/04mg/caw/internal/prefs"
 	"github.com/04mg/caw/internal/state"
 )
+
 
 // perProviderTimeout bounds how long a single quota provider may block the
 // /quotas response. A slow or hung provider (e.g. antigravity spawning an
@@ -149,6 +152,86 @@ func (s *Service) SaveAccountSettings(req map[string][]state.QuotaAccount) error
 	return s.store.SaveQuotaAccounts(req)
 }
 
+type ImportLoginRequest struct {
+	AccountID string `json:"accountId,omitempty"`
+}
+
+type ImportLoginResponse struct {
+	OK         bool              `json:"ok"`
+	AccountID  string            `json:"accountId"`
+	ImportedAt string            `json:"importedAt"`
+	Config     map[string]string `json:"config"`
+}
+
+func (s *Service) ImportLogin(providerName, accountId string) (*ImportLoginResponse, error) {
+	provider, ok := registry[providerName]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider %q", providerName)
+	}
+	importer, ok := provider.(LoginImporter)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support importing logins", providerName)
+	}
+
+	importedConfig, err := importer.ImportLogin()
+	if err != nil {
+		return nil, err
+	}
+
+	accountsByProvider, err := s.store.GetQuotaAccounts()
+	if err != nil {
+		return nil, err
+	}
+	if accountsByProvider == nil {
+		accountsByProvider = make(map[string][]state.QuotaAccount)
+	}
+
+	accounts := accountsByProvider[providerName]
+	targetID := accountId
+	if targetID == "" {
+		targetID = state.DefaultQuotaAccountName
+	}
+
+	found := false
+	for i := range accounts {
+		if accounts[i].ID == targetID || accounts[i].Name == targetID {
+			if accounts[i].Config == nil {
+				accounts[i].Config = make(map[string]string)
+			}
+			for k, v := range importedConfig {
+				accounts[i].Config[k] = v
+			}
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		targetName := targetID
+		if len(accounts) == 0 && targetID == state.DefaultQuotaAccountName {
+			targetName = state.DefaultQuotaAccountName
+		}
+		newAcc := state.QuotaAccount{
+			ID:     targetID,
+			Name:   targetName,
+			Config: importedConfig,
+		}
+		accounts = append(accounts, newAcc)
+	}
+
+	accountsByProvider[providerName] = accounts
+	if err := s.store.SaveQuotaAccounts(accountsByProvider); err != nil {
+		return nil, err
+	}
+
+	return &ImportLoginResponse{
+		OK:         true,
+		AccountID:  targetID,
+		ImportedAt: importedConfig["importedAt"],
+		Config:     importedConfig,
+	}, nil
+}
+
 func (s *Service) InitiateDeviceLogin() (any, error) {
 	return initiateDeviceLogin()
 }
@@ -216,6 +299,26 @@ func (h *Handler) SaveAccountSettings(w http.ResponseWriter, r *http.Request) {
 	httpx.RespondJSON(w, map[string]bool{"ok": true})
 }
 
+func (h *Handler) ImportLogin(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if provider == "" {
+		httpx.RespondBadRequest(w, "provider required")
+		return
+	}
+
+	var req ImportLoginRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	res, err := h.svc.ImportLogin(provider, req.AccountID)
+	if err != nil {
+		httpx.RespondBadRequest(w, err.Error())
+		return
+	}
+	httpx.RespondJSON(w, res)
+}
+
 func (h *Handler) DeviceCode(w http.ResponseWriter, r *http.Request) {
 	dc, err := h.svc.InitiateDeviceLogin()
 	if err != nil {
@@ -246,6 +349,7 @@ func Register(mux *http.ServeMux, store *state.Store) {
 	mux.HandleFunc("PUT /quotas/settings", h.SaveSettings)
 	mux.HandleFunc("GET /quotas/settings/accounts", h.AccountSettings)
 	mux.HandleFunc("PUT /quotas/settings/accounts", h.SaveAccountSettings)
+	mux.HandleFunc("POST /quotas/{provider}/import-login", h.ImportLogin)
 	mux.HandleFunc("POST /quotas/copilot/device-codes", h.DeviceCode)
 	mux.HandleFunc("GET /quotas/copilot/device-codes/{device_code}", h.PollToken)
 }

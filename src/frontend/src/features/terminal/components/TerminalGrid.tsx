@@ -21,6 +21,8 @@ interface TerminalGridProps {
   gitStatuses?: Record<string, string>
   onOpenDiff?: (filePath?: string) => void
   onOpenFile?: (filePath: string, line?: number, column?: number) => void
+  // Preview mode (workspace hover thumbnails): panes render inert/static.
+  preview?: boolean
 }
 
 function childKey(child: LayoutNode): string {
@@ -39,6 +41,7 @@ export function TerminalGrid({
   gitStatuses,
   onOpenDiff,
   onOpenFile,
+  preview,
 }: TerminalGridProps): ReactNode {
   if (node.type === 'empty') {
     return null
@@ -46,7 +49,11 @@ export function TerminalGrid({
 
   if (node.type === 'leaf') {
     const isActive = activePaneId === node.id
-    const isEditor = !!node.filePath || node.isDiff
+    // Resolve the view type. The layout's normalizeLayout fills `view`
+    // (terminal/editor); fall back to the legacy isEditor/filePath
+    // heuristic for leaves constructed before the field existed.
+    const view = node.view ?? (!!node.filePath || node.isDiff ? 'editor' : 'terminal')
+    const isEditor = view === 'editor'
     return (
       <div
         className="relative h-full overflow-hidden"
@@ -66,9 +73,7 @@ export function TerminalGrid({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (!isEditor) {
-                  destroyTerminal(node.id)
-                }
+                destroyTerminal(node.id)
                 onClose(node.id)
               }}
               className="h-5 w-5 rounded bg-background/80 text-muted-foreground hover:text-foreground flex items-center justify-center"
@@ -123,6 +128,7 @@ export function TerminalGrid({
           gitStatuses={gitStatuses}
           onOpenDiff={onOpenDiff}
           onOpenFile={onOpenFile}
+          preview={preview}
         />
       ))}
     </SplitGroup>

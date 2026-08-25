@@ -119,6 +119,15 @@ func (s *Store) migrate() {
 		file_ext     TEXT NOT NULL,
 		size_bytes   INTEGER NOT NULL,
 		created_at   TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS workspace_folders (
+		id    TEXT PRIMARY KEY,
+		name  TEXT NOT NULL,
+		emoji TEXT DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS workspace_sidebar_order (
+		position INTEGER PRIMARY KEY,
+		entry_id TEXT NOT NULL
 	);`
 	if _, err := s.db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
@@ -135,6 +144,12 @@ func (s *Store) migrate() {
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_enabled INTEGER NOT NULL DEFAULT 0")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_needs_input INTEGER NOT NULL DEFAULT 1")
 	_, _ = s.db.Exec("ALTER TABLE push_subscriptions ADD COLUMN prefs_finished INTEGER NOT NULL DEFAULT 1")
+	// View column: discriminates terminal/editor leaf rendering.
+	// Existing leaves default to "" which loadLayoutTree normalizes to the
+	// legacy terminal/editor heuristic (isDiff/filePath => editor).
+	_, _ = s.db.Exec("ALTER TABLE layout_nodes ADD COLUMN view TEXT DEFAULT ''")
+	// Workspace sidebar folders: membership column + folder/order tables.
+	_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN folder_id TEXT DEFAULT ''")
 	s.migrateQuotaAccounts()
 }
 
@@ -152,7 +167,7 @@ func (s *Store) Get() AppState {
 	}
 
 	// Load workspaces
-	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, ''), COALESCE(copy_to_worktrees, '') FROM workspaces")
+	wRows, err := s.db.Query("SELECT id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, COALESCE(tab_groups_json, ''), COALESCE(copy_to_worktrees, ''), COALESCE(folder_id, '') FROM workspaces")
 	if err != nil {
 		return as
 	}
@@ -162,13 +177,39 @@ func (s *Store) Get() AppState {
 		var w Workspace
 		var enableWorktrees int
 		var copyJSON string
-		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON, &copyJSON); err != nil {
+		if err := wRows.Scan(&w.ID, &w.Path, &w.Name, &w.Emoji, &w.ActiveTabIndex, &w.ActivePaneID, &enableWorktrees, &w.TabGroupsJSON, &copyJSON, &w.FolderID); err != nil {
 			continue
 		}
 		w.EnableWorktrees = enableWorktrees != 0
 		_ = json.Unmarshal([]byte(copyJSON), &w.CopyToWorktrees)
 		w.Layouts = s.loadTabLayouts(w.ID)
 		as.Workspaces = append(as.Workspaces, w)
+	}
+
+	// Load sidebar folders
+	fRows, err := s.db.Query("SELECT id, name, COALESCE(emoji, '') FROM workspace_folders ORDER BY rowid")
+	if err == nil {
+		for fRows.Next() {
+			var f Folder
+			if err := fRows.Scan(&f.ID, &f.Name, &f.Emoji); err != nil {
+				continue
+			}
+			as.WorkspaceFolders = append(as.WorkspaceFolders, f)
+		}
+		fRows.Close()
+	}
+
+	// Load root-level sidebar order
+	oRows, err := s.db.Query("SELECT entry_id FROM workspace_sidebar_order ORDER BY position")
+	if err == nil {
+		for oRows.Next() {
+			var id string
+			if err := oRows.Scan(&id); err != nil {
+				continue
+			}
+			as.SidebarOrder = append(as.SidebarOrder, id)
+		}
+		oRows.Close()
 	}
 	return as
 }
@@ -203,17 +244,17 @@ func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	var row *sql.Row
 	if isRoot {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view FROM layout_nodes WHERE tab_id = ? AND parent_id IS NULL",
 			tabID,
 		)
 	} else {
 		row = s.db.QueryRow(
-			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug FROM layout_nodes WHERE tab_id = ? AND id = ?",
+			"SELECT id, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view FROM layout_nodes WHERE tab_id = ? AND id = ?",
 			tabID, nodeID,
 		)
 	}
 
-	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch, &ln.PetSlug)
+	err := row.Scan(&ln.ID, &ln.Type, &ln.Cwd, &cmdJSON, &ln.AgentID, &ln.Orientation, &sizesJSON, &ln.FilePath, &isDiff, &ln.AgentBranch, &ln.BaseBranch, &ln.PetSlug, &ln.View)
 	if err != nil {
 		ln.Type = "empty"
 		return ln
@@ -221,6 +262,15 @@ func (s *Store) loadLayoutTree(tabID, nodeID string, isRoot bool) LayoutNode {
 	ln.IsDiff = isDiff != 0
 	_ = json.Unmarshal([]byte(cmdJSON), &ln.Cmd)
 	_ = json.Unmarshal([]byte(sizesJSON), &ln.Sizes)
+	// Normalize legacy leaves with no explicit view: editor leaves
+	// (filePath or isDiff) become "editor", everything else "terminal".
+	if ln.View == "" {
+		if ln.FilePath != "" || ln.IsDiff {
+			ln.View = "editor"
+		} else {
+			ln.View = "terminal"
+		}
+	}
 
 	// Load children
 	childRows, err := s.db.Query(
@@ -259,6 +309,8 @@ func (s *Store) Set(as AppState) {
 	tx.Exec("DELETE FROM layout_nodes")
 	tx.Exec("DELETE FROM tab_layouts")
 	tx.Exec("DELETE FROM workspaces")
+	tx.Exec("DELETE FROM workspace_folders")
+	tx.Exec("DELETE FROM workspace_sidebar_order")
 
 	// Preserve VAPID keys and shared work prefs that must survive workspace
 	// state saves. Store.Set() does DELETE FROM settings, which would wipe
@@ -299,8 +351,8 @@ func (s *Store) Set(as AppState) {
 		}
 		copyJSON, _ := json.Marshal(w.CopyToWorktrees)
 		tx.Exec(
-			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json, copy_to_worktrees) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON, string(copyJSON),
+			"INSERT INTO workspaces (id, path, name, emoji, active_tab_index, active_pane_id, enable_worktrees, tab_groups_json, copy_to_worktrees, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			w.ID, w.Path, w.Name, w.Emoji, w.ActiveTabIndex, w.ActivePaneID, enableWT, w.TabGroupsJSON, string(copyJSON), w.FolderID,
 		)
 		for i, tl := range w.Layouts {
 			tx.Exec(
@@ -309,6 +361,19 @@ func (s *Store) Set(as AppState) {
 			)
 			s.saveLayoutTree(tx, tl.ID, "", tl.Layout, 0)
 		}
+	}
+
+	for _, f := range as.WorkspaceFolders {
+		tx.Exec(
+			"INSERT INTO workspace_folders (id, name, emoji) VALUES (?, ?, ?)",
+			f.ID, f.Name, f.Emoji,
+		)
+	}
+	for i, entryID := range as.SidebarOrder {
+		tx.Exec(
+			"INSERT INTO workspace_sidebar_order (position, entry_id) VALUES (?, ?)",
+			i, entryID,
+		)
 	}
 
 	tx.Commit()
@@ -327,9 +392,9 @@ func (s *Store) saveLayoutTree(tx *sql.Tx, tabID, parentID string, ln LayoutNode
 	}
 
 	tx.Exec(
-		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff, ln.AgentBranch, ln.BaseBranch, ln.PetSlug,
+		`INSERT INTO layout_nodes (id, tab_id, parent_id, sort_order, type, cwd, cmd, agent_id, orientation, sizes, file_path, is_diff, agent_branch, base_branch, pet_slug, view)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ln.ID, tabID, parentPtr, order, ln.Type, ln.Cwd, string(cmdJSON), ln.AgentID, ln.Orientation, string(sizesJSON), ln.FilePath, isDiff, ln.AgentBranch, ln.BaseBranch, ln.PetSlug, ln.View,
 	)
 
 	if ln.Children == nil {
