@@ -35,3 +35,22 @@ func TestStripMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanTitle(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"Single Line Title", "Single Line Title"},
+		{"Title with\nNewlines\r\nAnd\tTabs", "Title with Newlines And Tabs"},
+		{"Title with\\nLiteral\\nNewlines", "Title with Literal Newlines"},
+		{"  Spaces   and   \n   newlines  ", "Spaces and newlines"},
+		{StripMarkdown("## Heading\n\nParagraph text"), "Heading Paragraph text"},
+	}
+	for _, c := range cases {
+		got := CleanTitle(c.in)
+		if got != c.want {
+			t.Errorf("CleanTitle(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

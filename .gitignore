@@ -38,7 +38,6 @@ Thumbs.db
 # Tools
 .commandcode/
 graphify-out/
-.agents/
 .opencode/
 .caw/
 .serena/

@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeAntigravityTranscript(t *testing.T, lines []string) string {
@@ -162,5 +164,234 @@ func TestAntigravityArtifactApprovalOverridesStaleBackgroundTask(t *testing.T) {
 	})
 	if status != "waiting_input" {
 		t.Fatalf("status = %q, want waiting_input", status)
+	}
+}
+
+func TestExtractWorkspaceURIsFromBlob(t *testing.T) {
+	// Build a mock protobuf binary blob containing file:// URI
+	uri := "file:///root/my-project/sub-dir"
+	length := len(uri)
+	var blob []byte
+	blob = append(blob, 0x0a) // tag
+	blob = append(blob, byte(length))
+	blob = append(blob, []byte(uri)...)
+	blob = append(blob, 0x12) // next tag
+	blob = append(blob, 0x05, 0x61, 0x62, 0x63, 0x64, 0x65)
+
+	uris := extractWorkspaceURIsFromBlob(blob)
+	if len(uris) != 1 {
+		t.Fatalf("expected 1 uri, got %d: %v", len(uris), uris)
+	}
+	if uris[0] != uri {
+		t.Fatalf("expected %q, got %q", uri, uris[0])
+	}
+}
+
+func TestAntigravityMultiInstanceDistinctWorkspaces(t *testing.T) {
+	resetClaims()
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	brainDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "brain")
+	convsDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "conversations")
+	_ = os.MkdirAll(convsDir, 0755)
+
+	convA := "11111111-1111-1111-1111-111111111111"
+	convB := "22222222-2222-2222-2222-222222222222"
+
+	wsA := filepath.Join(tempHome, "workspace-a")
+	wsB := filepath.Join(tempHome, "workspace-b")
+	_ = os.MkdirAll(wsA, 0755)
+	_ = os.MkdirAll(wsB, 0755)
+
+	// Create transcript A
+	logDirA := filepath.Join(brainDir, convA, ".system_generated", "logs")
+	_ = os.MkdirAll(logDirA, 0755)
+	transPathA := filepath.Join(logDirA, "transcript.jsonl")
+	_ = os.WriteFile(transPathA, []byte(`{"type":"USER_INPUT","content":"task A"}`+"\n"), 0644)
+
+	// Create DB A
+	dbPathA := filepath.Join(convsDir, convA+".db")
+	dbA, err := sql.Open("sqlite", dbPathA)
+	if err != nil {
+		t.Fatalf("open dbA: %v", err)
+	}
+	_, _ = dbA.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	uriA := "file://" + wsA
+	var blobA []byte
+	blobA = append(blobA, 0x0a, byte(len(uriA)))
+	blobA = append(blobA, []byte(uriA)...)
+	_, _ = dbA.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blobA)
+	dbA.Close()
+
+	// Create transcript B
+	logDirB := filepath.Join(brainDir, convB, ".system_generated", "logs")
+	_ = os.MkdirAll(logDirB, 0755)
+	transPathB := filepath.Join(logDirB, "transcript.jsonl")
+	_ = os.WriteFile(transPathB, []byte(`{"type":"USER_INPUT","content":"task B"}`+"\n"), 0644)
+
+	// Create DB B
+	dbPathB := filepath.Join(convsDir, convB+".db")
+	dbB, err := sql.Open("sqlite", dbPathB)
+	if err != nil {
+		t.Fatalf("open dbB: %v", err)
+	}
+	_, _ = dbB.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	uriB := "file://" + wsB
+	var blobB []byte
+	blobB = append(blobB, 0x0a, byte(len(uriB)))
+	blobB = append(blobB, []byte(uriB)...)
+	_, _ = dbB.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blobB)
+	dbB.Close()
+
+	after := time.Now().Add(-1 * time.Hour)
+
+	// Query for workspace A
+	candsA, err := findAntigravityTranscripts(brainDir, wsA, after, "agy")
+	if err != nil {
+		t.Fatalf("find transcripts for wsA: %v", err)
+	}
+	if len(candsA) != 1 || candsA[0] != transPathA {
+		t.Fatalf("wsA expected [transPathA], got %v", candsA)
+	}
+
+	// Query for workspace B
+	candsB, err := findAntigravityTranscripts(brainDir, wsB, after, "agy")
+	if err != nil {
+		t.Fatalf("find transcripts for wsB: %v", err)
+	}
+	if len(candsB) != 1 || candsB[0] != transPathB {
+		t.Fatalf("wsB expected [transPathB], got %v", candsB)
+	}
+}
+
+func TestAntigravityMultiInstanceSameWorkspaceDistinctClaims(t *testing.T) {
+	resetClaims()
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	brainDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "brain")
+	convsDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "conversations")
+	_ = os.MkdirAll(convsDir, 0755)
+
+	conv1 := "11111111-1111-1111-1111-111111111111"
+	conv2 := "22222222-2222-2222-2222-222222222222"
+
+	ws := filepath.Join(tempHome, "shared-workspace")
+	_ = os.MkdirAll(ws, 0755)
+
+	t1 := time.Now().Add(-10 * time.Minute)
+	t2 := time.Now().Add(-5 * time.Minute)
+
+	// Create transcript 1
+	logDir1 := filepath.Join(brainDir, conv1, ".system_generated", "logs")
+	_ = os.MkdirAll(logDir1, 0755)
+	transPath1 := filepath.Join(logDir1, "transcript.jsonl")
+	_ = os.WriteFile(transPath1, []byte(`{"type":"USER_INPUT","content":"task 1"}`+"\n"), 0644)
+	_ = os.Chtimes(transPath1, t1, t1)
+
+	// Create DB 1
+	dbPath1 := filepath.Join(convsDir, conv1+".db")
+	db1, _ := sql.Open("sqlite", dbPath1)
+	_, _ = db1.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	uri := "file://" + ws
+	var blob1 []byte
+	blob1 = append(blob1, 0x0a, byte(len(uri)))
+	blob1 = append(blob1, []byte(uri)...)
+	_, _ = db1.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blob1)
+	db1.Close()
+
+	// Create transcript 2
+	logDir2 := filepath.Join(brainDir, conv2, ".system_generated", "logs")
+	_ = os.MkdirAll(logDir2, 0755)
+	transPath2 := filepath.Join(logDir2, "transcript.jsonl")
+	_ = os.WriteFile(transPath2, []byte(`{"type":"USER_INPUT","content":"task 2"}`+"\n"), 0644)
+	_ = os.Chtimes(transPath2, t2, t2)
+
+	// Create DB 2
+	dbPath2 := filepath.Join(convsDir, conv2+".db")
+	db2, _ := sql.Open("sqlite", dbPath2)
+	_, _ = db2.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	var blob2 []byte
+	blob2 = append(blob2, 0x0a, byte(len(uri)))
+	blob2 = append(blob2, []byte(uri)...)
+	_, _ = db2.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blob2)
+	db2.Close()
+
+	after := time.Now().Add(-1 * time.Hour)
+	candidates, err := findAntigravityTranscripts(brainDir, ws, after, "agy")
+	if err != nil {
+		t.Fatalf("find transcripts: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d: %v", len(candidates), candidates)
+	}
+	if candidates[0] != transPath1 || candidates[1] != transPath2 {
+		t.Fatalf("expected oldest-first ordering [%s, %s], got %v", transPath1, transPath2, candidates)
+	}
+
+	const claimCwd = ""
+	// Leaf 1 claims the first candidate
+	if !ClaimSessionForLeaf("agy", claimCwd, candidates[0], "leaf-1") {
+		t.Fatal("leaf-1 should claim candidate 0")
+	}
+
+	// Leaf 2 attempts to claim candidates
+	var leaf2Claimed string
+	for _, c := range candidates {
+		if ClaimSessionForLeaf("agy", claimCwd, c, "leaf-2") {
+			leaf2Claimed = c
+			break
+		}
+	}
+	if leaf2Claimed != transPath2 {
+		t.Fatalf("leaf-2 should claim transPath2, got %q", leaf2Claimed)
+	}
+
+	// Leaf 2 cannot steal candidate 0
+	if ClaimSessionForLeaf("agy", claimCwd, transPath1, "leaf-2") {
+		t.Fatal("leaf-2 must not steal candidate 0 from leaf-1")
+	}
+}
+
+func TestAntigravityConversationMatchesWorkspace(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	convsDir := filepath.Join(tempHome, ".gemini", "antigravity-cli", "conversations")
+	_ = os.MkdirAll(convsDir, 0755)
+
+	convID := "test-conv-match-ws"
+	ws := filepath.Join(tempHome, "my-repo")
+	_ = os.MkdirAll(ws, 0755)
+
+	dbPath := filepath.Join(convsDir, convID+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	_, _ = db.Exec(`CREATE TABLE trajectory_metadata_blob (id text PRIMARY KEY, data blob)`)
+	uri := "file://" + ws
+	var blob []byte
+	blob = append(blob, 0x0a, byte(len(uri)))
+	blob = append(blob, []byte(uri)...)
+	_, _ = db.Exec(`INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)`, blob)
+	db.Close()
+
+	if !antigravityConversationMatchesWorkspace(convID, ws) {
+		t.Fatalf("expected conv to match workspace %s", ws)
+	}
+	otherWs := filepath.Join(tempHome, "other-repo")
+	if antigravityConversationMatchesWorkspace(convID, otherWs) {
+		t.Fatalf("conv should NOT match other workspace %s", otherWs)
+	}
+}
+
+func TestCleanPromptMentionsAndNewlines(t *testing.T) {
+	input := "<USER_REQUEST>\n/caw-feature Right now we have @[src/file.go] running.\\nAlso next line.\n</USER_REQUEST>"
+	got := CleanPrompt(input)
+	want := "/caw-feature Right now we have src/file.go running. Also next line."
+	if got != want {
+		t.Fatalf("CleanPrompt(%q) = %q, want %q", input, got, want)
 	}
 }

@@ -625,14 +625,23 @@ func CleanPrompt(raw string) string {
 		s = strings.Trim(s, "\"")
 	}
 
+	// 3.5. Clean Antigravity mention tags like @[path/to/file] -> path/to/file
+	mentionRx := regexp.MustCompile(`@\[([^\]]+)\]`)
+	s = mentionRx.ReplaceAllString(s, "$1")
+
 	// 3.8. Strip any remaining XML-like tags (e.g. <bash-input>) but keep their content.
 	xmlTagRx := regexp.MustCompile("</?[a-zA-Z0-9_-]+[^>]*>")
 	s = xmlTagRx.ReplaceAllString(s, "")
 
-	// 4. Collapse newlines, carriage returns, tabs and multiple spaces into a single space
+	// 4. Collapse newlines, carriage returns, tabs, literal \n and multiple spaces into a single space
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.ReplaceAll(s, `\r\n`, " ")
+	s = strings.ReplaceAll(s, `\n`, " ")
+	s = strings.ReplaceAll(s, `\r`, " ")
+	s = strings.ReplaceAll(s, `\t`, " ")
 	
 	// Collapse multiple spaces
 	for strings.Contains(s, "  ") {
