@@ -28,7 +28,7 @@ export const agentTypes: Record<string, AgentType> = {
   codex: {
     id: 'codex',
     label: 'Codex CLI',
-    cmd: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
+    cmd: ['codex', '--sandbox', 'danger-full-access', '--ask-for-approval', 'never'],
     icon: CodexIcon,
   },
   copilot: {
