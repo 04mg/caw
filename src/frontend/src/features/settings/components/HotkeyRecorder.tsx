@@ -29,7 +29,10 @@ export function HotkeyRecorder({ onSave, onCancel }: HotkeyRecorderProps) {
       if (e.metaKey) parts.push('Meta')
       if (e.shiftKey) parts.push('Shift')
       if (parts.length === 0) return
-      if (!isModifierKey) parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
+      if (!isModifierKey) {
+        const key = e.key === ' ' || e.code === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key)
+        parts.push(key)
+      }
       const nextCombo = parts.join('+')
       setCombo(nextCombo)
       setCompleteCombo(isModifierKey ? '' : nextCombo)

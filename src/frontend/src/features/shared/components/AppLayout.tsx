@@ -57,6 +57,7 @@ import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
 import { useFloatingPrompt } from '@/features/floating-prompt/hooks/useFloatingPrompt'
 import { FloatingPromptBubble } from '@/features/floating-prompt/components/FloatingPromptBubble'
+import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState'
@@ -410,6 +411,7 @@ export function AppLayout() {
   const activeWorktreeBranch = activeLeaf?.agentBranch ?? undefined
 
   const floatingPrompt = useFloatingPrompt()
+  const voice = useVoiceMode()
   const canSendFloating = Boolean(activePaneId)
 
   const fetchGitStatus = useCallback(async () => {
@@ -1844,6 +1846,27 @@ export function AppLayout() {
     },
     [getHotkey('findInFiles')]: () => openSearch('find'),
     [getHotkey('replaceInFiles')]: () => openSearch('replace'),
+    [getHotkey('toggleVoice')]: () => {
+      if (!isVoiceSupported()) return
+      if (voice.phase === 'idle') {
+        voice.start()
+      } else if (voice.phase === 'listening') {
+        if (isMobile) {
+          voice.stop()
+        } else {
+          voice.stop({ send: (text) => floatingPrompt.openWithText(text) })
+        }
+      } else if (voice.phase === 'review') {
+        voice.reset()
+      }
+    },
+    [getHotkey('floatingPrompt')]: () => {
+      if (floatingPrompt.open) {
+        floatingPrompt.closeBubble()
+      } else {
+        floatingPrompt.reopenBubble()
+      }
+    },
   })
 
   useEffect(() => {
