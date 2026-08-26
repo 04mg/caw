@@ -251,26 +251,74 @@ func (w *CodexWatcher) Watch(ctx context.Context, sessionID string, cwd string, 
 	}
 }
 
+// codexPayloadText extracts the plain-text body of a Codex response_item
+// payload that carries text either in its `message` field or as the joined
+// `content[].text` entries. Used to read assistant answers and user prompts.
+func codexPayloadText(p *CodexPayload) string {
+	if p.Message != "" {
+		return p.Message
+	}
+	var textParts []string
+	for _, c := range p.Content {
+		if c.Text != "" {
+			textParts = append(textParts, c.Text)
+		}
+	}
+	return strings.Join(textParts, " ")
+}
+
 func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
 		return
 	}
 
-	// Forward pass: collect the first user prompt to use as the session title.
+	// Forward pass: collect the first real user prompt to use as the session
+	// title. Codex persists the prompt in two places depending on CLI version:
+	//   - older rollouts emit an event_msg "user_message" carrying `message` —
+	//     this is the exact typed prompt and is authoritative.
+	//   - newer rollouts have no such event — the prompt only appears as a
+	//     response_item "message" with role "user" whose content carries the
+	//     text. The first user content is usually the injected <environment_context>
+	//     / AGENTS.md boilerplate (which CleanPrompt collapses to ""), so we
+	//     scan until the first prompt that actually cleans to something.
 	var sessionTitle string
 	for _, line := range lines {
 		var logLine CodexLogLine
 		if json.Unmarshal([]byte(line), &logLine) != nil {
 			continue
 		}
-		if logLine.Payload != nil && logLine.Payload.Type == "user_message" && logLine.Payload.Message != "" {
-			if sessionTitle == "" {
-				sessionTitle = logLine.Payload.Message
+		p := logLine.Payload
+		if p == nil {
+			continue
+		}
+		if p.Type == "user_message" && p.Message != "" {
+			if title := CleanPrompt(p.Message); title != "" {
+				sessionTitle = title
+				break
 			}
 		}
 	}
-	sessionTitle = CleanPrompt(sessionTitle)
+	// Modern rollouts have no event_msg user_message. Fall back to scanning
+	// the first non-empty prompt carried in a response_item user message.
+	if sessionTitle == "" {
+		for _, line := range lines {
+			var logLine CodexLogLine
+			if json.Unmarshal([]byte(line), &logLine) != nil {
+				continue
+			}
+			p := logLine.Payload
+			if p == nil || p.Type != "message" || p.Role != "user" {
+				continue
+			}
+			if raw := codexPayloadText(p); raw != "" {
+				if title := CleanPrompt(raw); title != "" {
+					sessionTitle = title
+					break
+				}
+			}
+		}
+	}
 
 	// Codex writes a sequence of entries per turn. The status we report must
 	// reflect the LAST meaningful entry:
@@ -278,8 +326,8 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	//   user_message                      → thinking
 	//   agent_message / message            → interim "commentary" still WORKING,
 	//                                       final_answer → idle (turn complete)
-	//   function_call                      → executing <tool>
-	//   function_call_output               → thinking (waiting for next step)
+	//   function_call / custom_tool_call   → executing <tool>
+	//   function_call_output / custom_tool_call_output → thinking (waiting)
 	//   task_complete                      → idle (turn definitively done)
 	//
 	// The previous implementation matched any response_item "message" with
@@ -293,6 +341,18 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 	var lastAssistantText string
 	var lastAssistantTool string
 	var foundTool bool
+	// Turn boundary. Rollout files accumulate many turns. The current turn is
+	// the region from the last user message to the end of the file; everything
+	// before that user message belongs to a PRIOR turn and must not influence
+	// this turn's status (its task_complete / final_answer / tool calls are
+	// stale). Scanning backwards, the first message we encounter is the
+	// current turn's user prompt, so once we hit it we stop — nothing earlier
+	// is relevant. The user_message event_msg (older CLI) is treated the same
+	// way. (Injected <environment_context>/AGENTS.md blocks are user messages
+	// too, but they appear at the very start of the session, well before the
+	// first real prompt, so the last user message is always the current turn's
+	// actual prompt.)
+	var hitBoundary bool
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		var logLine CodexLogLine
@@ -305,17 +365,32 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		}
 		p := logLine.Payload
 		switch p.Type {
-		case "task_complete":
-			turnCompleted = true
-			if p.Error != nil && p.Error.Message != "" {
-				taskError = p.Error.Message
+		case "user_message":
+			hitBoundary = true
+		case "message":
+			if p.Role == "user" {
+				hitBoundary = true
+			} else if p.Role == "assistant" {
+				if msgText := codexPayloadText(p); msgText != "" && lastAssistantText == "" {
+					lastAssistantText = msgText
+					if p.Phase == "final_answer" {
+						turnCompleted = true
+					}
+				}
 			}
-			continue
+		case "task_complete":
+			if !hitBoundary {
+				turnCompleted = true
+				if p.Error != nil && p.Error.Message != "" {
+					taskError = p.Error.Message
+				}
+			}
 		case "turn_aborted":
-			turnAborted = true
-			turnCompleted = true
-			continue
-		case "function_call":
+			if !hitBoundary {
+				turnAborted = true
+				turnCompleted = true
+			}
+		case "function_call", "custom_tool_call":
 			if !foundTool {
 				tool := p.Name
 				if tool == "" {
@@ -324,55 +399,20 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 				lastAssistantTool = tool
 				foundTool = true
 			}
-			continue
-		case "function_call_output":
-			continue
-		case "user_message":
-			continue
-		case "message":
-			if p.Role == "assistant" {
-				var msgText string
-				if p.Message != "" {
-					msgText = p.Message
-				} else if len(p.Content) > 0 {
-					var textParts []string
-					for _, c := range p.Content {
-						if c.Text != "" {
-							textParts = append(textParts, c.Text)
-						}
-					}
-					msgText = strings.Join(textParts, " ")
-				}
-				if msgText != "" && lastAssistantText == "" {
-					lastAssistantText = msgText
-					if p.Phase == "final_answer" {
-						turnCompleted = true
-					}
-				}
-			}
-			continue
+		case "function_call_output", "custom_tool_call_output":
+			// no-op
 		case "agent_message":
-			var msgText string
-			if p.Message != "" {
-				msgText = p.Message
-			} else if len(p.Content) > 0 {
-				var textParts []string
-				for _, c := range p.Content {
-					if c.Text != "" {
-						textParts = append(textParts, c.Text)
-					}
-				}
-				msgText = strings.Join(textParts, " ")
-			}
-			if msgText != "" && lastAssistantText == "" {
+			if msgText := codexPayloadText(p); msgText != "" && lastAssistantText == "" {
 				lastAssistantText = msgText
 				if p.Phase == "final_answer" {
 					turnCompleted = true
 				}
 			}
-			continue
 		case "task_started":
-			continue
+			// no-op
+		}
+		if hitBoundary {
+			break
 		}
 	}
 
@@ -390,7 +430,12 @@ func (w *CodexWatcher) parseCodexLog(filePath string, offset int64, callback fun
 		return
 	}
 
-	if lastAssistantTool != "" {
+	// A turn that reached final_answer / task_complete is done: even if the
+	// reverse pass recorded a tool call, that tool already returned its output
+	// (its _output entry precedes the final answer). Report the completed
+	// turn as idle rather than "executing <tool>". Only an in-flight tool
+	// call — one whose turn has NOT completed — keeps the card in executing.
+	if lastAssistantTool != "" && !turnCompleted {
 		// Tools that request user input should be reported as waiting_input,
 		// not as executing. The agent is blocked until the user answers.
 		toolLower := strings.ToLower(lastAssistantTool)
