@@ -696,11 +696,23 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 			// planner's turn is over. When that answer accompanies a pending
 			// artifact-approval request (write_to_file with RequestFeedback),
 			// the agent is blocked waiting for the user to approve the plan →
-			// waiting_input. Otherwise it is idle. A still-running background
-			// task does NOT make this "executing": the agent has finished
-			// speaking and will be re-prompted when the task completes.
+			// waiting_input. When background tasks are still running, the
+			// agent is waiting for them to complete and will be re-prompted
+			// when they do — keep it in "executing" (background_task) so the
+			// card does not flip to idle and back to working on every task
+			// completion. Only when no background tasks remain is the agent
+			// truly idle.
 			if pendingArtifactApproval {
 				callback("waiting_input", "write_to_file", "", sessionTitle)
+				return
+			}
+			if len(runningTasks) > 0 {
+				var activeTask string
+				for t := range runningTasks {
+					activeTask = t
+					break
+				}
+				callback("executing", "background_task", activeTask, sessionTitle)
 				return
 			}
 			callback("idle", "", "", sessionTitle)
@@ -749,6 +761,19 @@ func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, 
 		if seenFinalAnswer {
 			if pendingArtifactApproval {
 				callback("waiting_input", "write_to_file", "", sessionTitle)
+				return
+			}
+			// The planner gave a final answer but subsequent SYSTEM_MESSAGE /
+			// GENERIC steps (e.g. task notifications) were appended. When
+			// background tasks are still running, the agent is waiting for
+			// them — keep "executing" instead of flipping to idle.
+			if len(runningTasks) > 0 {
+				var activeTask string
+				for t := range runningTasks {
+					activeTask = t
+					break
+				}
+				callback("executing", "background_task", activeTask, sessionTitle)
 				return
 			}
 			callback("idle", "", "", sessionTitle)

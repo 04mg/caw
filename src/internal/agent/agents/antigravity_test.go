@@ -126,14 +126,43 @@ func TestAntigravityArtifactRequestFeedbackReportsWaitingInput(t *testing.T) {
 	}
 }
 
-func TestAntigravityFinalAnswerWithStaleBackgroundTaskReportsIdle(t *testing.T) {
-	// A background task that is never marked finished in the transcript must
-	// NOT keep the card in "executing" once the planner gives a final answer
-	// (PLANNER_RESPONSE with no tool calls). The agent has ended its turn.
+func TestAntigravityFinalAnswerWithRunningBackgroundTaskReportsExecuting(t *testing.T) {
+	// A background task that is still running must keep the card in
+	// "executing" even after the planner gives a final answer (PLANNER_RESPONSE
+	// with no tool calls). The agent is waiting for the task to complete and
+	// will be re-prompted when it does — flipping to idle and back to working
+	// on every task completion creates constant idle interruptions. Staying
+	// in executing keeps the card in the Working column until all background
+	// tasks finish.
 	lines := []string{
 		`{"type":"USER_INPUT","content":"build the project"}`,
 		`{"type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: session/task-109"}`,
 		`{"type":"PLANNER_RESPONSE","status":"DONE","content":"The build is running in the background.","tool_calls":[]}`,
+	}
+	p := writeAntigravityTranscript(t, lines)
+	var status, tool, details string
+	(&AntigravityWatcher{}).parseAntigravityLog(p, 0, func(s, tl, d, ti string) {
+		status, tool, details = s, tl, d
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing (not idle)", status)
+	}
+	if tool != "background_task" {
+		t.Fatalf("tool = %q, want background_task", tool)
+	}
+	if details != "session/task-109" {
+		t.Fatalf("details = %q, want session/task-109", details)
+	}
+}
+
+func TestAntigravityFinalAnswerAfterAllBackgroundTasksDoneReportsIdle(t *testing.T) {
+	// Once all background tasks have completed, a final answer from the
+	// planner must report idle — the agent is truly done.
+	lines := []string{
+		`{"type":"USER_INPUT","content":"build the project"}`,
+		`{"type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: session/task-109"}`,
+		`{"type":"SYSTEM_MESSAGE","status":"DONE","content":"Task id \"session/task-109\" finished with result"}`,
+		`{"type":"PLANNER_RESPONSE","status":"DONE","content":"The build completed successfully.","tool_calls":[]}`,
 	}
 	p := writeAntigravityTranscript(t, lines)
 	var status string
@@ -141,7 +170,7 @@ func TestAntigravityFinalAnswerWithStaleBackgroundTaskReportsIdle(t *testing.T) 
 		status = s
 	})
 	if status != "idle" {
-		t.Fatalf("status = %q, want idle (not executing/background_task)", status)
+		t.Fatalf("status = %q, want idle (all tasks done)", status)
 	}
 }
 
@@ -164,6 +193,31 @@ func TestAntigravityArtifactApprovalOverridesStaleBackgroundTask(t *testing.T) {
 	})
 	if status != "waiting_input" {
 		t.Fatalf("status = %q, want waiting_input", status)
+	}
+}
+
+func TestAntigravitySystemMessageAfterFinalAnswerWithRunningTaskStaysExecuting(t *testing.T) {
+	// After a final answer (PLANNER_RESPONSE with no tool calls), the
+	// transcript may receive SYSTEM_MESSAGE / GENERIC notifications about
+	// still-running background tasks. The watcher must keep the card in
+	// "executing" (background_task) — not flip to idle — because the agent is
+	// waiting for those tasks to finish.
+	lines := []string{
+		`{"type":"USER_INPUT","content":"build the project"}`,
+		`{"type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: session/task-55"}`,
+		`{"type":"PLANNER_RESPONSE","status":"DONE","content":"The build is running in the background.","tool_calls":[]}`,
+		`{"type":"SYSTEM_MESSAGE","status":"DONE","content":"The following is a SYSTEM_MESSAGE ... task status update"}`,
+	}
+	p := writeAntigravityTranscript(t, lines)
+	var status, tool string
+	(&AntigravityWatcher{}).parseAntigravityLog(p, 0, func(s, tl, d, ti string) {
+		status, tool = s, tl
+	})
+	if status != "executing" {
+		t.Fatalf("status = %q, want executing (background task still running)", status)
+	}
+	if tool != "background_task" {
+		t.Fatalf("tool = %q, want background_task", tool)
 	}
 }
 
