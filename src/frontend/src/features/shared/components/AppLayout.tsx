@@ -1657,7 +1657,7 @@ export function AppLayout() {
   )
 
   const handleAddWorkspace = useCallback(
-    async (path: string, name: string, emoji: string) => {
+    async (path: string, name: string, emoji: string, folderId?: string) => {
       let absPath = path
       try {
         const res = await fetch(`/api/workspaces/details?path=${encodeURIComponent(path)}`)
@@ -1680,8 +1680,15 @@ export function AppLayout() {
         activeTabIndex: 0,
         activePaneId: layout ? collectLeafIds(layout)[0] || '' : '',
         enableWorktrees: false,
+        folderId,
       }
       setWorkspaces((prev) => [...prev, ws])
+      // When created inside a folder, ensure the folder is in the root order
+      // (it already is, since folders always live at the root) and that the
+      // new workspace doesn't appear as a loose root entry.
+      if (folderId) {
+        setSidebarOrder((prev) => prev.includes(folderId) ? prev : [...prev, folderId])
+      }
       setActiveWorkspaceId(ws.id)
     },
     [],
