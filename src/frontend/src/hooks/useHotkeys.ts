@@ -15,7 +15,8 @@ export function useHotkeys(map: HotkeyMap) {
       if (e.ctrlKey) parts.push('Ctrl')
       if (e.metaKey) parts.push('Meta')
       if (e.shiftKey) parts.push('Shift')
-      parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
+      const key = e.key === ' ' || e.code === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key)
+      parts.push(key)
 
       const combo = parts.join('+')
       const fn = mapRef.current[combo]
