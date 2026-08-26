@@ -56,9 +56,9 @@ export function TerminalGrid({
     const isEditor = view === 'editor'
     return (
       <div
-        className="relative h-full overflow-hidden"
-        onClick={() => onFocus(node.id)}
-        onPointerDown={() => onFocus(node.id)}
+        className={`relative h-full overflow-hidden ${preview ? "pointer-events-none" : ""}`}
+        onClick={preview ? undefined : () => onFocus(node.id)}
+        onPointerDown={preview ? undefined : () => onFocus(node.id)}
         data-pane-id={node.id}
         data-active={isActive ? 'true' : 'false'}
       >
