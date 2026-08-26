@@ -175,10 +175,6 @@ export function AppLayout() {
   const [workspacesDrawerOpen, setWorkspacesDrawerOpen] = useState(false)
   const [explorerDrawerOpen, setExplorerDrawerOpen] = useState(false)
 
-  // Touch Swipe Gesture Variables
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
-  const controlBarZoneRef = useRef<HTMLDivElement | null>(null)
-
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     handleResize()
@@ -1913,46 +1909,6 @@ export function AppLayout() {
 
   const currentActiveLeaf = activeTab ? (findActiveLeaf(activeTab.layout, activePaneId) || findFirstLeaf(activeTab.layout)) : null
 
-  // Touch handlers for edge swipes
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) return
-    const touch = e.touches[0]
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY }
-  }
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStartRef.current) return
-    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) {
-      touchStartRef.current = null
-      return
-    }
-    const touch = e.touches[0]
-    const diffX = touch.clientX - touchStartRef.current.x
-    const diffY = touch.clientY - touchStartRef.current.y
-
-    // Ensure horizontal gesture
-    if (Math.abs(diffX) > Math.abs(diffY)) {
-      // Swipe from left edge (start x < 50) to open workspaces drawer
-      if (touchStartRef.current.x < 50 && diffX > 80) {
-        setExplorerDrawerOpen(false)
-        setWorkspacesDrawerOpen(true)
-        touchStartRef.current = null
-      }
-      // Swipe from right edge (start x > width - 50) to open explorer drawer
-      else if (touchStartRef.current.x > window.innerWidth - 50 && diffX < -80) {
-        if (activeWorkspace) {
-          setWorkspacesDrawerOpen(false)
-          setExplorerDrawerOpen(true)
-          touchStartRef.current = null
-        }
-      }
-    }
-  }
-
-  const handleTouchEnd = () => {
-    touchStartRef.current = null
-  }
-
   const pageBackground = getCustomization().terminal.background
 
   return (
@@ -1985,12 +1941,7 @@ export function AppLayout() {
         </div>
       )}
       {isMobile ? (
-        <div 
-          className="flex flex-col h-full w-full overflow-hidden relative"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
+        <div className="flex flex-col h-full w-full overflow-hidden relative">
           {/* Top Header */}
           <header className="flex items-center justify-between h-[50px] border-b border-border bg-secondary/15 px-3 shrink-0">
             <Button variant="ghost" size="icon" className="animate-none" onClick={() => { setExplorerDrawerOpen(false); setWorkspacesDrawerOpen(true) }}>
@@ -2186,7 +2137,7 @@ export function AppLayout() {
                 </div>
 
                 {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
-                <div ref={controlBarZoneRef}>
+                <div>
                   {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
                     <MobileControlBar terminalId={currentActiveLeaf.id} />
                   )}
