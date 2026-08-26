@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical, ChevronRight } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, FolderPlus, Settings, MoreVertical, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 
@@ -8,7 +8,7 @@ import { WorkspacePickerDialog } from './WorkspacePickerDialog'
 import { WorkspaceEditDialog } from './WorkspaceEditDialog'
 import { WorkspaceFolderDialog } from './WorkspaceFolderDialog'
 import { WorkspaceContextMenu } from './WorkspaceContextMenu'
-import { FolderMenu } from './FolderMenu'
+import { FolderContextMenu } from './FolderContextMenu'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { WorkspacePreview, type PreviewAnchor } from './WorkspacePreview'
 import { type Workspace, type WorkspaceFolder } from '@/features/workspaces/types'
@@ -485,38 +485,24 @@ export function WorkspacePanel({
     if (!folderContextMenu) return null
     const folder = allFolders.find((f) => f.id === folderContextMenu.folderId)
     if (!folder) return null
-    return createPortal(
-      <div
-        className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
-        style={{ left: folderContextMenu.x, top: folderContextMenu.y }}
-        onMouseDown={(e) => e.stopPropagation()}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        <button
-          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); setPickerFolderId(folder.id); setPickerOpen(true) }}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New workspace
-        </button>
-        <div className="my-0.5 border-t border-border" />
-        <button
-          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); setFolderDialog({ mode: 'edit', folder }) }}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          Edit folder
-        </button>
-        <div className="my-0.5 border-t border-border" />
-        <button
-          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); onDeleteFolder?.(folder.id) }}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete folder
-        </button>
-      </div>,
-      document.body,
+    return (
+      <FolderContextMenu
+        x={folderContextMenu.x}
+        y={folderContextMenu.y}
+        onNewWorkspace={() => {
+          setFolderContextMenu(null)
+          setPickerFolderId(folder.id)
+          setPickerOpen(true)
+        }}
+        onEdit={() => {
+          setFolderContextMenu(null)
+          setFolderDialog({ mode: 'edit', folder })
+        }}
+        onDelete={() => {
+          setFolderContextMenu(null)
+          onDeleteFolder?.(folder.id)
+        }}
+      />
     )
   }
 
@@ -705,10 +691,27 @@ export function WorkspacePanel({
                     <span className="truncate flex-1 font-medium">{row.folder.name}</span>
                     <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
                       <div className={`absolute inset-0 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        <FolderMenu
-                          onEdit={() => setFolderDialog({ mode: 'edit', folder: row.folder })}
-                          onDelete={() => onDeleteFolder?.(row.folder.id)}
-                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (folderContextMenu?.folderId === row.folder.id) {
+                              setFolderContextMenu(null)
+                            } else {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setFolderContextMenu({
+                                x: Math.max(4, rect.right - 160),
+                                y: rect.bottom + 2,
+                                folderId: row.folder.id,
+                              })
+                            }
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className="h-5 w-5 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center justify-center"
+                          title="More"
+                        >
+                          <MoreVertical className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
                   </div>
