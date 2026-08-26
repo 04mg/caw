@@ -339,11 +339,21 @@ export function LazyFileNode({
         >
           {isDir ? (
             <>
-              {expanded ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
-              )}
+              <span
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggle()
+                }}
+                className="flex items-center justify-center p-0.5 -m-0.5 hover:bg-accent/60 rounded cursor-pointer shrink-0"
+              >
+                {expanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/75" />
+                )}
+              </span>
               {expanded ? (
                 <FolderOpen className={`h-3.5 w-3.5 shrink-0 ${iconClass || 'text-muted-foreground/70'}`} />
               ) : (
