@@ -139,21 +139,10 @@ export function useFloatingPrompt() {
   }, [])
 
   // Global key listener:
-  //  - Alt+Space: reopen the bubble (regardless of focus).
   //  - Escape (while open): close without clearing.
   //  - printable key (while closed, unfocused): open seeded with the char.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Alt+Space: always reopen (even if focus is in a terminal/editor).
-      if (e.altKey && e.code === 'Space') {
-        e.preventDefault()
-        e.stopPropagation()
-        if (!open) {
-          reopenBubble()
-        }
-        return
-      }
-
       if (open) {
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -177,7 +166,7 @@ export function useFloatingPrompt() {
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [open, openBubble, closeBubble, reopenBubble])
+  }, [open, openBubble, closeBubble])
 
   return {
     open,

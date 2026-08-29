@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Trash2, FolderPlus, Settings, MoreVertical, ChevronRight } from 'lucide-react'
+import { Plus, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, FolderPlus, Settings, MoreVertical, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/button'
 import { ScrollArea } from '@/components/scroll-area'
 
@@ -8,7 +8,7 @@ import { WorkspacePickerDialog } from './WorkspacePickerDialog'
 import { WorkspaceEditDialog } from './WorkspaceEditDialog'
 import { WorkspaceFolderDialog } from './WorkspaceFolderDialog'
 import { WorkspaceContextMenu } from './WorkspaceContextMenu'
-import { FolderMenu } from './FolderMenu'
+import { FolderContextMenu } from './FolderContextMenu'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { WorkspacePreview, type PreviewAnchor } from './WorkspacePreview'
 import { type Workspace, type WorkspaceFolder } from '@/features/workspaces/types'
@@ -28,6 +28,14 @@ const commonEmojis = ['🚀', '💻', '⚡', '🎯', '🔥', '🌈', '🌟', '�
 const PREVIEW_HOVER_DELAY_MS = 1000
 const PREVIEW_HIDE_GRACE_MS = 150
 
+// Minimum pointer movement (px) before a press is promoted to a drag. Below
+// this the gesture is treated as a tap so taps reliably toggle folders /
+// select workspaces — critical on touch devices where pointerdown would
+// otherwise hijack every interaction as a drag.
+const DRAG_THRESHOLD = 6
+
+const COLLAPSED_FOLDERS_KEY = 'caw:sidebarCollapsedFolders'
+
 type DropZone = 'before' | 'after' | 'into'
 
 function getIsMobile() {
@@ -40,12 +48,13 @@ interface WorkspacePanelProps {
   sidebarOrder?: string[]
   activeWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
-  onAddWorkspace: (path: string, name: string, emoji: string) => void
+  onAddWorkspace: (path: string, name: string, emoji: string, folderId?: string) => void
   onDeleteWorkspace: (id: string) => void
   onEditWorkspace: (id: string, name: string, emoji: string) => void
   onCreateFolder?: (name: string, emoji: string, workspaceIds?: string[]) => void
   onEditFolder?: (id: string, name: string, emoji: string) => void
   onDeleteFolder?: (id: string) => void
+  onAddWorkspaceToFolder?: (folderId: string) => void
   onSidebarMutation?: (fn: (s: SidebarState) => SidebarState) => void
   collapsed: boolean
   onToggle: () => void
@@ -81,7 +90,19 @@ export function WorkspacePanel({
   const pickerOpen = externalPickerOpen ?? internalPickerOpen
   const setPickerOpen = onPickerOpenChange ?? setInternalPickerOpen
   const [editTarget, setEditTarget] = useState<Workspace | null>(null)
-  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set())
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_FOLDERS_KEY)
+      if (!raw) return new Set()
+      const arr = JSON.parse(raw)
+      return Array.isArray(arr) ? new Set(arr.filter((v) => typeof v === 'string')) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  // When the workspace picker is opened from a folder's context menu, the
+  // newly created workspace is assigned to this folder on confirm.
+  const [pickerFolderId, setPickerFolderId] = useState<string | null>(null)
   const [folderDialog, setFolderDialog] = useState<
     { mode: 'create'; assignWsId?: string } | { mode: 'edit'; folder: WorkspaceFolder } | null
   >(null)
@@ -92,6 +113,11 @@ export function WorkspacePanel({
   const [dropTarget, setDropTarget] = useState<{ index: number; zone: DropZone } | null>(null)
   const [dragOffset, setDragOffset] = useState(0)
   const dragStartYRef = useRef(0)
+  // A pointer press that hasn't yet crossed DRAG_THRESHOLD. While pending,
+  // the gesture behaves as a tap (lets click fire); it's only promoted to a
+  // drag once the pointer moves past the threshold. This is what makes taps
+  // on folders/workspaces reliable on touch devices.
+  const pendingDragRef = useRef<{ index: number; pointerId: number; target: HTMLElement | null } | null>(null)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workspaceId: string } | null>(null)
   const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null)
@@ -134,6 +160,12 @@ export function WorkspacePanel({
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  // Clear the pending folder assignment whenever the picker closes so a
+  // later "Add workspace" (header / general menu) doesn't inherit it.
+  useEffect(() => {
+    if (!pickerOpen) setPickerFolderId(null)
+  }, [pickerOpen])
+
   useEffect(() => {
     if (!contextMenu) return
     const onDown = () => setContextMenu(null)
@@ -157,10 +189,11 @@ export function WorkspacePanel({
 
   const handleChoose = useCallback(
     (path: string, name: string, emoji: string) => {
-      onAddWorkspace(path, name, emoji)
+      onAddWorkspace(path, name, emoji, pickerFolderId ?? undefined)
+      setPickerFolderId(null)
       setPickerOpen(false)
     },
-    [onAddWorkspace, setPickerOpen],
+    [onAddWorkspace, setPickerOpen, pickerFolderId],
   )
 
   const handleEditSave = useCallback(
@@ -189,6 +222,9 @@ export function WorkspacePanel({
       const next = new Set(prev)
       if (next.has(folderId)) next.delete(folderId)
       else next.add(folderId)
+      try {
+        localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...next]))
+      } catch { /* ignore quota / private mode */ }
       return next
     })
   }, [])
@@ -205,17 +241,42 @@ export function WorkspacePanel({
   const onPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>, index: number) => {
       if (e.button !== 0) return
+      // Record the press as a *pending* drag. We don't capture the pointer
+      // or enter drag mode yet — that only happens once the pointer moves
+      // past DRAG_THRESHOLD, so a tap never gets hijacked as a drag.
       dragStartYRef.current = e.clientY
-      setDragIndex(index)
-      setDropTarget(null)
-      setDragOffset(0)
-      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+      pendingDragRef.current = { index, pointerId: e.pointerId, target: e.target as HTMLElement }
     },
     [],
   )
 
+  // Promote a pending press into an actual drag: capture the pointer and
+  // flip dragIndex so the row follows the cursor.
+  const beginDrag = useCallback((index: number, pointerId: number, target: HTMLElement | null) => {
+    setDragIndex(index)
+    setDropTarget(null)
+    setDragOffset(0)
+    if (target && target.setPointerCapture) {
+      try { target.setPointerCapture(pointerId) } catch { /* target may have changed */ }
+    }
+  }, [])
+
   const onPointerMove = useCallback(
     (e: PointerEvent<HTMLDivElement>, index: number) => {
+      // Promote a pending drag once the pointer crosses the threshold. The
+      // move arrives on the row that received pointerdown; compare against
+      // the pending record before entering drag mode.
+      const pending = pendingDragRef.current
+      if (pending && pending.index === index) {
+        const delta = e.clientY - dragStartYRef.current
+        if (Math.abs(delta) >= DRAG_THRESHOLD) {
+          beginDrag(pending.index, pending.pointerId, pending.target)
+          pendingDragRef.current = null
+        } else {
+          return
+        }
+      }
+
       if (dragIndex !== index) return
       const delta = e.clientY - dragStartYRef.current
       setDragOffset(delta)
@@ -246,7 +307,7 @@ export function WorkspacePanel({
       const prevKey = dropTarget ? `${dropTarget.index}:${dropTarget.zone}` : ''
       if (nextKey !== prevKey) setDropTarget(hit)
     },
-    [dragIndex, baseRows, rows, dropTarget],
+    [dragIndex, baseRows, rows, dropTarget, beginDrag],
   )
 
   const performDrop = useCallback(() => {
@@ -293,6 +354,12 @@ export function WorkspacePanel({
 
   const onPointerUp = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
+      // If this was only a pending press (never crossed the threshold), just
+      // clear it and let the native click fire. No pointer was captured.
+      if (pendingDragRef.current) {
+        pendingDragRef.current = null
+        return
+      }
       ;(e.target as HTMLElement).releasePointerCapture?.(e.pointerId)
       performDrop()
       setDragIndex(null)
@@ -418,30 +485,24 @@ export function WorkspacePanel({
     if (!folderContextMenu) return null
     const folder = allFolders.find((f) => f.id === folderContextMenu.folderId)
     if (!folder) return null
-    return createPortal(
-      <div
-        className="fixed z-50 w-40 rounded-md border border-border bg-popover shadow-md py-0.5 smart-context-menu"
-        style={{ left: folderContextMenu.x, top: folderContextMenu.y }}
-        onMouseDown={(e) => e.stopPropagation()}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        <button
-          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); setFolderDialog({ mode: 'edit', folder }) }}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          Edit folder
-        </button>
-        <div className="my-0.5 border-t border-border" />
-        <button
-          onClick={(e) => { e.stopPropagation(); setFolderContextMenu(null); onDeleteFolder?.(folder.id) }}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete folder
-        </button>
-      </div>,
-      document.body,
+    return (
+      <FolderContextMenu
+        x={folderContextMenu.x}
+        y={folderContextMenu.y}
+        onNewWorkspace={() => {
+          setFolderContextMenu(null)
+          setPickerFolderId(folder.id)
+          setPickerOpen(true)
+        }}
+        onEdit={() => {
+          setFolderContextMenu(null)
+          setFolderDialog({ mode: 'edit', folder })
+        }}
+        onDelete={() => {
+          setFolderContextMenu(null)
+          onDeleteFolder?.(folder.id)
+        }}
+      />
     )
   }
 
@@ -570,7 +631,7 @@ export function WorkspacePanel({
             variant="ghost"
             size="icon"
             className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={() => setPickerOpen(true)}
+            onClick={() => { setPickerFolderId(null); setPickerOpen(true) }}
             title="Add workspace"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -630,10 +691,27 @@ export function WorkspacePanel({
                     <span className="truncate flex-1 font-medium">{row.folder.name}</span>
                     <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
                       <div className={`absolute inset-0 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        <FolderMenu
-                          onEdit={() => setFolderDialog({ mode: 'edit', folder: row.folder })}
-                          onDelete={() => onDeleteFolder?.(row.folder.id)}
-                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (folderContextMenu?.folderId === row.folder.id) {
+                              setFolderContextMenu(null)
+                            } else {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setFolderContextMenu({
+                                x: Math.max(4, rect.right - 160),
+                                y: rect.bottom + 2,
+                                folderId: row.folder.id,
+                              })
+                            }
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className="h-5 w-5 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center justify-center"
+                          title="More"
+                        >
+                          <MoreVertical className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -730,7 +808,7 @@ export function WorkspacePanel({
             onContextMenu={(e) => e.preventDefault()}
           >
             <button
-              onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setPickerOpen(true) }}
+              onClick={(e) => { e.stopPropagation(); setGeneralContextMenu(null); setPickerFolderId(null); setPickerOpen(true) }}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-foreground hover:bg-accent/60"
             >
               <Plus className="h-3.5 w-3.5" />

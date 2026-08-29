@@ -57,6 +57,7 @@ import { applyCustomization } from '@/features/customization/theme'
 import { PetStage } from '@/features/pets/components/PetStage'
 import { useFloatingPrompt } from '@/features/floating-prompt/hooks/useFloatingPrompt'
 import { FloatingPromptBubble } from '@/features/floating-prompt/components/FloatingPromptBubble'
+import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
 import { usePetReconciliation } from '@/features/pets/hooks/usePetReconciliation'
 import { petSlugForAgent } from '@/features/pets/petAssignment'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState'
@@ -173,10 +174,6 @@ export function AppLayout() {
   const [mobileView, setMobileView] = useState<'control_center' | 'terminals'>('control_center')
   const [workspacesDrawerOpen, setWorkspacesDrawerOpen] = useState(false)
   const [explorerDrawerOpen, setExplorerDrawerOpen] = useState(false)
-
-  // Touch Swipe Gesture Variables
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
-  const controlBarZoneRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
@@ -410,6 +407,7 @@ export function AppLayout() {
   const activeWorktreeBranch = activeLeaf?.agentBranch ?? undefined
 
   const floatingPrompt = useFloatingPrompt()
+  const voice = useVoiceMode()
   const canSendFloating = Boolean(activePaneId)
 
   const fetchGitStatus = useCallback(async () => {
@@ -1657,7 +1655,7 @@ export function AppLayout() {
   )
 
   const handleAddWorkspace = useCallback(
-    async (path: string, name: string, emoji: string) => {
+    async (path: string, name: string, emoji: string, folderId?: string) => {
       let absPath = path
       try {
         const res = await fetch(`/api/workspaces/details?path=${encodeURIComponent(path)}`)
@@ -1680,8 +1678,15 @@ export function AppLayout() {
         activeTabIndex: 0,
         activePaneId: layout ? collectLeafIds(layout)[0] || '' : '',
         enableWorktrees: false,
+        folderId,
       }
       setWorkspaces((prev) => [...prev, ws])
+      // When created inside a folder, ensure the folder is in the root order
+      // (it already is, since folders always live at the root) and that the
+      // new workspace doesn't appear as a loose root entry.
+      if (folderId) {
+        setSidebarOrder((prev) => prev.includes(folderId) ? prev : [...prev, folderId])
+      }
       setActiveWorkspaceId(ws.id)
     },
     [],
@@ -1837,6 +1842,27 @@ export function AppLayout() {
     },
     [getHotkey('findInFiles')]: () => openSearch('find'),
     [getHotkey('replaceInFiles')]: () => openSearch('replace'),
+    [getHotkey('toggleVoice')]: () => {
+      if (!isVoiceSupported()) return
+      if (voice.phase === 'idle') {
+        voice.start()
+      } else if (voice.phase === 'listening') {
+        if (isMobile) {
+          voice.stop()
+        } else {
+          voice.stop({ send: (text) => floatingPrompt.openWithText(text) })
+        }
+      } else if (voice.phase === 'review') {
+        voice.reset()
+      }
+    },
+    [getHotkey('floatingPrompt')]: () => {
+      if (floatingPrompt.open) {
+        floatingPrompt.closeBubble()
+      } else {
+        floatingPrompt.reopenBubble()
+      }
+    },
   })
 
   useEffect(() => {
@@ -1883,46 +1909,6 @@ export function AppLayout() {
 
   const currentActiveLeaf = activeTab ? (findActiveLeaf(activeTab.layout, activePaneId) || findFirstLeaf(activeTab.layout)) : null
 
-  // Touch handlers for edge swipes
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) return
-    const touch = e.touches[0]
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY }
-  }
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStartRef.current) return
-    if (controlBarZoneRef.current && e.target instanceof Node && controlBarZoneRef.current.contains(e.target)) {
-      touchStartRef.current = null
-      return
-    }
-    const touch = e.touches[0]
-    const diffX = touch.clientX - touchStartRef.current.x
-    const diffY = touch.clientY - touchStartRef.current.y
-
-    // Ensure horizontal gesture
-    if (Math.abs(diffX) > Math.abs(diffY)) {
-      // Swipe from left edge (start x < 50) to open workspaces drawer
-      if (touchStartRef.current.x < 50 && diffX > 80) {
-        setExplorerDrawerOpen(false)
-        setWorkspacesDrawerOpen(true)
-        touchStartRef.current = null
-      }
-      // Swipe from right edge (start x > width - 50) to open explorer drawer
-      else if (touchStartRef.current.x > window.innerWidth - 50 && diffX < -80) {
-        if (activeWorkspace) {
-          setWorkspacesDrawerOpen(false)
-          setExplorerDrawerOpen(true)
-          touchStartRef.current = null
-        }
-      }
-    }
-  }
-
-  const handleTouchEnd = () => {
-    touchStartRef.current = null
-  }
-
   const pageBackground = getCustomization().terminal.background
 
   return (
@@ -1955,12 +1941,7 @@ export function AppLayout() {
         </div>
       )}
       {isMobile ? (
-        <div 
-          className="flex flex-col h-full w-full overflow-hidden relative"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
+        <div className="flex flex-col h-full w-full overflow-hidden relative">
           {/* Top Header */}
           <header className="flex items-center justify-between h-[50px] border-b border-border bg-secondary/15 px-3 shrink-0">
             <Button variant="ghost" size="icon" className="animate-none" onClick={() => { setExplorerDrawerOpen(false); setWorkspacesDrawerOpen(true) }}>
@@ -2156,7 +2137,7 @@ export function AppLayout() {
                 </div>
 
                 {/* Mobile Control Bar - placed at the bottom, rises with keyboard */}
-                <div ref={controlBarZoneRef}>
+                <div>
                   {currentActiveLeaf && !currentActiveLeaf.filePath && !currentActiveLeaf.isDiff && (
                     <MobileControlBar terminalId={currentActiveLeaf.id} />
                   )}

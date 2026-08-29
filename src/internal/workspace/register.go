@@ -221,15 +221,19 @@ func zipPaths(paths []string) ([]byte, error) {
 			if err != nil {
 				return err
 			}
-			rel, err := filepath.Rel(filepath.Dir(abs), p)
+			rel, err := filepath.Rel(abs, p)
 			if err != nil {
 				return err
 			}
+			name := base
+			if rel != "." {
+				name = base + "/" + rel
+			}
 			if fi.IsDir() {
-				_, err = zw.Create(base + "/" + rel + "/")
+				_, err = zw.Create(name + "/")
 				return err
 			}
-			f, err := zw.Create(base + "/" + rel)
+			f, err := zw.Create(name)
 			if err != nil {
 				return err
 			}

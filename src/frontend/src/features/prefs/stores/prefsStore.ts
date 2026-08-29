@@ -47,6 +47,8 @@ export const DEFAULT_HOTKEYS: Record<string, string> = {
   toggleKanban: 'Alt+C',
   findInFiles: 'Alt+Shift+F',
   replaceInFiles: 'Alt+Shift+H',
+  toggleVoice: 'Alt+M',
+  floatingPrompt: 'Alt+Space',
 }
 
 export const HOTKEY_LABELS: Record<string, string> = {
@@ -61,6 +63,8 @@ export const HOTKEY_LABELS: Record<string, string> = {
   toggleKanban: 'Toggle Command Center',
   findInFiles: 'Find in files',
   replaceInFiles: 'Replace in files',
+  toggleVoice: 'Toggle voice mode',
+  floatingPrompt: 'Open floating prompt',
 }
 
 let cache: PrefsState = {

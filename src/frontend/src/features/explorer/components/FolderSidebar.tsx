@@ -33,6 +33,18 @@ interface FolderSidebarProps {
   isRight?: boolean
 }
 
+function pruneDescendants(paths: string[]): string[] {
+  const normPaths = paths.map((p) => normalizePath(p))
+  return paths.filter((_p, i) => {
+    const norm = normPaths[i]
+    return !normPaths.some((other, j) => {
+      if (i === j) return false
+      const prefix = other.endsWith('/') ? other : other + '/'
+      return norm.startsWith(prefix)
+    })
+  })
+}
+
 export function FolderSidebar({
   workspacePath,
   onOpenFile,
@@ -169,15 +181,16 @@ export function FolderSidebar({
     } else if (e.ctrlKey || e.metaKey) {
       toggleSelect(path)
     } else {
-      clearSelection()
+      selectOne(path)
     }
-  }, [selectRange, toggleSelect, clearSelection])
+  }, [selectRange, toggleSelect, selectOne])
 
   const handleDownload = useCallback(async (paths: string[]) => {
     setContextMenu(null)
-    if (paths.length === 1) {
+    const pruned = pruneDescendants(paths)
+    if (pruned.length === 1) {
       const a = document.createElement('a')
-      a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(paths[0])
+      a.href = '/api/workspaces/files?download=true&path=' + encodeURIComponent(pruned[0])
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -187,7 +200,7 @@ export function FolderSidebar({
       const res = await fetch('/api/workspaces/files/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths }),
+        body: JSON.stringify({ paths: pruned }),
       })
       if (res.ok) {
         const blob = await res.blob()
@@ -208,7 +221,8 @@ export function FolderSidebar({
       const isInSelection = selectedPaths.some((p) => normalizePath(p) === normalizePath(path))
       const raw = isInSelection ? selectedPaths : [path]
       const filtered = raw.filter((p) => normalizePath(p) !== normalizePath(workspacePath))
-      return filtered.length > 0 ? filtered : raw
+      const toPrune = filtered.length > 0 ? filtered : raw
+      return pruneDescendants(toPrune)
     },
     [selectedPaths, workspacePath],
   )
@@ -330,7 +344,8 @@ export function FolderSidebar({
   }, [deleteTarget, clearSelection, triggerRefresh, onRefresh])
 
   const handleCopy = useCallback((paths: string[]) => {
-    setClipboard({ paths })
+    const pruned = pruneDescendants(paths)
+    setClipboard({ paths: pruned })
     setContextMenu(null)
   }, [])
 
@@ -394,16 +409,38 @@ export function FolderSidebar({
           setSelectedPaths(visible)
           setAnchorPath(visible[visible.length - 1])
         }
-      } else if (event.key !== 'F2' || !hoveredPath || editingPath) {
-        return
-      } else {
-        event.preventDefault()
-        setEditingPath(hoveredPath)
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (editingPath || createTarget) return
+        const pathsToDelete = selectedPaths.length > 0
+          ? pruneDescendants(selectedPaths)
+          : (hoveredPath && hoveredPath !== workspacePath ? [hoveredPath] : [])
+        if (pathsToDelete.length > 0) {
+          event.preventDefault()
+          const firstName = pathsToDelete[0].split(/[\\/]/).filter(Boolean).pop() || pathsToDelete[0]
+          setDeleteTarget({
+            paths: pathsToDelete,
+            name: firstName,
+            isDir: false,
+          })
+        }
+      } else if (event.key === 'Escape') {
+        if (editingPath || createTarget) return
+        if (selectedPaths.length > 0) {
+          event.preventDefault()
+          clearSelection()
+        }
+      } else if (event.key === 'F2') {
+        if (editingPath || createTarget) return
+        const targetToRename = (selectedPaths.length === 1 ? selectedPaths[0] : null) || (hoveredPath && hoveredPath !== workspacePath ? hoveredPath : null)
+        if (targetToRename) {
+          event.preventDefault()
+          setEditingPath(targetToRename)
+        }
       }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [hoveredPath, editingPath, selectedPaths, clipboard, handleCopy, handlePaste, getVisiblePaths, workspacePath])
+  }, [hoveredPath, editingPath, createTarget, selectedPaths, clipboard, handleCopy, handlePaste, getVisiblePaths, workspacePath, clearSelection])
 
   const handleUpload = useCallback(async (targetDir: string, files: FileList) => {
     setBusy(true)
@@ -474,7 +511,7 @@ export function FolderSidebar({
     }
     const raw = e.dataTransfer.getData('application/x-caw-paths') || e.dataTransfer.getData('application/x-caw-path')
     if (!raw) return
-    const srcPaths = raw.split('\n').map((p) => p.trim()).filter(Boolean)
+    const srcPaths = pruneDescendants(raw.split('\n').map((p) => p.trim()).filter(Boolean))
     if (srcPaths.length === 0) return
     const sep = targetDir.includes('\\') ? '\\' : '/'
     // Resolve the full set of moves, skipping invalid targets (self,
@@ -556,7 +593,6 @@ export function FolderSidebar({
   const actionPaths = contextMenu ? getActionPaths(contextMenu.path) : []
   const isMultiAction = actionPaths.length > 1
   const allCopied = actionPaths.length > 0 && actionPaths.every((p) => isCopyToWorktreePath(p))
-  const copiedCount = actionPaths.filter((p) => isCopyToWorktreePath(p)).length
 
   return (
     <div ref={sidebarRef} className="flex h-full flex-col bg-background select-none explorer-sidebar">
@@ -720,7 +756,7 @@ export function FolderSidebar({
               className={itemClass}
             >
               <Copy className="h-3.5 w-3.5" />
-              Copy{isMultiAction ? ` (${actionPaths.length})` : ''}
+              Copy
             </button>,
           ])
         }
@@ -734,15 +770,12 @@ export function FolderSidebar({
               {allCopied ? (
                 <>
                   <CopyCheck className="h-3.5 w-3.5" />
-                  Stop copying{isMultiAction ? ` (${actionPaths.length})` : ''}
+                  Stop copying
                 </>
               ) : (
                 <>
                   <CopyPlus className="h-3.5 w-3.5" />
                   Copy to worktrees
-                  {isMultiAction
-                    ? ` (${actionPaths.length - copiedCount})`
-                    : (copiedCount > 0 ? ' (mixed)' : '')}
                 </>
               )}
             </button>,
@@ -767,7 +800,7 @@ export function FolderSidebar({
             className={itemClass}
           >
             <Download className="h-3.5 w-3.5" />
-            Download{isMultiAction ? ` (${actionPaths.length})` : ''}
+            Download
           </button>,
         ])
         if (!contextMenu.isRoot) {
@@ -778,7 +811,7 @@ export function FolderSidebar({
               className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-destructive hover:text-destructive-foreground"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Delete{isMultiAction ? ` (${actionPaths.length})` : ''}
+              Delete
             </button>,
           ])
         }

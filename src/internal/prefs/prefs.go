@@ -120,6 +120,10 @@ func defaultHotkeys() map[string]string {
 		"commandPalette":    "Alt+P",
 		"commandPaletteCmd": "Alt+Shift+P",
 		"toggleKanban":      "Alt+C",
+		"findInFiles":       "Alt+Shift+F",
+		"replaceInFiles":    "Alt+Shift+H",
+		"toggleVoice":       "Alt+M",
+		"floatingPrompt":    "Alt+Space",
 	}
 }
 
