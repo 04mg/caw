@@ -656,42 +656,6 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 		Weekly:   quota.Quota{Used: 0, Limit: 100, Unit: "percentage"},
 	}
 
-	var groups []quota.QuotaGroup
-	for _, group := range qs.Groups {
-		qg := quota.QuotaGroup{
-			Name:        group.DisplayName,
-			Description: group.Description,
-		}
-		for _, bucket := range group.Buckets {
-			if bucket.Disabled {
-				continue
-			}
-			fraction := 1.0
-			if bucket.RemainingFraction != nil {
-				fraction = *bucket.RemainingFraction
-			}
-			used := 100 - int(fraction*100)
-			if used < 0 {
-				used = 0
-			}
-			if used > 100 {
-				used = 100
-			}
-
-		qg.Items = append(qg.Items, quota.QuotaItem{
-			Name:        bucket.BucketID,
-			Label:       bucket.DisplayName,
-			Description: bucket.ResetDescription,
-			Used:        float64(used),
-			Limit:       100,
-			Unit:        "percentage",
-			ResetTime:   bucket.ResetTime,
-		})
-		}
-		groups = append(groups, qg)
-	}
-	res.Groups = groups
-
 	for _, group := range qs.Groups {
 		groupName := strings.ToLower(group.DisplayName)
 		for _, bucket := range group.Buckets {
@@ -714,24 +678,24 @@ func mapQuotaSummaryToResponse(qs *QuotaSummary) *quota.QuotaResponse {
 				used = 100
 			}
 
-		is5h := strings.Contains(combined, "5h") || strings.Contains(combined, "5-hour") || strings.Contains(combined, "five hour")
-		isWeekly := strings.Contains(combined, "weekly")
+			is5h := strings.Contains(combined, "5h") || strings.Contains(combined, "5-hour") || strings.Contains(combined, "five hour")
+			isWeekly := strings.Contains(combined, "weekly")
 
-		if strings.Contains(groupName, "gemini") {
-			if is5h {
-				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
-			} else if isWeekly {
-				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+			if strings.Contains(groupName, "gemini") {
+				if is5h {
+					res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				} else if isWeekly {
+					res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				}
+			} else {
+				// 3p/Claude/GPT or other model groups: override if 5h/Weekly unset or higher usage
+				if is5h && (res.FiveHour.ResetTime == "" || float64(used) > res.FiveHour.Used) {
+					res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				}
+				if isWeekly && (res.Weekly.ResetTime == "" || float64(used) > res.Weekly.Used) {
+					res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
+				}
 			}
-		} else if strings.Contains(groupName, "claude") || strings.Contains(groupName, "gpt") || strings.Contains(groupName, "3p") {
-			// Only set 5h or Weekly from 3p/Claude/GPT if Gemini did not set a reset time or if 3p usage is higher
-			if is5h && (res.FiveHour.ResetTime == "" || float64(used) > res.FiveHour.Used) {
-				res.FiveHour = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
-			}
-			if isWeekly && (res.Weekly.ResetTime == "" || float64(used) > res.Weekly.Used) {
-				res.Weekly = quota.Quota{Used: float64(used), Limit: 100, Unit: "percentage", ResetTime: bucket.ResetTime}
-			}
-		}
 		}
 	}
 	return res
