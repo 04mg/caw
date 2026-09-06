@@ -70,7 +70,7 @@ func (p *OpenRouterProvider) GetQuotas(config map[string]string) (*quota.QuotaRe
 		},
 	}
 
-	// Detailed breakdown as a group, mirroring the Antigravity approach.
+	// Detailed breakdown as a group.
 	totalUsed := float64(int(key.Usage + 0.5))
 	resetTime := ""
 	if key.LimitReset != nil {
