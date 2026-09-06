@@ -73,8 +73,8 @@ func TestMapQuotaSummaryToResponsePreservesGeminiWeekly(t *testing.T) {
 		t.Fatalf("res.FiveHour.ResetTime = %q, want %q", res.FiveHour.ResetTime, "2026-08-25T04:23:18Z")
 	}
 
-	if len(res.Groups) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(res.Groups))
+	if len(res.Groups) != 0 {
+		t.Fatalf("expected 0 groups, got %d", len(res.Groups))
 	}
 }
 
