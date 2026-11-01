@@ -180,6 +180,18 @@ var (
 	// ptyEscapePending delays a standalone ESC long enough to distinguish it
 	// from the first byte of a fragmented terminal escape sequence.
 	ptyEscapePending = make(map[string]*time.Timer)
+	// ptySubmit records the last time the user pressed Enter (a "\r" byte in
+	// the PTY input) in each leaf. Agents that keep every pane's transcript
+	// in one shared store (Codex: ~/.codex/sessions, written by a shared
+	// app-server daemon) create a new native session lazily when the user
+	// submits the first prompt (fresh launch, /new, /resume). Correlating
+	// the new session's turn-start time with the most recent Enter across
+	// the agent's panes tells which pane owns it — PTY *output* can't, as a
+	// busy sibling's spinner produces output continuously. A short history
+	// is kept (not just the latest Enter) so a turn is still attributed to
+	// the pane that started it after that pane's user typed more. Guarded
+	// by ptyInterruptMu.
+	ptySubmit = make(map[string][]time.Time)
 	// ptyPendingInput records the last time a leaf's PTY output showed an
 	// interactive prompt footer (question / permission / confirm screen).
 	// Some agents (Fx) render these prompts only in the TUI and write nothing
@@ -313,6 +325,11 @@ func init() {
 // flipping the status. Recording only the explicit interrupt keys keeps the
 // hook safe and narrow.
 func handlePtyInput(id string, data string) {
+	if strings.Contains(data, "\r") {
+		ptyInterruptMu.Lock()
+		recordPtySubmitLocked(id, time.Now())
+		ptyInterruptMu.Unlock()
+	}
 	if strings.Contains(data, "\x03") {
 		ptyInterruptMu.Lock()
 		if timer := ptyEscapePending[id]; timer != nil {
@@ -479,12 +496,43 @@ const ptyTailKeep = 64
 //
 // Fx writes nothing to its event log while such a screen is pending, so this
 // is the only ask-time signal available to the status watcher.
+//
+// Codex CLI likewise never persists its approval overlays to the rollout
+// transcript (the exec/patch/permission/network approval requests only
+// exist in the TUI until the user decides), so their titles are matched
+// here too:
+//   - "Would you like to run the following command?" (exec approval)
+//   - "Would you like to make the following edits?" (apply_patch approval)
+//   - "Would you like to grant these permissions?" (permission request)
+//   - "Would you like to send input to the existing terminal?" (stdin)
+//   - "Do you want to approve network access to" (network approval)
+//   - "Implement this plan?" (Plan mode: approve the proposed plan)
+//
+// Every marker must stay shorter than ptyTailKeep so it is still detected
+// when split across two PTY reads.
+var ptyPromptMarkers = []string{
+	// Fx
+	"Enter Answer",
+	"Tab Questions",
+	"Enter Confirm",
+	"Tab Amend",
+	"Choose now",
+	// Codex CLI
+	"Would you like to run the following command?",
+	"Would you like to make the following edits?",
+	"Would you like to grant these permissions?",
+	"Would you like to send input to the existing terminal?",
+	"Do you want to approve network access to",
+	"Implement this plan?",
+}
+
 func containsPtyPromptMarker(s string) bool {
-	return strings.Contains(s, "Enter Answer") ||
-		strings.Contains(s, "Tab Questions") ||
-		strings.Contains(s, "Enter Confirm") ||
-		strings.Contains(s, "Tab Amend") ||
-		strings.Contains(s, "Choose now")
+	for _, m := range ptyPromptMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePtyOutput scans raw PTY output for interactive prompt footers and
@@ -570,6 +618,96 @@ func SetPtyCtrlCForTest(sessionID string, at time.Time) {
 		ptyCtrlC[sessionID] = at
 	}
 	ptyInterruptMu.Unlock()
+}
+
+// ptySubmitHistory bounds the per-leaf Enter history.
+const ptySubmitHistory = 32
+
+func recordPtySubmitLocked(id string, at time.Time) {
+	h := append(ptySubmit[id], at)
+	if len(h) > ptySubmitHistory {
+		h = h[len(h)-ptySubmitHistory:]
+	}
+	ptySubmit[id] = h
+}
+
+// LastPtySubmit returns the time the user last pressed Enter in the given
+// leaf's PTY, or the zero time if never.
+func LastPtySubmit(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	h := ptySubmit[sessionID]
+	if len(h) == 0 {
+		return time.Time{}
+	}
+	return h[len(h)-1]
+}
+
+// PtySubmitOwner returns the leaf, among the live sessions of the given
+// agent, that pressed Enter last at or before `at` (plus a small clock
+// slack), within maxAge. Enters pressed after `at` are ignored, so a turn
+// stays attributed to the pane that started it even after that pane's user
+// typed more. It returns "" when no live leaf of that agent submitted
+// anything in that window.
+//
+// Watchers of agents whose native sessions live in a shared store use it to
+// decide which pane a freshly started native session/turn belongs to: the
+// turn was started by the pane where the user pressed Enter right before it.
+func PtySubmitOwner(agentID string, at time.Time, maxAge time.Duration) string {
+	const slack = 500 * time.Millisecond
+	activeSesMu.Lock()
+	var leaves []string
+	for id, w := range activeSessions {
+		if w.agentId == agentID {
+			leaves = append(leaves, id)
+		}
+	}
+	activeSesMu.Unlock()
+
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	var best string
+	var bestAt time.Time
+	for _, id := range leaves {
+		h := ptySubmit[id]
+		for i := len(h) - 1; i >= 0; i-- {
+			s := h[i]
+			if s.After(at.Add(slack)) {
+				continue
+			}
+			if at.Sub(s) <= maxAge && (best == "" || s.After(bestAt)) {
+				best, bestAt = id, s
+			}
+			break
+		}
+	}
+	return best
+}
+
+// SetPtySubmitForTest records (or clears) the last Enter keypress time for a
+// leaf. Intended only for tests; production code drives it via OnPtyInput.
+// A zero time clears the leaf's history; otherwise the time is appended.
+func SetPtySubmitForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptySubmit, sessionID)
+	} else {
+		recordPtySubmitLocked(sessionID, at)
+	}
+	ptyInterruptMu.Unlock()
+}
+
+// SetActiveSessionForTest registers (or, with an empty agentID, removes) a
+// live agent session for the given leaf without starting a watcher. Intended
+// only for tests of helpers that consult the live-session registry.
+func SetActiveSessionForTest(sessionID, agentID string) {
+	activeSesMu.Lock()
+	if agentID == "" {
+		delete(activeSessions, sessionID)
+	} else {
+		activeSessions[sessionID] = &watcherContext{agentId: agentID, sessionId: sessionID, cancel: func() {}}
+	}
+	activeSesMu.Unlock()
 }
 
 // SetPtyActivityForTest records (or clears) the last-activity timestamp for a
@@ -882,6 +1020,10 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	ptyFocusMu.Lock()
 	delete(ptyFocus, id)
 	ptyFocusMu.Unlock()
+
+	ptyInterruptMu.Lock()
+	delete(ptySubmit, id)
+	ptyInterruptMu.Unlock()
 
 	ClearPtyPendingInput(id)
 
