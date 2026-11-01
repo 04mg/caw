@@ -1,8 +1,11 @@
 package terminal
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/04mg/caw/internal/state"
 )
@@ -52,7 +55,17 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return appendNonFlag(cmd, "--continue")
 	case "claude":
-		// claude --dangerously-skip-permissions -> add --continue
+		// Claude accepts an exact session id via --resume <uuid>. The status
+		// watcher records the bound transcript path (<projects>/<dir>/<uuid>.jsonl)
+		// as the external session; resuming that exact id keeps several Claude
+		// panes in one cwd on their own conversations (and keeps the watcher
+		// bound to the right transcript). Fall back to --continue otherwise.
+		if hasAnyArg(cmd, claudeSessionFlags) {
+			return cmd
+		}
+		if id := ClaudeSessionIDFromPath(externalID); id != "" {
+			return append(cmd, "--resume", id)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "codex":
 		// codex resume <session-id> | codex resume --last
@@ -61,7 +74,14 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return injectCodexResume(cmd, "")
 	case "copilot":
-		// copilot --allow-all-tools --allow-all-paths -> add --continue
+		// Copilot CLI: --resume <session-id> reattaches to an exact session
+		// (the session-state directory name the status watcher records);
+		// --continue resumes the most recent one, which is wrong when
+		// several Copilot panes share a cwd.
+		if externalID != "" {
+			cmd = appendNonFlag(cmd, "--resume")
+			return append(cmd, externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "agy":
 		// Antigravity: --conversation <id> reattaches to an exact conversation;
@@ -79,10 +99,19 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return appendNonFlag(cmd, "--continue")
 	case "pi":
-		// pi --continue / -c continues the previous session.
+		// pi --session <file> reopens an exact transcript; --continue / -c
+		// continues the most recent session in the cwd. The external id
+		// recorded by the status watcher is the transcript path.
+		if transcriptExists(externalID) && !hasAnyFlag(cmd, "--session", "--continue", "-c", "--resume", "-r") {
+			return append(cmd, "--session", externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "omp":
-		// Oh My Pi (omp) --continue / -c continues the previous session.
+		// Oh My Pi: --resume <file|id> reopens an exact session; --continue
+		// falls back to this terminal's (or the cwd's) most recent one.
+		if transcriptExists(externalID) && !hasAnyFlag(cmd, "--session", "--continue", "-c", "--resume", "-r") {
+			return append(cmd, "--resume", externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "hermes":
 		// Hermes: --resume <session-id> reattaches to an exact session;
@@ -93,9 +122,14 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return appendNonFlag(cmd, "--continue")
 	case "command-code", "commandcode":
-		// Command Code: --continue / -c resumes the most recent session in
-		// the current directory. The CLI does not expose an exact-session-id
-		// resume flag for arbitrary external ids, so fall back to it.
+		// Command Code: --session <transcript path|id> resumes an exact
+		// session (the watcher records the transcript path); --continue / -c
+		// resumes the most recent session in the current directory, which is
+		// wrong when several Command Code panes share a cwd.
+		if externalID != "" {
+			cmd = appendNonFlag(cmd, "--session")
+			return append(cmd, externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "fx":
 		// Fx: --resume <session-id> reattaches to an exact session;
@@ -171,4 +205,94 @@ func injectCodexResume(cmd []string, sessionID string) []string {
 	}
 	out = append(out, cmd[1:]...)
 	return out
+}
+
+// transcriptExists reports whether p names an existing JSONL transcript file
+// (the external session id Pi-family watchers record).
+func transcriptExists(p string) bool {
+	if p == "" || !strings.HasSuffix(p, ".jsonl") || !filepath.IsAbs(p) {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// hasAnyFlag reports whether cmd already contains any of the given flags.
+func hasAnyFlag(cmd []string, flags ...string) bool {
+	for _, a := range cmd {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// claudeSessionFlags are the Claude Code CLI flags that already select which
+// conversation the process runs. When any is present Caw leaves the command
+// untouched (no --continue / --resume / --session-id injection).
+var claudeSessionFlags = []string{
+	"--session-id", "--resume", "-r", "--continue", "-c", "--fork-session",
+	"--print", "-p", "--teleport", "--from-pr", "--cloud", "--bg", "--background",
+}
+
+// claudeSubcommands are Claude Code CLI subcommands; a command using one of
+// them is not an interactive session and must not get session flags.
+var claudeSubcommands = map[string]bool{
+	"attach": true, "logs": true, "respawn": true, "rm": true, "stop": true, "kill": true,
+	"mcp": true, "config": true, "doctor": true, "update": true, "install": true,
+	"migrate-installer": true, "setup-token": true, "plugin": true, "auth": true, "agents": true,
+}
+
+func hasAnyArg(cmd []string, flags []string) bool {
+	for _, a := range cmd[1:] {
+		for _, f := range flags {
+			if a == f || strings.HasPrefix(a, f+"=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ClaudeSessionIDFromPath extracts the session UUID from a Claude transcript
+// path (<projects>/<encoded-cwd>/<uuid>.jsonl), or returns "" when p is not
+// such a path.
+func ClaudeSessionIDFromPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	base := filepath.Base(p)
+	if !strings.HasSuffix(base, ".jsonl") {
+		return ""
+	}
+	id := strings.TrimSuffix(base, ".jsonl")
+	if _, err := uuid.Parse(id); err != nil {
+		return ""
+	}
+	return id
+}
+
+// pinClaudeSession appends `--session-id <new uuid>` to a fresh interactive
+// Claude launch so the conversation id (and therefore the transcript file
+// <projects>/<encoded-cwd>/<uuid>.jsonl) is known up front. The status
+// watcher reads it back from the launch command and binds to exactly that
+// transcript instead of guessing from file modification times — which used to
+// bind a new pane to a sibling pane's (or a previous run's) transcript in the
+// same cwd, or to any project's transcript when Claude's directory encoding
+// did not match Caw's. Commands that already select a session (or use a
+// subcommand) are returned unchanged.
+func pinClaudeSession(cmd []string) []string {
+	if len(cmd) == 0 || agentBaseName(cmd[0]) != "claude" {
+		return cmd
+	}
+	if hasAnyArg(cmd, claudeSessionFlags) {
+		return cmd
+	}
+	if len(cmd) > 1 && claudeSubcommands[cmd[1]] {
+		return cmd
+	}
+	out := append([]string(nil), cmd...)
+	return append(out, "--session-id", uuid.New().String())
 }

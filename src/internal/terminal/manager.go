@@ -65,6 +65,10 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	if m.store != nil && id != "" && len(cmd) > 0 {
 		cmd = resumeCmdForAgent(m.store, id, cmd)
 	}
+	// A fresh Claude launch gets a pinned --session-id so its status watcher
+	// can bind to the exact transcript (no-op for resumed launches, which
+	// already carry --resume/--continue, and for non-Claude commands).
+	cmd = pinClaudeSession(cmd)
 
 	ps, err := startPty(cwd, cmd, req.Env)
 	if err != nil {
@@ -85,6 +89,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	m.sessionsMu.Lock()
 	m.sessions[id] = sess
 	m.sessionsMu.Unlock()
+	setTtyName(id, ps.TtyName())
 
 	if m.store != nil && id != "" && len(req.Cmd) > 0 {
 		if aid := agentBaseName(req.Cmd[0]); isKnownAgent(aid) {
@@ -113,6 +118,7 @@ func (m *SessionManager) buildOnExit(sess *Session, cwd, id string) func() {
 
 		m.sessionsMu.Lock()
 		delete(m.sessions, id)
+		clearTtyName(id)
 
 		stillInUse := false
 		for _, s := range m.sessions {

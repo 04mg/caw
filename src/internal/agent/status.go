@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/04mg/caw/internal/push"
 	"github.com/04mg/caw/internal/state"
@@ -93,6 +96,7 @@ type watcherContext struct {
 	cwd       string
 	cmd       []string
 	resume    bool
+	startedAt time.Time
 }
 
 // StatusWatcher is the interface that each agent status provider must implement.
@@ -170,9 +174,37 @@ var (
 	// persist an interrupted turn to state.db).
 	ptyInterrupt   = make(map[string]time.Time)
 	ptyInterruptMu sync.RWMutex
+	// ptyCtrlC records the last time the user sent Ctrl+C (byte 0x03) into
+	// each leaf's PTY. Unlike ptyInterrupt it ignores a standalone ESC: some
+	// agents (Hermes) only cancel a turn on Ctrl+C and treat ESC as a no-op or
+	// an overlay/selection dismiss, so counting ESC as an interrupt would flip
+	// a still-working card to "interrupted" and swallow its "finished" push.
+	// Guarded by ptyInterruptMu.
+	ptyCtrlC = make(map[string]time.Time)
+	// ptyAnswerKey records the last time the user sent "answer-like" input into
+	// each leaf's PTY: Enter, a standalone ESC, Ctrl+C, or a single printable
+	// key (TUI option shortcuts such as "1"/"2"/"y"). Terminal-generated
+	// reports (focus in/out, cursor position, device attributes) and
+	// navigation escape sequences are NOT counted. Watchers use it to tell
+	// whether an interactive prompt seen in the PTY output has since been
+	// answered, and to attribute a mid-session /clear (new transcript) to the
+	// pane the user actually typed into. Guarded by ptyInterruptMu.
+	ptyAnswerKey = make(map[string]time.Time)
 	// ptyEscapePending delays a standalone ESC long enough to distinguish it
 	// from the first byte of a fragmented terminal escape sequence.
 	ptyEscapePending = make(map[string]*time.Timer)
+	// ptySubmit records the last time the user pressed Enter (a "\r" byte in
+	// the PTY input) in each leaf. Agents that keep every pane's transcript
+	// in one shared store (Codex: ~/.codex/sessions, written by a shared
+	// app-server daemon) create a new native session lazily when the user
+	// submits the first prompt (fresh launch, /new, /resume). Correlating
+	// the new session's turn-start time with the most recent Enter across
+	// the agent's panes tells which pane owns it — PTY *output* can't, as a
+	// busy sibling's spinner produces output continuously. A short history
+	// is kept (not just the latest Enter) so a turn is still attributed to
+	// the pane that started it after that pane's user typed more. Guarded
+	// by ptyInterruptMu.
+	ptySubmit = make(map[string][]time.Time)
 	// ptyPendingInput records the last time a leaf's PTY output showed an
 	// interactive prompt footer (question / permission / confirm screen).
 	// Some agents (Fx) render these prompts only in the TUI and write nothing
@@ -186,6 +218,52 @@ var (
 	// ReadLoop chunks so a prompt footer marker split across two chunks is
 	// still detected. Guarded by ptyPendingInputMu.
 	ptyOutputTail = make(map[string]string)
+	// ptyRawCarry holds an incomplete trailing escape sequence of a Claude
+	// leaf's previous output chunk. Guarded by ptyPendingInputMu.
+	ptyRawCarry = make(map[string]string)
+	// ptyBusy / ptyToolRunning record the last time a leaf's PTY rendered a
+	// "working" status line or a running-tool marker (see ptyBusyMarkers and
+	// ptyToolRunningMarkers). Guarded by ptyPendingInputMu.
+	ptyBusy        = make(map[string]time.Time)
+	ptyToolRunning = make(map[string]time.Time)
+	// ptySubmits records the most recent times the user submitted a line
+	// (Enter: input containing CR/LF) into each leaf's PTY, newest last,
+	// capped at ptySubmitHistory entries. Agents that keep every session of a
+	// cwd in one shared store (OpenCode's SQLite DB) create the native session
+	// / user message a few milliseconds after the Enter that caused it, so the
+	// submit history is what ties a freshly written session to the pane that
+	// produced it (see PtySubmitOwner). Guarded by ptySubmitMu.
+	ptySubmits = make(map[string][]ptyLineSubmit)
+	// ptyLine accumulates the printable text typed into each leaf since its
+	// last submit, so a submit can carry the line it sent. Guarded by
+	// ptySubmitMu.
+	ptyLine = make(map[string][]rune)
+	// ptyClick records the last mouse button release sent into each leaf's
+	// PTY. A click can answer a TUI dialog (e.g. OpenCode's permission
+	// buttons) without any Enter key, so it counts as an answer in
+	// LastPtyAnswer. Guarded by ptySubmitMu.
+	ptyClick    = make(map[string]time.Time)
+	ptySubmitMu sync.RWMutex
+)
+
+// ptyLineSubmit is one Enter in a leaf's PTY and the text typed before it.
+type ptyLineSubmit struct {
+	at   time.Time
+	text string
+}
+
+// ptyLineSubmitHistory caps the per-leaf submit history kept for PtyLineSubmitOwner.
+const ptyLineSubmitHistory = 16
+
+// ptyLineMax caps the typed text remembered per submit.
+const ptyLineMax = 512
+
+// ptySubmitLead / ptySubmitLag bound how far a submit may precede (lead) or
+// follow (lag, clock/ordering slack) the native session write it is matched
+// against in PtySubmitOwner.
+const (
+	ptySubmitLead = 15 * time.Second
+	ptySubmitLag  = 1 * time.Second
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -306,22 +384,39 @@ func init() {
 // flipping the status. Recording only the explicit interrupt keys keeps the
 // hook safe and narrow.
 func handlePtyInput(id string, data string) {
+	if strings.Contains(data, "\r") {
+		ptyInterruptMu.Lock()
+		recordPtySubmitLocked(id, time.Now())
+		ptyInterruptMu.Unlock()
+	}
+	recordPtyInputText(id, data)
+	recordPtyAnswerInput(id, data, time.Now())
 	if strings.Contains(data, "\x03") {
 		ptyInterruptMu.Lock()
 		if timer := ptyEscapePending[id]; timer != nil {
 			timer.Stop()
 			delete(ptyEscapePending, id)
 		}
-		ptyInterrupt[id] = time.Now()
+		now := time.Now()
+		ptyInterrupt[id] = now
+		ptyCtrlC[id] = now
+		ptyAnswerKey[id] = now
 		ptyInterruptMu.Unlock()
 		return
 	}
 
 	ptyInterruptMu.Lock()
 	if data != "\x1b" {
+		fragment := false
 		if timer := ptyEscapePending[id]; timer != nil {
+			// Continuation of an escape sequence split across reads
+			// (e.g. "\x1b" then "[A"): neither an interrupt nor an answer.
 			timer.Stop()
 			delete(ptyEscapePending, id)
+			fragment = true
+		}
+		if !fragment && isSubmitInput(data) {
+			ptyAnswerKey[id] = time.Now()
 		}
 		ptyInterruptMu.Unlock()
 		return
@@ -333,11 +428,231 @@ func handlePtyInput(id string, data string) {
 		ptyInterruptMu.Lock()
 		if ptyEscapePending[id] != nil {
 			delete(ptyEscapePending, id)
-			ptyInterrupt[id] = time.Now()
+			now := time.Now()
+			ptyInterrupt[id] = now
+			// A standalone ESC also dismisses/answers an interactive prompt.
+			ptyAnswerKey[id] = now
 		}
 		ptyInterruptMu.Unlock()
 	})
 	ptyInterruptMu.Unlock()
+}
+
+// recordPtyAnswerInput records submit (Enter) and mouse-click input for a
+// leaf. Enter arrives as CR (xterm.js) or LF (some mobile/IME paths); a click
+// is an SGR mouse button release ("\x1b[<b;x;ym"). Mouse motion reports end
+// in "M" and are ignored. Printable text typed before an Enter is remembered
+// with the submit (escape sequences dropped, backspace applied) so
+// PtySubmitOwner can match it against the prompt the agent persisted.
+func recordPtyAnswerInput(id, data string, now time.Time) {
+	click := isMouseRelease(data)
+	ptySubmitMu.Lock()
+	defer ptySubmitMu.Unlock()
+	if click {
+		ptyClick[id] = now
+	}
+	line := ptyLine[id]
+	for i := 0; i < len(data); {
+		c := data[i]
+		switch {
+		case c == 0x1b:
+			i = skipEscapeSequence(data, i)
+			continue
+		case c == '\r' || c == '\n':
+			h := append(ptySubmits[id], ptyLineSubmit{at: now, text: string(line)})
+			if len(h) > ptyLineSubmitHistory {
+				h = h[len(h)-ptyLineSubmitHistory:]
+			}
+			ptySubmits[id] = h
+			line = line[:0]
+		case c == 0x7f || c == 0x08:
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+			}
+		case c == 0x15 || c == 0x03: // Ctrl+U / Ctrl+C clear the input line
+			line = line[:0]
+		case c < 0x20:
+		default:
+			r, size := utf8.DecodeRuneInString(data[i:])
+			line = append(line, r)
+			if len(line) > ptyLineMax {
+				line = line[len(line)-ptyLineMax:]
+			}
+			i += size
+			continue
+		}
+		i++
+	}
+	ptyLine[id] = line
+}
+
+// skipEscapeSequence returns the index just past the escape sequence that
+// starts at data[i] (ESC). Handles CSI (ESC [ ... final), OSC/DCS-like
+// strings terminated by BEL or ST, and two-byte ESC x sequences.
+func skipEscapeSequence(data string, i int) int {
+	if i+1 >= len(data) {
+		return len(data)
+	}
+	switch data[i+1] {
+	case '[':
+		j := i + 2
+		for j < len(data) && (data[j] < 0x40 || data[j] > 0x7e) {
+			j++
+		}
+		return min(j+1, len(data))
+	case ']', 'P', '_', '^':
+		j := i + 2
+		for j < len(data) {
+			if data[j] == 0x07 {
+				return j + 1
+			}
+			if data[j] == 0x1b && j+1 < len(data) && data[j+1] == '\\' {
+				return j + 2
+			}
+			j++
+		}
+		return len(data)
+	}
+	return i + 2
+}
+
+// isMouseRelease reports whether the input contains an SGR mouse button
+// release report (ESC [ < b ; x ; y m).
+func isMouseRelease(data string) bool {
+	for {
+		i := strings.Index(data, "\x1b[<")
+		if i < 0 {
+			return false
+		}
+		data = data[i+3:]
+		j := 0
+		for j < len(data) && (data[j] == ';' || (data[j] >= '0' && data[j] <= '9')) {
+			j++
+		}
+		if j > 0 && j < len(data) && data[j] == 'm' {
+			return true
+		}
+	}
+}
+
+// LastPtyLineSubmit returns the time the user last pressed Enter in the given
+// leaf's PTY, or the zero time if never.
+func LastPtyLineSubmit(sessionID string) time.Time {
+	ptySubmitMu.RLock()
+	defer ptySubmitMu.RUnlock()
+	h := ptySubmits[sessionID]
+	if len(h) == 0 {
+		return time.Time{}
+	}
+	return h[len(h)-1].at
+}
+
+// LastPtyAnswer returns the most recent time the user did something in the
+// leaf's PTY that can answer/close an interactive TUI prompt: Enter, a mouse
+// click, or an interrupt key (ESC / Ctrl+C). Watchers that detect a pending
+// prompt from the PTY output (LastPtyPendingInput) treat the prompt as still
+// pending only while the sighting is newer than this.
+func LastPtyAnswer(sessionID string) time.Time {
+	t := LastPtyLineSubmit(sessionID)
+	ptySubmitMu.RLock()
+	if c := ptyClick[sessionID]; c.After(t) {
+		t = c
+	}
+	ptySubmitMu.RUnlock()
+	if i := LastPtyInterrupt(sessionID); i.After(t) {
+		t = i
+	}
+	return t
+}
+
+// PtySubmitOwner returns the leaf, among the live sessions running agentID in
+// cwd, whose Enter most closely precedes at (within ptySubmitLead before and
+// ptySubmitLag after), or "" when no such leaf submitted around that time.
+//
+// Agents that keep every session of a workspace in one shared store (OpenCode)
+// give the watcher no direct way to tell which pane created a session row or
+// user message. The row is written a few milliseconds after the Enter that
+// caused it, so the pane with the closest preceding Enter is its owner. This
+// keeps an idle sibling pane from claiming a session another pane just
+// created with /new, and lets the owning pane re-bind immediately.
+//
+// prompt, when non-empty, is the text the agent persisted for that user
+// message. Panes whose submitted line matches it win over panes that merely
+// pressed Enter around the same time (e.g. Enter on an empty prompt or in a
+// dialog), which disambiguates near-simultaneous submits.
+func PtyLineSubmitOwner(agentID, cwd string, at time.Time, prompt string) string {
+	activeSesMu.Lock()
+	leaves := make([]string, 0, len(activeSessions))
+	for id, w := range activeSessions {
+		if w.agentId == agentID && w.cwd == cwd {
+			leaves = append(leaves, id)
+		}
+	}
+	activeSesMu.Unlock()
+
+	want := normalizeSubmitText(prompt)
+	ptySubmitMu.RLock()
+	defer ptySubmitMu.RUnlock()
+	best, bestMatch := "", false
+	var bestAt time.Time
+	for _, id := range leaves {
+		h := ptySubmits[id]
+		for i := len(h) - 1; i >= 0; i-- {
+			s := h[i]
+			if s.at.After(at.Add(ptySubmitLag)) {
+				continue
+			}
+			if s.at.Before(at.Add(-ptySubmitLead)) {
+				break
+			}
+			match := false
+			if want != "" {
+				got := normalizeSubmitText(s.text)
+				match = got != "" && (strings.Contains(want, got) || strings.Contains(got, want))
+			}
+			if best == "" || (match && !bestMatch) || (match == bestMatch && s.at.After(bestAt)) {
+				best, bestMatch, bestAt = id, match, s.at
+			}
+			// The newest in-window submit decides for this leaf, unless an
+			// older one in the window carries the matching text.
+			if match || want == "" {
+				break
+			}
+		}
+	}
+	return best
+}
+
+// normalizeSubmitText collapses whitespace so typed text and the persisted
+// prompt compare equal regardless of line breaks or padding.
+func normalizeSubmitText(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// SetPtyLineSubmitForTest appends a submit time for a leaf (zero clears the
+// history). Intended only for tests.
+func SetPtyLineSubmitForTest(sessionID string, at time.Time) {
+	ptySubmitMu.Lock()
+	if at.IsZero() {
+		delete(ptySubmits, sessionID)
+		delete(ptyClick, sessionID)
+		delete(ptyLine, sessionID)
+	} else {
+		ptySubmits[sessionID] = append(ptySubmits[sessionID], ptyLineSubmit{at: at})
+	}
+	ptySubmitMu.Unlock()
+}
+
+// RegisterActiveSessionWithCwdForTest registers (or, with agentID "", removes) a live
+// agent session so PtyLineSubmitOwner considers it. Intended only for tests.
+func RegisterActiveSessionWithCwdForTest(sessionID, agentID, cwd string) {
+	activeSesMu.Lock()
+	if agentID == "" {
+		delete(activeSessions, sessionID)
+	} else {
+		activeSessions[sessionID] = &watcherContext{cancel: func() {}, agentId: agentID, sessionId: sessionID, cwd: cwd}
+	}
+	activeSesMu.Unlock()
 }
 
 // isInterruptInput reports whether the given PTY input bytes contain the user
@@ -388,6 +703,12 @@ func ExplainStatuses() []ExplainStatus {
 		if p := LastPtyInterrupt(id); !p.IsZero() {
 			out[i].LastPtyInterrupt = p.UTC().Format(time.RFC3339)
 		}
+		if p := LastPtyPendingInput(id); !p.IsZero() {
+			out[i].LastPtyPrompt = p.UTC().Format(time.RFC3339Nano)
+		}
+		if p := LastPtyAnswerKey(id); !p.IsZero() {
+			out[i].LastPtySubmit = p.UTC().Format(time.RFC3339Nano)
+		}
 	}
 	return out
 }
@@ -397,6 +718,79 @@ func isInterruptInput(data string) bool {
 		return true
 	}
 	return data == "\x1b"
+}
+
+// isSubmitInput reports whether PTY input bytes look like the user answering
+// or submitting something (see ptyAnswerKey): Enter, Ctrl+C, or typed text.
+// Pure escape sequences (arrow keys, focus reports, cursor position reports,
+// bracketed-paste markers on their own) are not answers. A standalone ESC is
+// recorded by handlePtyInput once its debounce confirms it is not the start
+// of a fragmented escape sequence.
+func isSubmitInput(data string) bool {
+	if data == "" {
+		return false
+	}
+	if strings.ContainsAny(data, "\r\n\x03") {
+		return true
+	}
+	if strings.HasPrefix(data, "\x1b") {
+		return false
+	}
+	for _, r := range data {
+		if r >= 0x20 && r != 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// LastPtyAnswerKey returns the last time the user sent answer-like input (see
+// isSubmitInput) into the given leaf's PTY, or the zero time if none.
+func LastPtyAnswerKey(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	return ptyAnswerKey[sessionID]
+}
+
+// RegisterActiveSessionCmdForTest marks a leaf as running the given agent with
+// the given launch command (so SessionLaunchCmd and agent-specific PTY prompt
+// detection see it) without starting a watcher. The returned func removes it.
+// Intended only for tests.
+func RegisterActiveSessionCmdForTest(sessionID, agentID, cwd string, cmd []string) func() {
+	activeSesMu.Lock()
+	activeSessions[sessionID] = &watcherContext{cancel: func() {}, agentId: agentID, sessionId: sessionID, cwd: cwd, cmd: cmd}
+	activeSesMu.Unlock()
+	return func() {
+		activeSesMu.Lock()
+		delete(activeSessions, sessionID)
+		activeSesMu.Unlock()
+	}
+}
+
+// SetPtyAnswerKeyForTest records (or clears) the last submit-input timestamp for
+// a leaf. Intended only for tests.
+func SetPtyAnswerKeyForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptyAnswerKey, sessionID)
+	} else {
+		ptyAnswerKey[sessionID] = at
+	}
+	ptyInterruptMu.Unlock()
+}
+
+// SessionLaunchCmd returns the exact command line the agent PTY for the given
+// leaf was started with (after Caw's resume/session-id augmentation), or nil
+// when the leaf is not running a tracked agent. Watchers use it to bind to the
+// native session the launch pinned (e.g. Claude's --session-id/--resume id)
+// instead of guessing from file modification times.
+func SessionLaunchCmd(sessionID string) []string {
+	activeSesMu.Lock()
+	defer activeSesMu.Unlock()
+	if w, ok := activeSessions[sessionID]; ok {
+		return append([]string(nil), w.cmd...)
+	}
+	return nil
 }
 
 // handlePtyFocus records whether the given leaf/session id currently has the
@@ -436,6 +830,14 @@ func handlePtyActivity(id string, n int) {
 	ptyActivityMu.Unlock()
 }
 
+// LeafPID returns the OS process id of the agent process running in the given
+// leaf's PTY, or 0 if unknown. Watchers use it to resolve the agent's native
+// session from resources held by that exact process (see the Antigravity
+// watcher's presence-lock lookup), instead of guessing from file mtimes.
+func LeafPID(sessionID string) int {
+	return terminal.SessionPID(sessionID)
+}
+
 // LastPtyActivity returns the timestamp of the most recent PTY output for the
 // given leaf/session id, or the zero time if no activity has been recorded.
 // Used by watchers to determine whether their agent process is currently
@@ -447,45 +849,327 @@ func LastPtyActivity(sessionID string) time.Time {
 	return ptyActivity[sessionID]
 }
 
-// ptyTailKeep is how many trailing output bytes are carried between ReadLoop
-// chunks for prompt-marker detection. It only needs to cover the longest
-// marker string plus slack, not a full frame.
-const ptyTailKeep = 64
+// ptyTailKeep is how many trailing raw output bytes are carried between
+// ReadLoop chunks for marker detection. It must cover the longest marker
+// plus the ANSI styling escapes TUIs interleave with its words (a footer like
+// "tab amend    enter confirm" arrives with SGR codes around every token).
+const ptyTailKeep = 256
 
-// fxPromptMarkers are substrings of Fx's TUI prompt footers. When one of them
-// appears in the PTY output stream, Fx has rendered an interactive screen that
-// blocks on user input:
-//   - "Enter Answer" / "Tab Questions": the ask_user_question screen.
-//   - "Enter Confirm" / "Tab Amend": permission (allow/deny) and confirmation
-//     screens.
-//   - "Choose now": the option-picker footer shared by those screens.
+// ptyPromptMarkers are lowercase substrings of TUI prompt footers that block
+// on user input. They are matched against the ANSI-stripped, lowercased PTY
+// output, so they are case-insensitive and survive interleaved SGR styling.
 //
-// Fx writes nothing to its event log while such a screen is pending, so this
-// is the only ask-time signal available to the status watcher.
+// Fx (fx.sh) — writes nothing to its event log while such a screen is pending,
+// and recent releases (0.0.16+) render the footer in lowercase:
+//   - "enter answer" / "tab questions": the ask_user_question screen.
+//   - "enter confirm" / "tab amend": permission (allow/deny) and confirmation
+//     screens.
+//   - "choose now": the option-picker footer shared by those screens.
+//
+// Command Code — persists a turn only once its iteration completes, so a
+// pending tool approval or question is invisible in its transcript:
+//   - "navigate · enter select": the tool-permission footer
+//     ("↑/↓ navigate · enter select · ctrl+e explain").
+//   - "type something...": the free-text option of the ask_user_question
+//     screen; "to go back and edit": its review/submit step.
+//
+// Codex CLI never persists its approval overlays to the rollout transcript
+// (the exec/patch/permission/network approval requests only exist in the TUI
+// until the user decides), so their titles are matched here too.
+//
+// OpenCode's permission dialog ("△ Permission required" above the
+// "Allow once / Allow always / Reject" buttons) is TUI-only: the pending
+// permission request is never written to its SQLite DB.
+//
+// Oh My Pi's tool-approval dialog footer ("↑/↓ choose · ⏎ select ·
+// Ctrl+⏎/Ctrl+Q approve · ⎋ deny · ..."), shown when tools.approvalMode asks
+// before running a tool. omp only records the pending tool call in its
+// transcript, not the prompt.
+//
+// Every marker must stay shorter than ptyTailKeep so it is still detected
+// when split across two PTY reads.
+var ptyPromptMarkers = []string{
+	// Fx
+	"enter answer",
+	"tab questions",
+	"enter confirm",
+	"tab amend",
+	"choose now",
+	// Command Code
+	"navigate · enter select",
+	"type something...",
+	"to go back and edit",
+	// Codex CLI
+	"would you like to run the following command?",
+	"would you like to make the following edits?",
+	"would you like to grant these permissions?",
+	"would you like to send input to the existing terminal?",
+	"do you want to approve network access to",
+	"implement this plan?",
+	// OpenCode
+	"permission required",
+	// Oh My Pi
+	"ctrl+q approve",
+}
+
+// ptyBusyMarkers are lowercase substrings of the "agent is working" status
+// line some TUIs repaint continuously while a turn is in flight (spinner +
+// elapsed timer). They disappear as soon as the agent blocks on the user or
+// finishes, which makes them a far better liveness signal than raw PTY
+// activity: Command Code, for example, re-emits its terminal title every few
+// seconds even while idle or blocked on a question, so "any PTY output" can
+// never go quiet.
+//   - Command Code: "esc to interrupt" (e.g. "✧ Hypothesizing… esc to
+//     interrupt • 14s").
+//   - Fx: "• thinking (" / "• running (" (e.g. "• Running (4s) (↑6 ↓27)").
+var ptyBusyMarkers = []string{
+	"esc to interrupt",
+	"• thinking (",
+	"• running (",
+}
+
+// ptyToolRunningMarkers are lowercase substrings rendered inside a tool block
+// while the tool itself is still running (Command Code shows "└ Processing…"
+// under the SHELL/READ/... block until the tool returns). Combined with a busy
+// marker they distinguish "executing a tool" from "waiting on the model".
+var ptyToolRunningMarkers = []string{
+	"processing…",
+}
+
+func containsAnyMarker(plain string, markers []string) bool {
+	for _, m := range markers {
+		if strings.Contains(plain, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// markerEndsAfter reports whether any marker occurrence in plain ends after
+// byte offset from, i.e. at least partly inside the newly received chunk. It
+// prevents a marker that sat entirely in the carried tail from being counted
+// again (and its timestamp refreshed) when an unrelated chunk arrives later.
+func markerEndsAfter(plain string, markers []string, from int) bool {
+	for _, m := range markers {
+		if i := strings.LastIndex(plain, m); i >= 0 && i+len(m) > from {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPtyPromptMarker reports whether raw PTY output contains one of the
+// interactive prompt footers in ptyPromptMarkers (case-insensitive, ANSI
+// styling ignored).
 func containsPtyPromptMarker(s string) bool {
-	return strings.Contains(s, "Enter Answer") ||
-		strings.Contains(s, "Tab Questions") ||
-		strings.Contains(s, "Enter Confirm") ||
-		strings.Contains(s, "Tab Amend") ||
-		strings.Contains(s, "Choose now")
+	return containsAnyMarker(strings.ToLower(stripANSI(s)), ptyPromptMarkers)
+}
+
+// stripANSI removes terminal escape sequences (CSI, OSC, and two-byte ESC
+// sequences) from s so marker matching sees only the rendered text. A cursor
+// forward (CSI n C), which diff-based renderers use in place of runs of
+// spaces, is replaced by a single space so words stay separated.
+func stripANSI(s string) string {
+	if strings.IndexByte(s, 0x1b) < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c != 0x1b {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			break
+		}
+		switch s[i+1] {
+		case '[':
+			j := i + 2
+			for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+				j++
+			}
+			if j < len(s) && s[j] == 'C' {
+				b.WriteByte(' ')
+			}
+			i = j + 1
+		case ']':
+			j := i + 2
+			for j < len(s) {
+				if s[j] == 0x07 {
+					j++
+					break
+				}
+				if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+					j += 2
+					break
+				}
+				j++
+			}
+			i = j
+		default:
+			// Two-byte escapes (ESC 7, ESC =, ...) and nF sequences with
+			// intermediate bytes such as charset designation (ESC ( B).
+			j := i + 1
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x2f {
+				j++
+			}
+			i = j + 1
+		}
+	}
+	return b.String()
+}
+
+// handlePtyOutput scans raw PTY output for interactive prompt footers, busy
+// status lines and running-tool markers, and records the sighting time per
+// leaf. Called from terminal.ReadLoop on every read. A small tail of the
+// previous chunk is prepended so a marker split across two reads is still
+// detected; a marker is only counted when it ends inside the new chunk.
+// ansiSeqRe matches terminal control sequences (CSI, OSC, and two-byte ESC
+// sequences). TUIs built on differential renderers (Claude Code / Ink) place
+// words with cursor-positioning sequences instead of literal spaces
+// ("Do\x1b[5Gyou\x1b[9Gwant..."), so prompt detection must replace every
+// control sequence with a space before matching text.
+var ansiSeqRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|[\x00-\x1f\x7f]`)
+
+// spaceRunRe collapses whitespace runs left behind by ansiSeqRe.
+var spaceRunRe = regexp.MustCompile(`\s+`)
+
+// normalizePtyText strips terminal control sequences from a raw PTY chunk and
+// collapses whitespace so on-screen text can be matched as plain words.
+func normalizePtyText(s string) string {
+	s = ansiSeqRe.ReplaceAllString(s, " ")
+	return spaceRunRe.ReplaceAllString(s, " ")
+}
+
+// claudePromptRe matches Claude Code's tool permission dialog as it appears
+// in the normalized PTY stream: "Do you want to proceed? ❯ 1. Yes",
+// "Do you want to make this edit to x.go? ❯ 1. Yes", "Do you want to create
+// x? ❯ 1. Yes", "Do you want to allow Claude to fetch this content? ❯ 1. Yes"
+// ... Claude writes nothing to its transcript while such a dialog is pending,
+// so the PTY stream is the only ask-time signal.
+var claudePromptRe = regexp.MustCompile(`Do you want to [^?]{0,240}\? (?:❯ )?1\. Yes`)
+
+// ptyNormTailKeep is how many trailing normalized characters are carried
+// between chunks for regex-based prompt detection (Claude's dialog question
+// and its first option may arrive in separate reads).
+const ptyNormTailKeep = 320
+
+// tailRunes returns the last n runes of s.
+func tailRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
+}
+
+func containsClaudePromptMarker(normalized string) bool {
+	return claudePromptRe.MatchString(normalized)
 }
 
 // handlePtyOutput scans raw PTY output for interactive prompt footers and
 // records the sighting time per leaf. Called from terminal.ReadLoop on every
 // read. A small tail of the previous chunk is prepended so a footer split
-// across two reads is still detected.
+// across two reads is still detected. The marker set depends on the agent
+// running in the leaf: Claude Code's permission dialogs are matched on
+// ANSI-normalized text, everything else uses the Fx footer markers.
 func handlePtyOutput(id string, data string) {
+	activeSesMu.Lock()
+	agentID := ""
+	if w, ok := activeSessions[id]; ok {
+		agentID = w.agentId
+	}
+	activeSesMu.Unlock()
+
 	ptyPendingInputMu.Lock()
 	defer ptyPendingInputMu.Unlock()
-	search := ptyOutputTail[id] + data
+	if agentID == "claude" {
+		// Hold back an escape sequence cut off at the end of this read so
+		// its parameter bytes are not mistaken for text.
+		data = ptyRawCarry[id] + data
+		delete(ptyRawCarry, id)
+		if i := strings.LastIndexByte(data, 0x1b); i >= 0 && len(data)-i < 64 {
+			if loc := ansiSeqRe.FindStringIndex(data[i:]); loc == nil || loc[0] != 0 || loc[1] <= 1 {
+				ptyRawCarry[id] = data[i:]
+				data = data[:i]
+			}
+		}
+		// Match against the whole chunk plus the carried tail: a single
+		// read often holds the entire dialog (question, options, footer),
+		// so trimming before matching could cut the question off.
+		search := ptyOutputTail[id] + normalizePtyText(data)
+		if containsClaudePromptMarker(search) {
+			ptyPendingInput[id] = time.Now()
+			// Drop the matched text so the same dialog render is not
+			// re-detected from the carried tail on the next chunk.
+			search = ""
+		}
+		ptyOutputTail[id] = tailRunes(search, ptyNormTailKeep)
+		return
+	}
+	tail := ptyOutputTail[id]
+	search := tail + data
 	if len(search) > ptyTailKeep {
 		ptyOutputTail[id] = search[len(search)-ptyTailKeep:]
 	} else {
 		ptyOutputTail[id] = search
 	}
-	if containsPtyPromptMarker(search) {
-		ptyPendingInput[id] = time.Now()
+	plain := strings.ToLower(stripANSI(search))
+	from := len(strings.ToLower(stripANSI(tail)))
+	now := time.Now()
+	if markerEndsAfter(plain, ptyPromptMarkers, from) {
+		ptyPendingInput[id] = now
 	}
+	notePtyWorking(id, search)
+	if markerEndsAfter(plain, ptyBusyMarkers, from) {
+		ptyBusy[id] = now
+	}
+	if markerEndsAfter(plain, ptyToolRunningMarkers, from) {
+		ptyToolRunning[id] = now
+	}
+}
+
+// LastPtyBusy returns the time a "working" status line (see ptyBusyMarkers)
+// was last rendered in the given leaf's PTY, or the zero time if never.
+func LastPtyBusy(sessionID string) time.Time {
+	ptyPendingInputMu.RLock()
+	defer ptyPendingInputMu.RUnlock()
+	return ptyBusy[sessionID]
+}
+
+// LastPtyToolRunning returns the time a running-tool marker (see
+// ptyToolRunningMarkers) was last rendered in the given leaf's PTY.
+func LastPtyToolRunning(sessionID string) time.Time {
+	ptyPendingInputMu.RLock()
+	defer ptyPendingInputMu.RUnlock()
+	return ptyToolRunning[sessionID]
+}
+
+// SetPtyBusyForTest records (or clears) the last busy-marker sighting for a
+// leaf. Intended only for tests.
+func SetPtyBusyForTest(sessionID string, at time.Time) {
+	ptyPendingInputMu.Lock()
+	if at.IsZero() {
+		delete(ptyBusy, sessionID)
+	} else {
+		ptyBusy[sessionID] = at
+	}
+	ptyPendingInputMu.Unlock()
+}
+
+// SetPtyToolRunningForTest records (or clears) the last running-tool marker
+// sighting for a leaf. Intended only for tests.
+func SetPtyToolRunningForTest(sessionID string, at time.Time) {
+	ptyPendingInputMu.Lock()
+	if at.IsZero() {
+		delete(ptyToolRunning, sessionID)
+	} else {
+		ptyToolRunning[sessionID] = at
+	}
+	ptyPendingInputMu.Unlock()
 }
 
 // LastPtyPendingInput returns the time an interactive prompt footer was last
@@ -506,7 +1190,18 @@ func LastPtyPendingInput(sessionID string) time.Time {
 func ClearPtyPendingInput(sessionID string) {
 	ptyPendingInputMu.Lock()
 	delete(ptyPendingInput, sessionID)
+	ptyPendingInputMu.Unlock()
+}
+
+// clearPtyMarkers drops every PTY marker sighting and the carried output tail
+// for a leaf. Called when the session exits.
+func clearPtyMarkers(sessionID string) {
+	ptyPendingInputMu.Lock()
+	delete(ptyPendingInput, sessionID)
+	delete(ptyBusy, sessionID)
+	delete(ptyToolRunning, sessionID)
 	delete(ptyOutputTail, sessionID)
+	delete(ptyRawCarry, sessionID)
 	ptyPendingInputMu.Unlock()
 }
 
@@ -531,6 +1226,118 @@ func LastPtyInterrupt(sessionID string) time.Time {
 	ptyInterruptMu.RLock()
 	defer ptyInterruptMu.RUnlock()
 	return ptyInterrupt[sessionID]
+}
+
+// LastPtyCtrlC returns the time the user most recently sent Ctrl+C (0x03)
+// into the given leaf's PTY, or the zero time if none was recorded. Unlike
+// LastPtyInterrupt it does not count a standalone ESC, for agents whose TUI
+// only interrupts a turn on Ctrl+C (Hermes).
+func LastPtyCtrlC(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	return ptyCtrlC[sessionID]
+}
+
+// SetPtyCtrlCForTest records (or clears) the last Ctrl+C timestamp for a
+// leaf/session id. Intended only for tests.
+func SetPtyCtrlCForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptyCtrlC, sessionID)
+	} else {
+		ptyCtrlC[sessionID] = at
+	}
+	ptyInterruptMu.Unlock()
+}
+
+// ptySubmitHistory bounds the per-leaf Enter history.
+const ptySubmitHistory = 32
+
+func recordPtySubmitLocked(id string, at time.Time) {
+	h := append(ptySubmit[id], at)
+	if len(h) > ptySubmitHistory {
+		h = h[len(h)-ptySubmitHistory:]
+	}
+	ptySubmit[id] = h
+}
+
+// LastPtySubmit returns the time the user last pressed Enter in the given
+// leaf's PTY, or the zero time if never.
+func LastPtySubmit(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	h := ptySubmit[sessionID]
+	if len(h) == 0 {
+		return time.Time{}
+	}
+	return h[len(h)-1]
+}
+
+// PtySubmitOwner returns the leaf, among the live sessions of the given
+// agent, that pressed Enter last at or before `at` (plus a small clock
+// slack), within maxAge. Enters pressed after `at` are ignored, so a turn
+// stays attributed to the pane that started it even after that pane's user
+// typed more. It returns "" when no live leaf of that agent submitted
+// anything in that window.
+//
+// Watchers of agents whose native sessions live in a shared store use it to
+// decide which pane a freshly started native session/turn belongs to: the
+// turn was started by the pane where the user pressed Enter right before it.
+func PtySubmitOwner(agentID string, at time.Time, maxAge time.Duration) string {
+	const slack = 500 * time.Millisecond
+	activeSesMu.Lock()
+	var leaves []string
+	for id, w := range activeSessions {
+		if w.agentId == agentID {
+			leaves = append(leaves, id)
+		}
+	}
+	activeSesMu.Unlock()
+
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	var best string
+	var bestAt time.Time
+	for _, id := range leaves {
+		h := ptySubmit[id]
+		for i := len(h) - 1; i >= 0; i-- {
+			s := h[i]
+			if s.After(at.Add(slack)) {
+				continue
+			}
+			if at.Sub(s) <= maxAge && (best == "" || s.After(bestAt)) {
+				best, bestAt = id, s
+			}
+			break
+		}
+	}
+	return best
+}
+
+// SetPtySubmitForTest records (or clears) the last Enter keypress time for a
+// leaf. Intended only for tests; production code drives it via OnPtyInput.
+// A zero time clears the leaf's history; otherwise the time is appended.
+func SetPtySubmitForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptySubmit, sessionID)
+	} else {
+		recordPtySubmitLocked(sessionID, at)
+	}
+	ptyInterruptMu.Unlock()
+}
+
+// SetActiveSessionForTest registers (or, with an empty agentID, removes) a
+// live agent session for the given leaf without starting a watcher. Intended
+// only for tests of helpers that consult the live-session registry.
+func SetActiveSessionForTest(sessionID, agentID string) {
+	activeSesMu.Lock()
+	if agentID == "" {
+		delete(activeSessions, sessionID)
+	} else {
+		activeSessions[sessionID] = &watcherContext{agentId: agentID, sessionId: sessionID, cancel: func() {}}
+	}
+	activeSesMu.Unlock()
 }
 
 // SetPtyActivityForTest records (or clears) the last-activity timestamp for a
@@ -679,35 +1486,48 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 	})
 
 	if pushStore != nil {
-		switch status {
-		case "waiting_input":
+		needsInput, finished, cancelFinished := pushDecision(exists, prev, status, tool)
+		if cancelFinished {
 			push.CancelFinishedDebounced(sessionID)
+		}
+		if needsInput {
 			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
-		case "thinking", "executing":
-			push.CancelFinishedDebounced(sessionID)
-		case "interrupted", "tool_failed":
-			// The user interrupted the agent, or a tool call failed. Neither
-			// is something the user needs a push notification for: an
-			// interrupt is the user's own action, and a tool failure is
-			// surfaced in the UI (red dot + error text) but the agent keeps
-			// running. Cancel any pending "finished" notification so a
-			// transition into these states from working doesn't fire one.
-			push.CancelFinishedDebounced(sessionID)
-		case "idle", "stopped", "unknown":
-			// Suppress the "finished" notification when the agent was running
-			// a background task or subagent — the agent is still working, it
-			// just completed a sub-task. A "finished" notification here would
-			// mislead the user.
-			//   - "background_task": Antigravity's background tasks.
-			//   - "task": OpenCode's subagent launcher. When the subagent
-			//     finishes, the parent briefly transitions executing→idle
-			//     before continuing, which would otherwise fire a spurious
-			//     "finished" push notification.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
-				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
-			}
+		}
+		if finished {
+			push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 		}
 	}
+}
+
+// pushDecision decides which web push side effects a status transition has.
+//
+//   - needsInput: entering "waiting_input" notifies once per prompt; a
+//     title/details refresh while still blocked on the same tool must not
+//     re-send it.
+//   - cancelFinished: any state other than idle/stopped/unknown cancels a
+//     pending (debounced) "finished" push — the agent resumed working, is
+//     blocked on the user, was interrupted by the user, or is recovering from
+//     a failed tool call. None of those is a completion.
+//   - finished: a transition from a working state into "idle"/"stopped".
+//     "tool_failed" and "unknown" count as working: a turn whose last tool
+//     call failed (or that the stale watchdog could not observe for a while)
+//     still finishes and must notify like any other. The watchdog's own
+//     revert to "unknown" means "cannot tell" and is never a completion.
+//     Background-task / subagent launchers are excluded: when such a tool was
+//     the last action the agent only finished a sub-task
+//     ("background_task": Antigravity, "task": OpenCode's subagent launcher,
+//     whose parent briefly flips executing→idle before continuing).
+func pushDecision(exists bool, prev AgentStatus, status, tool string) (needsInput, finished, cancelFinished bool) {
+	switch status {
+	case "waiting_input":
+		cancelFinished = true
+		needsInput = !(exists && prev.Status == "waiting_input" && prev.Tool == tool)
+	case "thinking", "executing", "interrupted", "tool_failed":
+		cancelFinished = true
+	case "idle", "stopped":
+		finished = exists && isWorkingStatus(prev.Status) && !isSubagentTool(prev.Tool)
+	}
+	return needsInput, finished, cancelFinished
 }
 
 func handleSessionStart(id string, cmd []string, cwd string) {
@@ -752,6 +1572,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		cwd:       cwd,
 		cmd:       cmd,
 		resume:    isResumeCmd(cmd),
+		startedAt: time.Now(),
 	}
 
 	activeSesMu.Lock()
@@ -831,7 +1652,21 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	delete(ptyFocus, id)
 	ptyFocusMu.Unlock()
 
+	ptyInterruptMu.Lock()
+	delete(ptySubmit, id)
+	delete(ptyAnswerKey, id)
+	ptyInterruptMu.Unlock()
+
 	ClearPtyPendingInput(id)
+	clearPtyInput(id)
+	clearPtyWorking(id)
+
+	ptySubmitMu.Lock()
+	delete(ptySubmits, id)
+	delete(ptyClick, id)
+	delete(ptyLine, id)
+	ptySubmitMu.Unlock()
+	clearPtyMarkers(id)
 
 	if !crashed {
 		// Clean exit or user kill: card simply leaves the board, as before.
@@ -1056,10 +1891,13 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}
 
 	// lastActivity tracks when the watcher last received an actual status change
-	// from the agent log.
-	lastActivity := time.Now()
-	// lastHeartbeat tracks the last poll confirmation from the watcher.
-	lastHeartbeat := time.Now()
+	// from the agent log. lastHeartbeat tracks the last poll confirmation from
+	// the watcher. Both are written by the watcher goroutine and read by the
+	// watchdog goroutine below, so they are stored as atomic UnixNano values.
+	var lastActivityNs, lastHeartbeatNs atomic.Int64
+	lastActivityNs.Store(time.Now().UnixNano())
+	lastHeartbeatNs.Store(time.Now().UnixNano())
+	since := func(v *atomic.Int64) time.Duration { return time.Since(time.Unix(0, v.Load())) }
 
 	// Idle-timeout watchdog: if the agent hasn't emitted a status change in
 	// idleTimeout seconds, or if the watcher itself has stopped calling the
@@ -1092,7 +1930,7 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if time.Since(lastHeartbeat) > 30*time.Second || time.Since(lastActivity) > idleTimeout {
+				if since(&lastHeartbeatNs) > 30*time.Second || since(&lastActivityNs) > idleTimeout {
 					// If the PTY has produced output recently, the agent
 					// process is still alive and actively running a tool —
 					// don't revert to idle.
@@ -1129,12 +1967,25 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}()
 
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
-		lastActivity = time.Now()
-		lastHeartbeat = time.Now()
+		now := time.Now().UnixNano()
+		lastActivityNs.Store(now)
+		lastHeartbeatNs.Store(now)
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title, "watcher")
 	}, func() {
-		lastHeartbeat = time.Now()
+		lastHeartbeatNs.Store(time.Now().UnixNano())
 	})
+}
+
+// isWorkingStatus reports whether a status means the agent was busy with a
+// turn, so that a following transition to "idle" is a turn completion that
+// deserves a "finished" notification. "unknown" is only ever entered from a
+// working state (the stale watchdog), so it counts as working here.
+func isWorkingStatus(s string) bool {
+	switch s {
+	case "thinking", "executing", "tool_failed", "unknown":
+		return true
+	}
+	return false
 }
 
 // isSubagentTool reports whether the given tool name represents a background
@@ -1156,6 +2007,7 @@ func isSubagentTool(tool string) bool {
 //
 // It recognizes every resume form across the supported agents:
 //   - --continue / -c / --resume / --last (claude, pi, omp, copilot, agy)
+//   - --conversation <id> (agy exact-conversation resume)
 //   - -s <id> / --session <id> (opencode exact-session resume)
 //   - resume <id> / resume --last (codex subcommand)
 func isResumeCmd(cmd []string) bool {
@@ -1163,7 +2015,7 @@ func isResumeCmd(cmd []string) bool {
 		switch a {
 		case "--continue", "-c", "--resume", "--last":
 			return true
-		case "-s", "--session":
+		case "-s", "--session", "--conversation":
 			// opencode -s <session-id> | opencode --session <session-id>
 			if i+1 < len(cmd) && cmd[i+1] != "" {
 				return true
@@ -1174,4 +2026,10 @@ func isResumeCmd(cmd []string) bool {
 		}
 	}
 	return false
+}
+
+// RecordPtyLineInputForTest feeds raw PTY input for a leaf at the given time
+// through the submit/click recorder. Intended only for tests.
+func RecordPtyLineInputForTest(sessionID, data string, at time.Time) {
+	recordPtyAnswerInput(sessionID, data, at)
 }

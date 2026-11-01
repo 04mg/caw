@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ElementType } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ElementType } from 'react'
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -18,7 +18,6 @@ import { OpenRouterIcon } from '@/features/agents/components/OpenRouterIcon'
 import { cn } from '@/features/shared/utils/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip'
 import { useVoiceMode, isVoiceSupported } from '@/features/voice-mode/hooks/useVoiceMode'
-import { VoiceBubble } from '@/features/voice-mode/components/VoiceBubble'
 import { getDisabledProviders, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 import {
 	deserializeQuotaSelection,
@@ -245,15 +244,16 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 		}
 	}
 
-	const handleSendVoice = () => {
-		const text = voice.transcript.trim()
-		if (text) onSendText?.(text)
-		voice.reset()
-	}
-
-	const handleDiscardVoice = () => {
-		voice.reset()
-	}
+	// Start failures (permission denied, no microphone, insecure origin) used to
+	// fail silently on desktop. Show them next to the mic for a few seconds.
+	const voiceError = !isMobile && voice.phase === 'idle' ? voice.error : null
+	const voiceResetRef = useRef(voice.reset)
+	voiceResetRef.current = voice.reset
+	useEffect(() => {
+		if (!voiceError) return
+		const t = setTimeout(() => voiceResetRef.current(), 6000)
+		return () => clearTimeout(t)
+	}, [voiceError])
 
 	const isConfigured = visibleProviders.length > 0
 	const activeSelection = deserializeQuotaSelection(selectedView)
@@ -514,15 +514,6 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 			</div>
 
 			<div className="flex items-center gap-2">
-				{isMobile && voice.phase !== 'idle' && (
-					<VoiceBubble
-						transcript={voice.transcript}
-						error={voice.error}
-						isListening={voice.phase === 'listening'}
-						onSend={handleSendVoice}
-						onDiscard={handleDiscardVoice}
-					/>
-				)}
 				{!isMobile && isVoiceSupported() && (
 					<>
 						{voice.phase === 'listening' && (
@@ -531,6 +522,15 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 								title={voice.transcript}
 							>
 								{voice.transcript.trim().split(/\s+/).filter(Boolean).slice(-1).join(' ') || ''}
+							</span>
+						)}
+						{voiceError && (
+							<span
+								data-testid="status-bar-voice-error"
+								className="text-[11px] font-sans text-red-400 truncate max-w-[220px] animate-in fade-in duration-200 select-none"
+								title={voiceError}
+							>
+								{voiceError}
 							</span>
 						)}
 						<Tooltip delayDuration={0}>
@@ -543,7 +543,9 @@ export function StatusBar({ workspaceName, worktreeBranch, agentBoardOpen, onTog
 										'shrink-0 transition-colors cursor-pointer',
 										voice.phase === 'listening'
 											? 'text-primary'
-											: voice.phase === 'loading'
+											: voiceError
+												? 'text-red-400 hover:text-red-300'
+												: voice.phase === 'loading'
 												? 'text-muted-foreground cursor-wait'
 												: 'text-muted-foreground hover:text-foreground',
 									)}

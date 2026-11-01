@@ -62,20 +62,45 @@ type commandCodeBlock struct {
 // Command Code persists each model iteration to the transcript only when the
 // iteration completes: the assistant tool_use message and its tool_result are
 // written together, and nothing is appended while a tool is still running (a
-// long-running tool freezes the transcript for minutes). The pane's PTY and
-// the sidecar checkpoints file are the only live signals while the transcript
-// is frozen: Command Code repaints its status line continuously while a turn
-// is in flight, goes static when it blocks on the user (ask_user_question /
-// exit_plan_mode), and appends a checkpoint when a new turn is submitted.
+// long-running tool freezes the transcript for minutes). A brand-new session
+// does not even have a transcript file until its first iteration completes —
+// only the sidecar <id>.checkpoints.jsonl, appended the moment a turn is
+// submitted. The pane's PTY and that sidecar are the only live signals while
+// the transcript is frozen.
 //
-// ptyWorkingWindow: how recently the PTY must have produced output for the
-// agent to count as actively working.
-// inputWaitThreshold: how long the PTY must have been quiet mid-turn before we
-// conclude Command Code is blocked awaiting a user answer.
+// Raw PTY activity is NOT usable as a liveness signal: Command Code re-emits
+// its terminal title (OSC 0/2) every few seconds even while idle or blocked on
+// a question. Instead the watcher reads the rendered screen markers recorded
+// by the agent package (agent.LastPtyBusy / LastPtyPendingInput /
+// LastPtyToolRunning):
+//   - "esc to interrupt": the spinner status line, repainted continuously
+//     while a turn is in flight (LLM wait or tool run) and hidden as soon as
+//     the agent blocks on the user or finishes.
+//   - "navigate · enter select" / "type something..." / "to go back and
+//     edit": the tool-permission and ask_user_question screens.
+//   - "processing…": rendered under a tool block while the tool runs.
+//
+// ptyWorkingWindow: how recently the busy status line must have been drawn
+// for the agent to count as actively working.
+// promptBusyGrace: how long the busy line must have been gone, with a prompt
+// screen drawn after it, before reporting waiting_input.
+// inputWaitThreshold: how long the busy line may be gone mid-turn, with no
+// recognised prompt screen, before we conclude Command Code is blocked
+// awaiting a user answer on a screen we do not recognise.
 const (
 	ptyWorkingWindow   = 5 * time.Second
+	promptBusyGrace    = 1500 * time.Millisecond
 	inputWaitThreshold = 10 * time.Second
 )
+
+// isCommandCodeWorking reports whether a status counts as an active turn.
+func isCommandCodeWorking(status string) bool {
+	switch status {
+	case "thinking", "executing", "tool_failed":
+		return true
+	}
+	return false
+}
 
 func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -105,6 +130,17 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	// checkpoint messageCount at or above this count signals a pending turn.
 	var transcriptMessageCount int64
 	var watchedFilePath string
+	// pendingCreate is true while the watcher is bound to a transcript path
+	// that does not exist yet: a fresh session whose first turn was submitted
+	// (its checkpoints sidecar exists) but not yet committed.
+	var pendingCreate bool
+	// replay marks the first read after binding to a pre-existing transcript
+	// (reopen/rebind): its history must not produce live transitions.
+	var replay bool
+	// resumeReplay is the launch-time resume flag, applied only to the first
+	// transcript this watcher binds (the session the agent was resumed into);
+	// later rebinds decide replay per session.
+	resumeReplay := resume
 	var sessionTitle string
 	var lastActivity time.Time
 	var silentTicks int
@@ -134,6 +170,26 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 	lastInterruptSeen := agent.LastPtyInterrupt(sessionID)
 	var interruptApplied bool
 	var interruptBoundarySize int64
+	// interruptCheckpoints is the number of checkpoint lines (submitted
+	// turns) when the interrupt was applied. A new line means the user
+	// submitted a fresh turn, which clears the sticky interrupt even though
+	// Command Code has not committed anything to the transcript yet.
+	var interruptCheckpoints int
+
+	// setReported records the status sent to the UI and stamps the start of a
+	// working turn on the transition into a working state. Stamping only on
+	// the transition (not on every working report) matters: the transcript
+	// flush Command Code performs when the user interrupts a tool ("Command
+	// aborted") is itself parsed as "thinking", and must not move the turn
+	// start past the interrupt it was caused by.
+	setReported := func(status, tool, details string) {
+		if isCommandCodeWorking(status) && !isCommandCodeWorking(lastReportedStatus) {
+			lastWorkingAt = time.Now()
+		}
+		lastReportedStatus = status
+		lastReportedTool = tool
+		lastReportedDetails = details
+	}
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -148,18 +204,51 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		}
 	}()
 
+	// matchesCwd reports whether a transcript file belongs to the given cwd
+	// by reading its header line. Corrupt/unreadable files are skipped.
+	matchesCwd := func(path, wantCwd string) bool {
+		if wantCwd == "" {
+			return true
+		}
+		head, err := ReadFirstLine(path)
+		if err != nil {
+			return false
+		}
+		var h commandCodeHeader
+		if json.Unmarshal([]byte(head), &h) != nil {
+			return false
+		}
+		return h.Type == "session" && h.Cwd == wantCwd
+	}
+
 	readWatched := func() bool {
 		if watchedFilePath == "" {
 			return false
 		}
 		info, err := os.Stat(watchedFilePath)
 		if err != nil {
+			if pendingCreate {
+				// The first turn has not been committed yet; keep waiting
+				// for the transcript to appear.
+				return false
+			}
 			UnclaimSession(agentID, claimCwd, watchedFilePath)
 			watchedFilePath = ""
 			if notifyCh != nil {
 				notifier.Watch("")
 			}
 			return false
+		}
+		if pendingCreate {
+			pendingCreate = false
+			if !matchesCwd(watchedFilePath, cwd) {
+				UnclaimSession(agentID, claimCwd, watchedFilePath)
+				watchedFilePath = ""
+				if notifyCh != nil {
+					notifier.Watch("")
+				}
+				return false
+			}
 		}
 		if info.Size() <= lastFileSize {
 			return false
@@ -180,50 +269,115 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 		if interruptApplied && hasNewCommandCodeWork(watchedFilePath, interruptBoundarySize) {
 			interruptApplied = false
 		}
-		wrappedCallback := func(status, tool, details, title string) {
+		replaying := initialRead && (replay || resumeReplay)
+		replay = false
+		var pStatus, pTool, pDetails string
+		var parsed bool
+		n := w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, func(status, tool, details, title string) {
 			if title != "" {
 				sessionTitle = title
 			}
-			if resume && initialRead {
+			pStatus, pTool, pDetails, parsed = status, tool, details, true
+		})
+		transcriptMessageCount += int64(n)
+		if parsed {
+			status, tool, details := pStatus, pTool, pDetails
+			if resumeReplay && initialRead {
 				switch status {
 				case "thinking", "executing", "tool_failed", "waiting_input":
 					status, tool, details = "idle", "", ""
 				}
 			}
-			if interruptApplied && (status == "thinking" || status == "executing" || status == "tool_failed") {
+			if interruptApplied && isCommandCodeWorking(status) {
 				status = "interrupted"
 			}
-			switch status {
-			case "thinking", "executing", "tool_failed":
-				lastWorkingAt = time.Now()
+			// Command Code commits a whole iteration at once, so a single
+			// read regularly covers a turn that started and finished between
+			// two polls (or the rest of a turn after the user answered a
+			// prompt). Report the working state first so the "finished"
+			// notification (working -> idle) still fires. Not when replaying
+			// a pre-existing transcript on bind.
+			if status == "idle" && n > 0 && !replaying && !isCommandCodeWorking(lastReportedStatus) {
+				setReported("thinking", "", "")
+				callback("thinking", "", "", sessionTitle)
 			}
-			lastReportedStatus = status
-			lastReportedTool = tool
-			lastReportedDetails = details
+			setReported(status, tool, details)
 			callback(status, tool, details, sessionTitle)
 		}
-		transcriptMessageCount += int64(w.parseCommandCodeLog(watchedFilePath, lastFileSize, cwd, sessionID, wrappedCallback))
 		lastFileSize = info.Size()
 		lastActivity = info.ModTime()
 		silentTicks = 0
+		resumeReplay = false
 		return true
 	}
 
-	// matchesCwd reports whether a transcript file belongs to the given cwd
-	// by reading its header line. Corrupt/unreadable files are skipped.
-	matchesCwd := func(path, wantCwd string) bool {
-		if wantCwd == "" {
-			return true
+	// findPendingSession looks for a session of this cwd whose first turn
+	// was submitted (its <id>.checkpoints.jsonl exists, modified after
+	// `after`) but whose transcript has not been written yet. The sidecar is
+	// located through the per-cwd project directory. Only the pane that
+	// submitted the turn may claim it: its PTY drew the busy status line
+	// around the time the checkpoint was written — otherwise an idle sibling
+	// pane in the same cwd could claim the other pane's pending session.
+	findPendingSession := func(after time.Time) (string, FileCandidate, bool) {
+		busy := agent.LastPtyBusy(sessionID)
+		if busy.IsZero() {
+			return "", FileCandidate{}, false
 		}
-		head, err := ReadFirstLine(path)
+		slugDir := filepath.Join(dir, commandCodeProjectSlug(cwd))
+		cks, err := FindEarliestFiles(slugDir, ".checkpoints.jsonl", after)
 		if err != nil {
+			return "", FileCandidate{}, false
+		}
+		for _, c := range cks {
+			if filepath.Dir(c.Path) != slugDir {
+				continue
+			}
+			tp := strings.TrimSuffix(c.Path, ".checkpoints.jsonl") + ".jsonl"
+			if tp == watchedFilePath {
+				continue
+			}
+			if _, err := os.Stat(tp); err == nil {
+				continue // an existing transcript is matched by its header
+			}
+			if busy.Before(c.ModTime.Add(-5 * time.Second)) {
+				continue
+			}
+			if ClaimedBy(agentID, claimCwd, tp) != "" {
+				continue
+			}
+			return tp, c, true
+		}
+		return "", FileCandidate{}, false
+	}
+
+	// bindPending binds the watcher to a pending (not yet written) transcript.
+	bindPending := func(tp string, ck FileCandidate) bool {
+		if !ClaimSessionForLeaf(agentID, claimCwd, tp, sessionID) {
 			return false
 		}
-		var h commandCodeHeader
-		if json.Unmarshal([]byte(head), &h) != nil {
-			return false
+		if watchedFilePath != "" {
+			UnclaimSession(agentID, claimCwd, watchedFilePath)
+			// A new session (/clear, /new) starts without the old title.
+			sessionTitle = ""
 		}
-		return h.Type == "session" && h.Cwd == wantCwd
+		watchedFilePath = tp
+		pendingCreate = true
+		resumeReplay = false
+		if sessionTitle == "" {
+			sessionTitle = CleanPrompt(commandCodeFirstCheckpointPrompt(ck.Path))
+		}
+		lastFileSize = 0
+		replay = false
+		transcriptMessageCount = 0
+		lastCheck = time.Now()
+		lastActivity = ck.ModTime
+		silentTicks = 0
+		lastReportedStatus = ""
+		if notifyCh != nil {
+			notifier.Watch(watchedFilePath)
+		}
+		agent.RecordExternalSession(sessionID, tp)
+		return true
 	}
 
 	for {
@@ -243,6 +397,7 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 						if ClaimSessionForLeaf(agentID, claimCwd, exact, sessionID) {
 							watchedFilePath = exact
 							lastFileSize = 0
+							replay = true
 							transcriptMessageCount = 0
 							lastCheck = time.Now()
 							if info, err := os.Stat(exact); err == nil {
@@ -257,28 +412,41 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 					}
 				}
 				if watchedFilePath == "" {
-				candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
-				if err != nil {
-					continue
-				}
-				for _, c := range candidates {
-					if !isCommandCodeTranscript(c.Path) || !matchesCwd(c.Path, cwd) {
+					candidates, err := FindEarliestFiles(dir, ".jsonl", lastCheck)
+					if err != nil {
 						continue
 					}
-					if ClaimSessionForLeaf(agentID, claimCwd, c.Path, sessionID) {
-						watchedFilePath = c.Path
-						lastFileSize = 0
-						transcriptMessageCount = 0
-						lastCheck = time.Now()
-						lastActivity = c.ModTime
-						silentTicks = 0
-						if notifyCh != nil {
-							notifier.Watch(watchedFilePath)
+					for _, c := range candidates {
+						if !isCommandCodeTranscript(c.Path) || !matchesCwd(c.Path, cwd) {
+							continue
 						}
-						agent.RecordExternalSession(sessionID, c.Path)
-						break
+						if ClaimSessionForLeaf(agentID, claimCwd, c.Path, sessionID) {
+							watchedFilePath = c.Path
+							lastFileSize = 0
+							replay = resume
+							transcriptMessageCount = 0
+							lastCheck = time.Now()
+							lastActivity = c.ModTime
+							silentTicks = 0
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
+							agent.RecordExternalSession(sessionID, c.Path)
+							break
+						}
 					}
 				}
+				if watchedFilePath == "" {
+					// Fresh session: Command Code has not written the
+					// transcript yet (it does so only when the first turn's
+					// first iteration completes), but the checkpoints sidecar
+					// appears the moment the first prompt is submitted. Bind
+					// to the transcript path it will use, so the pending
+					// first turn, its permission prompts and its completion
+					// are tracked.
+					if tp, ck, ok := findPendingSession(lastCheck); ok {
+						bindPending(tp, ck)
+					}
 				}
 			}
 			if watchedFilePath != "" {
@@ -292,61 +460,86 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 				// immediately flips the card to "interrupted" instead of
 				// waiting for a transcript marker Command Code never writes
 				// for an interrupted turn.
+				ckLines, ckMax := commandCodeCheckpoints(watchedFilePath)
 				last := agent.LastPtyInterrupt(sessionID)
 				if last.After(lastInterruptSeen) {
 					lastInterruptSeen = last
-					if last.After(lastWorkingAt) &&
-						(lastReportedStatus == "thinking" || lastReportedStatus == "executing" || lastReportedStatus == "tool_failed") {
+					if last.After(lastWorkingAt) && isCommandCodeWorking(lastReportedStatus) {
 						interruptApplied = true
-						lastReportedStatus = "interrupted"
 						interruptBoundarySize = lastFileSize
+						interruptCheckpoints = ckLines
+						setReported("interrupted", lastReportedTool, lastReportedDetails)
 						callback("interrupted", lastReportedTool, lastReportedDetails, sessionTitle)
+					}
+				}
+				// A turn submitted after the interrupt (a new checkpoint line)
+				// clears the sticky interrupt right away, so the live-state
+				// pass below can track the new turn before Command Code
+				// commits anything for it.
+				if interruptApplied && ckLines > interruptCheckpoints {
+					interruptApplied = false
+					if lastReportedStatus == "interrupted" {
+						lastReportedStatus = ""
 					}
 				}
 
 				// Live-state override for frozen transcripts (see the
-				// persistence note near the constants above). Command Code
-				// commits a user prompt to the transcript only when the turn's
-				// first iteration completes, and it persists ask/plan tool
-				// calls together with their result only once answered, so a
-				// blocked or freshly submitted turn leaves the transcript
-				// frozen at the previous state (e.g. "idle" while a long tool
-				// is actually running). While frozen, the PTY is the only live
-				// signal: repaints mean the agent is working; sustained
-				// silence while a turn is active means it is blocked awaiting
-				// the user (ask_user_question / exit_plan_mode).
+				// persistence note near the constants above). While the
+				// transcript is frozen, the rendered screen is the only live
+				// signal: the busy status line means the agent is working (a
+				// running tool block on top of it means it is executing), a
+				// prompt screen drawn after the busy line went away means it
+				// is blocked on the user (tool approval / ask_user_question).
 				if !advanced {
-					lastPty := agent.LastPtyActivity(sessionID)
-					if !lastPty.IsZero() {
-						pendingTurn := commandCodeCheckpointCount(watchedFilePath) >= transcriptMessageCount
-						active := pendingTurn
-						switch lastReportedStatus {
-						case "thinking", "executing", "tool_failed", "waiting_input":
-							active = true
-						}
-						if active && lastReportedStatus != "interrupted" {
-							if time.Since(lastPty) >= inputWaitThreshold {
+					busy := agent.LastPtyBusy(sessionID)
+					prompt := agent.LastPtyPendingInput(sessionID)
+					if !busy.IsZero() || !prompt.IsZero() {
+						pendingTurn := ckMax >= transcriptMessageCount
+						active := pendingTurn || isCommandCodeWorking(lastReportedStatus) || lastReportedStatus == "waiting_input"
+						if active && lastReportedStatus != "interrupted" && !interruptApplied {
+							sinceBusy := time.Since(busy)
+							switch {
+							case prompt.After(busy) && sinceBusy >= promptBusyGrace:
 								if lastReportedStatus != "waiting_input" {
-									lastReportedStatus = "waiting_input"
+									setReported("waiting_input", "", "")
+									callback("waiting_input", "", "", sessionTitle)
+								}
+							case !busy.IsZero() && sinceBusy < ptyWorkingWindow:
+								status := "thinking"
+								if tr := agent.LastPtyToolRunning(sessionID); !tr.IsZero() && time.Since(tr) < ptyWorkingWindow {
+									status = "executing"
+								}
+								tool := ""
+								if status == lastReportedStatus {
+									tool = lastReportedTool
+								}
+								if lastReportedStatus != status && lastReportedStatus != "tool_failed" {
+									setReported(status, tool, "")
+									callback(status, tool, "", sessionTitle)
+								}
+							case !busy.IsZero() && sinceBusy >= inputWaitThreshold:
+								if lastReportedStatus != "waiting_input" {
+									setReported("waiting_input", "ask_user_question", "")
 									callback("waiting_input", "ask_user_question", "", sessionTitle)
 								}
-							} else if time.Since(lastPty) < ptyWorkingWindow &&
-								(lastReportedStatus == "idle" || lastReportedStatus == "" || lastReportedStatus == "waiting_input") {
-								lastReportedStatus = "thinking"
-								callback("thinking", "", "", sessionTitle)
 							}
 						}
 					}
 				}
 
-				// Mid-session re-bind for /new and /resume. Gated on PTY
-				// activity OR user focus so an idle sibling pane never steals
-				// a session from an active one. Shares the codex-style
-				// ShouldRebind heuristic over the project transcript pool.
+				// Mid-session re-bind for /new and /resume. Gated on the
+				// pane actually working (its busy status line was drawn
+				// recently) OR user focus so an idle sibling pane never
+				// steals a session from an active one. Raw PTY activity is
+				// not a usable gate here: Command Code re-emits its terminal
+				// title every few seconds even when idle, which let an idle
+				// sibling grab the session another pane had just left after
+				// /clear. Shares the codex-style ShouldRebind heuristic over
+				// the project transcript pool.
 				if silentTicks >= rebindSilenceTicks {
 					focused := agent.IsPtyFocused(sessionID)
-					lastPtyOut := agent.LastPtyActivity(sessionID)
-					if time.Since(lastPtyOut) < 3*time.Second || focused {
+					lastBusy := agent.LastPtyBusy(sessionID)
+					if (!lastBusy.IsZero() && time.Since(lastBusy) < 3*time.Second) || focused {
 						cands, _ := FindLatestFiles(dir, ".jsonl", lastActivity)
 						var others []RebindCandidate
 						for _, c := range cands {
@@ -355,11 +548,25 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 							}
 							others = append(others, RebindCandidate{Key: c.Path, ModTime: c.ModTime})
 						}
-						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
+						// Skip candidates owned by sibling panes so their
+						// sessions never mask a pending session of ours.
+						var free []RebindCandidate
+						for _, o := range others {
+							if owner := ClaimedBy(agentID, claimCwd, o.Key); owner == "" || owner == sessionID {
+								free = append(free, o)
+							}
+						}
+						rebound := false
+						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, free)
 						if newKey != "" && newKey != watchedFilePath {
 							if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
+								rebound = true
 								UnclaimSession(agentID, claimCwd, watchedFilePath)
+								// /new (a session created after this pane's last
+								// activity) is live; /resume replays history.
+								replay = !sessionStartedAfter(commandCodeSessionStart(newKey), lastActivity)
 								watchedFilePath = newKey
+								pendingCreate = false
 								lastFileSize = 0
 								transcriptMessageCount = 0
 								lastCheck = time.Now()
@@ -368,6 +575,15 @@ func (w *CommandCodeWatcher) Watch(ctx context.Context, sessionID string, cwd st
 									notifier.Watch(watchedFilePath)
 								}
 								agent.RecordExternalSession(sessionID, newKey)
+							}
+						}
+						if !rebound && !pendingCreate {
+							// /clear or /new followed by a prompt: the new
+							// session has only its checkpoints sidecar until
+							// the first iteration completes. Follow it now so
+							// the new turn is tracked while it runs.
+							if tp, ck, ok := findPendingSession(lastActivity); ok {
+								bindPending(tp, ck)
 							}
 						}
 					}
@@ -548,20 +764,21 @@ func (w *CommandCodeWatcher) parseCommandCodeLog(filePath string, offset int64, 
 	return len(entries)
 }
 
-// commandCodeCheckpointCount returns the highest messageCount recorded in the
-// session's sidecar checkpoints file (<id>.checkpoints.jsonl), or -1 when the
-// sidecar is missing. Command Code appends a checkpoint the instant a turn is
-// submitted; its messageCount reflects the messages committed up to that
-// moment, so a count at or above the committed transcript means a turn whose
-// prompt has not yet been flushed to the transcript (see the persistence note
-// near the Watch constants above).
-func commandCodeCheckpointCount(filePath string) int64 {
+// commandCodeCheckpoints returns the number of turns recorded in the
+// session's sidecar checkpoints file (<id>.checkpoints.jsonl) and the highest
+// messageCount among them, or (0, -1) when the sidecar is missing. Command
+// Code appends a checkpoint the instant a turn is submitted; its messageCount
+// reflects the messages committed up to that moment, so a count at or above
+// the committed transcript means a turn whose prompt has not yet been flushed
+// to the transcript (see the persistence note near the Watch constants).
+func commandCodeCheckpoints(filePath string) (int, int64) {
 	ckptPath := strings.TrimSuffix(filePath, ".jsonl") + ".checkpoints.jsonl"
 	lines, err := ReadNewLines(ckptPath, 0)
 	if err != nil {
-		return -1
+		return 0, -1
 	}
 	var maxCount int64 = -1
+	n := 0
 	for _, line := range lines {
 		var c struct {
 			MessageCount int64 `json:"messageCount"`
@@ -569,11 +786,88 @@ func commandCodeCheckpointCount(filePath string) int64 {
 		if json.Unmarshal([]byte(line), &c) != nil {
 			continue
 		}
+		n++
 		if c.MessageCount > maxCount {
 			maxCount = c.MessageCount
 		}
 	}
-	return maxCount
+	return n, maxCount
+}
+
+// commandCodeSessionStart returns the creation time recorded in a
+// transcript's session header, or the zero time.
+func commandCodeSessionStart(path string) time.Time {
+	head, err := ReadFirstLine(path)
+	if err != nil {
+		return time.Time{}
+	}
+	var h struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	}
+	if json.Unmarshal([]byte(head), &h) != nil || h.Type != "session" {
+		return time.Time{}
+	}
+	t, _ := time.Parse(time.RFC3339Nano, h.Timestamp)
+	return t
+}
+
+// commandCodeFirstCheckpointPrompt returns the prompt of the first turn
+// recorded in a checkpoints sidecar, used as the card title until the
+// transcript (and its generated title) exists.
+func commandCodeFirstCheckpointPrompt(ckptPath string) string {
+	head, err := ReadFirstLine(ckptPath)
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		Prompt string `json:"prompt"`
+	}
+	if json.Unmarshal([]byte(head), &c) != nil {
+		return ""
+	}
+	return c.Prompt
+}
+
+// commandCodeProjectSlug mirrors how Command Code names the per-project
+// directory under ~/.commandcode/projects: the cwd passed through
+// @sindresorhus/slugify (decamelize, lowercase, every run of characters other
+// than a-z/0-9 collapsed to "-", leading/trailing dashes trimmed), or "root"
+// when nothing is left. Only used to locate the checkpoints sidecar of a
+// session whose transcript does not exist yet; transcripts themselves are
+// always matched by the cwd recorded in their header.
+func commandCodeProjectSlug(cwd string) string {
+	var b strings.Builder
+	prevLowerOrDigit := false
+	dash := false
+	for _, r := range cwd {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			if prevLowerOrDigit {
+				dash = true
+			}
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			dash = false
+			b.WriteRune(r + ('a' - 'A'))
+			prevLowerOrDigit = false
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			dash = false
+			b.WriteRune(r)
+			prevLowerOrDigit = true
+		default:
+			dash = true
+			prevLowerOrDigit = false
+		}
+	}
+	if b.Len() == 0 {
+		return "root"
+	}
+	return b.String()
 }
 
 // commandCodeUserText extracts the plain text of a user message, ignoring

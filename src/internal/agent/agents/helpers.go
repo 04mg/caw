@@ -119,6 +119,19 @@ func FindEarliestFiles(baseDir string, ext string, after time.Time) ([]FileCandi
 
 const rebindSilenceTicks = 3 // ~1.5s at the 500ms poll interval
 
+// sessionStartedAfter reports whether a native session created at started
+// began after (or within a second of) the watcher's last activity on its
+// previous session, i.e. it is a brand-new session from /new rather than an
+// older one picked with /resume. Watchers use it after a mid-session rebind
+// to decide whether the first read of the new session is live work (report
+// transitions and notifications) or a replay of history (don't).
+func sessionStartedAfter(started, lastActivity time.Time) bool {
+	if started.IsZero() {
+		return false
+	}
+	return !started.Before(lastActivity.Add(-time.Second))
+}
+
 // RebindCandidate is a generic same-group candidate evaluated by ShouldRebind.
 type RebindCandidate struct {
 	Key     string
@@ -411,6 +424,14 @@ func (n *FileChangeNotifier) loop() {
 						n.mu.Unlock()
 					}
 					relevant = true
+				} else if ev.Has(fsnotify.Create) && strings.HasPrefix(target, ev.Name+string(filepath.Separator)) {
+					// A missing intermediate directory of the target was
+					// just created (e.g. Claude creates its per-project
+					// transcript dir lazily together with the first
+					// transcript). Descend so the target's own Create is
+					// not missed; the target may already exist by now.
+					n.Watch(target)
+					relevant = true
 				}
 			} else if ev.Has(fsnotify.Write) || ev.Has(fsnotify.Create) {
 				relevant = true
@@ -672,6 +693,8 @@ func CleanPrompt(raw string) string {
 func isUserInputTool(toolLower string) bool {
 	switch toolLower {
 	case "askuserquestion", "ask_user_question", "askuser",
+		// GitHub Copilot CLI's interactive prompt tool.
+		"ask_user",
 		"exitplanmode", "exit_plan_mode",
 		"question", "request_user_input",
 		// Oh My Pi / omp interactive prompt tool.

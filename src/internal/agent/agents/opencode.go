@@ -27,6 +27,9 @@ type openCodePart struct {
 		// Error holds the error message when a tool call failed
 		// (state.status == "error"), e.g. "The user dismissed this question".
 		Error string `json:"error,omitempty"`
+		Time  struct {
+			Start int64 `json:"start,omitempty"`
+		} `json:"time,omitempty"`
 	} `json:"state,omitempty"`
 	Text string `json:"text,omitempty"`
 }
@@ -41,29 +44,109 @@ type openCodeMessage struct {
 		// so it can be told apart from a mid-flight LLM turn by this field.
 		Completed int64 `json:"completed,omitempty"`
 	} `json:"time,omitempty"`
-	Parts  []struct {
+	Parts []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
 	} `json:"parts,omitempty"`
-	Error *struct {
-		Name string `json:"name"`
-	} `json:"error,omitempty"`
+	Error *openCodeMessageError `json:"error,omitempty"`
+}
+
+// openCodeMessageError is message.data.error: set when the turn was aborted
+// (MessageAbortedError) or failed (APIError, ProviderAuthError, ...).
+type openCodeMessageError struct {
+	Name string `json:"name"`
+	Data struct {
+		Message string `json:"message,omitempty"`
+	} `json:"data,omitempty"`
+}
+
+// text renders the error for the card's details line.
+func (e *openCodeMessageError) text() string {
+	if e == nil {
+		return ""
+	}
+	if e.Data.Message == "" {
+		return e.Name
+	}
+	if e.Name == "" {
+		return e.Data.Message
+	}
+	return e.Name + ": " + e.Data.Message
+}
+
+// resolveOpenCodeDBPath mirrors how OpenCode 1.x picks its SQLite database:
+//
+//   - the data dir is $XDG_DATA_HOME/opencode (xdg-basedir), falling back to
+//     ~/.local/share/opencode;
+//   - OPENCODE_DB overrides the file (absolute, or relative to the data dir);
+//   - release channels (latest/beta/prod) use opencode.db, other channels use
+//     opencode-<channel>.db, so when opencode.db is missing the most recently
+//     modified opencode-*.db in the data dir is used.
+//
+// Caw's PTY children inherit Caw's environment, so resolving with Caw's env
+// finds the same file the agent writes. %APPDATA% is kept as a last resort.
+func resolveOpenCodeDBPath() string {
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" || !filepath.IsAbs(dataHome) {
+		home, _ := os.UserHomeDir()
+		dataHome = filepath.Join(home, ".local", "share")
+	}
+	dataDir := filepath.Join(dataHome, "opencode")
+	if v := os.Getenv("OPENCODE_DB"); v != "" && v != ":memory:" {
+		if filepath.IsAbs(v) {
+			return v
+		}
+		return filepath.Join(dataDir, v)
+	}
+	def := filepath.Join(dataDir, "opencode.db")
+	if _, err := os.Stat(def); err == nil {
+		return def
+	}
+	if matches, _ := filepath.Glob(filepath.Join(dataDir, "opencode-*.db")); len(matches) > 0 {
+		best, bestMod := "", time.Time{}
+		for _, m := range matches {
+			if info, err := os.Stat(m); err == nil && info.ModTime().After(bestMod) {
+				best, bestMod = m, info.ModTime()
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		if p := filepath.Join(appData, "opencode", "opencode.db"); fileExists(p) {
+			return p
+		}
+	}
+	return def
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// openCodePermissionPending reports whether the leaf's PTY showed OpenCode's
+// permission dialog after the given running tool started and the user has not
+// answered (Enter / click / ESC) since. OpenCode keeps pending permission
+// requests in memory only: the tool part simply stays "running" in the DB, so
+// the TUI is the only signal that the agent is blocked on the user.
+func openCodePermissionPending(leaf string, toolStartMs int64) bool {
+	seen := agent.LastPtyPendingInput(leaf)
+	if seen.IsZero() {
+		return false
+	}
+	if toolStartMs > 0 && seen.Before(time.UnixMilli(toolStartMs)) {
+		return false
+	}
+	return seen.After(agent.LastPtyAnswer(leaf))
 }
 
 func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		appData := os.Getenv("APPDATA")
-		if appData != "" {
-			dbPath = filepath.Join(appData, "opencode", "opencode.db")
-		}
-	}
-
-	walPath := dbPath + "-wal"
+	dbPath := resolveOpenCodeDBPath()
 
 	const agentID = "opencode"
 	var lastDBMod time.Time
@@ -75,27 +158,27 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	// session. On resume, the session may predate the watcher so we skip
 	// the recency filter entirely in findUnclaimedOpenCodeSession.
 	watcherStart := time.Now().Add(-10 * time.Second)
-	// Re-bind bookkeeping for /new and /resume detection.
-	var silentTicks int
-	// lastBoundUpdated tracks the time_updated of the currently bound session
-	// row. Because OpenCode stores all sessions in a single shared DB, the
-	// db-changed detector fires on writes to ANY session. Comparing the bound
-	// row's time_updated before and after a DB change lets us distinguish "our"
-	// session (boundAdvanced) from a sibling session (otherSessionActive).
-	var lastBoundUpdated int64
-	var otherSessionActive bool
 
-	// fsnotify-based immediate change notifier on the SQLite DB and WAL
-	// files. Reacts to writes in ~tens of ms; the 2s ticker acts as a
-	// fallback for missed events and drives heartbeat/re-bind.
-	var notifyCh <-chan struct{}
-	notifier, nerr := NewFileChangeNotifier()
-	if nerr == nil {
+	// fsnotify-based immediate change notifiers. OpenCode runs SQLite in WAL
+	// mode, so a write only touches opencode.db-wal until the next checkpoint:
+	// watching the main file alone left the watcher on the 2s fallback poll.
+	// Watch both; the ticker still covers missed events and drives heartbeat.
+	var notifyCh, walNotifyCh <-chan struct{}
+	watchFiles := func() {}
+	if notifier, err := NewFileChangeNotifier(); err == nil {
 		defer notifier.Close()
 		notifyCh = notifier.Notify()
-		// Watch the DB file; if it doesn't exist yet, the notifier will
-		// watch the nearest existing ancestor dir and promote on create.
-		notifier.Watch(dbPath)
+		if walNotifier, err := NewFileChangeNotifier(); err == nil {
+			defer walNotifier.Close()
+			walNotifyCh = walNotifier.Notify()
+			watchFiles = func() {
+				notifier.Watch(dbPath)
+				walNotifier.Watch(dbPath + "-wal")
+			}
+		} else {
+			watchFiles = func() { notifier.Watch(dbPath) }
+		}
+		watchFiles()
 	}
 
 	defer func() {
@@ -105,6 +188,14 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 	}()
 
 	dbChanged := func() bool {
+		// The DB may not exist yet (first ever OpenCode run) or may be
+		// created under a channel-specific name; re-resolve until it exists.
+		if !fileExists(dbPath) {
+			if p := resolveOpenCodeDBPath(); p != dbPath {
+				dbPath = p
+				watchFiles()
+			}
+		}
 		changed := false
 		if info, err := os.Stat(dbPath); err == nil {
 			if info.ModTime() != lastDBMod {
@@ -112,7 +203,7 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 				lastDBMod = info.ModTime()
 			}
 		}
-		if walInfo, err := os.Stat(walPath); err == nil {
+		if walInfo, err := os.Stat(dbPath + "-wal"); err == nil {
 			if walInfo.ModTime() != lastWALMod {
 				changed = true
 				lastWALMod = walInfo.ModTime()
@@ -121,65 +212,70 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 		return changed
 	}
 
+	bind := func(id string) {
+		openCodeSessionID = id
+		lastReportedStatus = ""
+		agent.RecordExternalSession(sessionID, id)
+	}
+
+	// pendingProbe is true when a tick should re-read the DB even though it
+	// did not change: while waiting for input (keeps the watchdog's
+	// lastActivity alive and notices the answer), and while a tool runs and
+	// the PTY just showed a permission dialog (only visible in the TUI).
+	var runningToolStart int64
+	pendingProbe := func() bool {
+		switch lastReportedStatus {
+		case "waiting_input":
+			return true
+		case "executing":
+			return openCodePermissionPending(sessionID, runningToolStart)
+		}
+		return false
+	}
+
 	processState := func(changed bool) {
 		if openCodeSessionID == "" {
 			// A reopened pane must resume tracking its exact prior session
 			// (set by resumeCmdForAgent via `opencode -s <id>`). Bind to it
 			// first, never a heuristic scan over the shared DB, so two panes
 			// sharing a cwd each follow their own conversation.
-			if changed {
-				openCodeSessionID = bindOpenCodeInitial(dbPath, cwd, watcherStart, agentID, resume, sessionID)
-				if openCodeSessionID != "" {
-					silentTicks = 0
-					lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
-					agent.RecordExternalSession(sessionID, openCodeSessionID)
+			if !changed {
+				return
+			}
+			id := bindOpenCodeInitial(dbPath, cwd, watcherStart, agentID, resume, sessionID)
+			if id == "" {
+				return
+			}
+			bind(id)
+		} else if changed {
+			// Mid-session re-bind for /new, /sessions and /resume. OpenCode
+			// keeps every session of the workspace in one shared DB, so a
+			// session that just received a user message is only ours when
+			// THIS pane submitted it (PtyLineSubmitOwner); otherwise it belongs
+			// to a sibling pane (or an external opencode process) and must
+			// not be followed.
+			if newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID, sessionID); newKey != "" {
+				if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
+					UnclaimSession(agentID, cwd, openCodeSessionID)
+					bind(newKey)
 				}
 			}
 		}
 
-		// Always re-parse while waiting for user input even if the DB
-		// hasn't changed. This keeps lastActivity alive in the watchdog
-		// so the idle-timeout never fires while a question is pending.
-		if changed || lastReportedStatus == "waiting_input" {
-			if openCodeSessionID != "" {
-				// Determine whether this DB change advanced the bound session
-				// or a sibling. All sessions share one SQLite DB, so a
-				// modtime change alone is ambiguous — we must compare the
-				// bound row's time_updated to disambiguate.
-				boundAdvanced := false
-				if changed {
-					cur := openCodeSessionUpdated(dbPath, openCodeSessionID)
-					if cur != lastBoundUpdated {
-						boundAdvanced = true
-						lastBoundUpdated = cur
-					} else {
-						// DB changed but the bound session didn't — another
-						// session (e.g. one switched to via /session) got a
-						// write. Mark it so the rebind pass can fire.
-						otherSessionActive = true
-					}
-				}
-
-				before := lastReportedStatus
-				wrappedCallback := func(status, tool, details, title string) {
-					lastReportedStatus = status
-					callback(status, tool, details, title)
-				}
-				w.parseOpenCodeDB(dbPath, cwd, openCodeSessionID, wrappedCallback)
-				if before != lastReportedStatus || boundAdvanced {
-					silentTicks = 0
-					if boundAdvanced {
-						otherSessionActive = false
-					}
-				} else {
-					silentTicks++
-				}
-			} else {
-				silentTicks++
-			}
-		} else {
-			silentTicks++
+		if !changed && !pendingProbe() {
+			return
 		}
+		st, ok := w.readOpenCodeState(dbPath, openCodeSessionID)
+		if !ok {
+			return
+		}
+		runningToolStart = st.activeToolStart
+		if st.status == "executing" && openCodePermissionPending(sessionID, st.activeToolStart) {
+			st.status = "waiting_input"
+			st.details = "Permission required"
+		}
+		lastReportedStatus = st.status
+		callback(st.status, st.tool, st.details, st.title)
 	}
 
 	for {
@@ -188,74 +284,13 @@ func (w *OpenCodeWatcher) Watch(ctx context.Context, sessionID string, cwd strin
 			return
 		case <-notifyCh:
 			processState(dbChanged())
+		case <-walNotifyCh:
+			processState(dbChanged())
 		case <-ticker.C:
 			heartbeat()
 			processState(dbChanged())
-
-			// Mid-session re-bind for /new, /resume, and /session.
-			// Fires when the bound session has been silent long enough OR
-			// when the DB changed due to a sibling session (OpenCode stores
-			// all sessions in a single SQLite DB, so writes to a session
-			// switched to via /session would otherwise reset silentTicks
-			// and prevent re-binding).
-			//
-			// Gated on PTY activity OR user focus: OpenCode keeps every
-			// session for a cwd in one shared SQLite DB, so a DB modtime
-			// change alone is ambiguous — it may come from a sibling agent
-			// running in a different PTY. Only re-bind when *this* watcher's
-			// PTY has produced output recently (indicating the agent process
-			// in this PTY is the one that wrote, e.g. the user issued /new or
-			// /resume here), OR when this pane currently has the user's focus
-			// (the user issued /new or /resume here and is waiting for the
-			// agent to start, which may not produce PTY bytes immediately).
-			// Without this gate, when a sibling agent in the same cwd keeps
-			// working after this one goes idle, the idle watcher would steal
-			// the sibling's session and briefly flip back to "working" with
-			// the sibling's task under this card.
-			if openCodeSessionID != "" && (silentTicks >= rebindSilenceTicks || otherSessionActive) {
-				focused := agent.IsPtyFocused(sessionID)
-				lastPtyOut := agent.LastPtyActivity(sessionID)
-				ptyRecent := time.Since(lastPtyOut) < 3*time.Second
-				if ptyRecent || focused {
-					newKey := findRebindOpenCodeSession(dbPath, cwd, agentID, openCodeSessionID)
-					if newKey != "" && newKey != openCodeSessionID {
-						if ClaimSessionForLeaf(agentID, cwd, newKey, sessionID) {
-							UnclaimSession(agentID, cwd, openCodeSessionID)
-							openCodeSessionID = newKey
-							lastReportedStatus = ""
-							silentTicks = 0
-							otherSessionActive = false
-							lastBoundUpdated = openCodeSessionUpdated(dbPath, openCodeSessionID)
-							agent.RecordExternalSession(sessionID, openCodeSessionID)
-						}
-					} else {
-						otherSessionActive = false
-					}
-				} else {
-					// PTY silent and not focused: the DB movement came from a
-					// sibling, not from a /new or /resume issued here. Drop
-					// the flag so we stop re-evaluating the re-bind every
-					// tick while our own PTY stays quiet.
-					otherSessionActive = false
-				}
-			}
 		}
 	}
-}
-
-// openCodeSessionUpdated returns the time_updated column of the given session
-// row, or 0 if the query fails. Used by processState to tell whether a DB
-// modtime change corresponds to the bound session (boundAdvanced) or a
-// sibling session (otherSessionActive) in the shared SQLite database.
-func openCodeSessionUpdated(dbPath, sid string) int64 {
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
-	if err != nil {
-		return 0
-	}
-	defer db.Close()
-	var tu int64
-	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, sid).Scan(&tu)
-	return tu
 }
 
 // bindOpenCodeInitial selects the initial OpenCode session to bind for a leaf.
@@ -296,39 +331,115 @@ func openCodeSessionExists(dbPath, sid, cwd string) bool {
 	return true
 }
 
-// findUnclaimedOpenCodeSession enumerates candidate OpenCode sessions in the
-// opencode.db (filtered by directory=cwd when possible) and returns the id of
-// the earliest one (oldest first) that is not already claimed by another
-// watcher of the same agent type+cwd.
+// openCodeCandidate is a top-level OpenCode session of the watcher's cwd.
+// activity is the time (ms) of its latest user message — the write a pane's
+// Enter produces — or its creation time when it has no user message yet.
+type openCodeCandidate struct {
+	id          string
+	timeCreated int64
+	timeUpdated int64
+	activity    int64
+}
+
+// openCodeLastUserMessage returns the time_created (ms) and prompt text of the
+// latest user message in the session, or 0 when it has none.
+func openCodeLastUserMessage(db *sql.DB, sid string) (int64, string) {
+	var id string
+	var created int64
+	if err := db.QueryRow(
+		`SELECT id, time_created FROM message WHERE session_id = ? AND json_extract(data,'$.role') = 'user' ORDER BY time_created DESC LIMIT 1`,
+		sid,
+	).Scan(&id, &created); err != nil {
+		return 0, ""
+	}
+	var text sql.NullString
+	_ = db.QueryRow(
+		`SELECT json_extract(data,'$.text') FROM part WHERE message_id = ? AND json_extract(data,'$.type') = 'text' ORDER BY time_created ASC LIMIT 1`,
+		id,
+	).Scan(&text)
+	return created, text.String
+}
+
+// openCodeActivity is the activity used for submit correlation: the time and
+// prompt of the latest user message, else the session creation time.
+func openCodeActivity(db *sql.DB, sid string, timeCreated int64) (int64, string) {
+	if t, text := openCodeLastUserMessage(db, sid); t > 0 {
+		return t, text
+	}
+	return timeCreated, ""
+}
+
+// openCodePromptSettle is how long a just-written session/user message whose
+// prompt text is not readable yet is left undecided. OpenCode writes the
+// session row, the user message and its text part in separate statements;
+// deciding ownership before the text lands would fall back to "closest Enter",
+// which a sibling pane pressing Enter at the same moment can win.
+const openCodePromptSettle = 3 * time.Second
+
+// openCodeSubmitOwner returns the Caw pane (leaf) that submitted the
+// candidate's latest user message, or "". undecided is true when a pane did
+// submit around then but the message is too fresh to judge (its prompt text is
+// not written yet); the caller should retry on the next DB change instead of
+// claiming or skipping for good.
+func openCodeSubmitOwner(agentID, cwd string, activityMs int64, prompt string) (owner string, undecided bool) {
+	at := time.UnixMilli(activityMs)
+	owner = agent.PtyLineSubmitOwner(agentID, cwd, at, prompt)
+	if owner != "" && prompt == "" && time.Since(at) < openCodePromptSettle {
+		// Some pane pressed Enter around then, but without the prompt text
+		// the closest Enter may be the wrong pane: wait for the text part.
+		return "", true
+	}
+	return owner, false
+}
+
+// listOpenCodeCandidates returns the top-level sessions of cwd (subagent
+// sessions, which have a parent_id, are never bound: they run inside the
+// parent's PTY), optionally only those updated at/after minUpdatedMs,
+// ordered by orderBy.
+func listOpenCodeCandidates(db *sql.DB, cwd string, minUpdatedMs int64, orderBy string) []openCodeCandidate {
+	query := `SELECT id, time_created, time_updated FROM session WHERE (parent_id IS NULL OR parent_id = '') AND time_updated >= ?`
+	args := []any{minUpdatedMs}
+	if cwd != "" {
+		query += ` AND directory = ?`
+		args = append(args, cwd)
+	}
+	rows, err := db.Query(query+` ORDER BY `+orderBy, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []openCodeCandidate
+	for rows.Next() {
+		var c openCodeCandidate
+		if rows.Scan(&c.id, &c.timeCreated, &c.timeUpdated) == nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// findUnclaimedOpenCodeSession picks the OpenCode session a not-yet-bound
+// pane should follow, and claims it for leaf.
 //
-// Subagent sessions (those with a non-empty parent_id) are always excluded:
-// subagents run internally inside the parent's PTY and have their own message
-// stream. If a parent watcher followed a subagent session, it would report the
-// subagent's terminal "stop" message as "idle" — emitting a spurious finished
-// notification — and then re-bind back to the parent once the parent resumes,
-// producing the "idle for a second then working again" flicker.
+// OpenCode creates its session row lazily, on the first prompt, in a SQLite DB
+// shared by every OpenCode process. When several panes run OpenCode in the same
+// cwd, "a new session appeared" says nothing about which pane created it: the
+// old heuristic let whichever watcher polled first claim it, so an idle,
+// never-prompted pane could steal a sibling's /new session and show its work
+// (and fire its notifications) while the real pane stayed idle.
 //
-// When multiple watchers compete for the same pool of sessions (because
-// OpenCode creates sessions lazily on first user message, not at PTY start),
-// PTY activity correlation is used to disambiguate: a watcher only claims a
-// session if its PTY has produced output within a recent window, indicating
-// the agent process in this PTY is the one that created the session. This
-// prevents watcher 1 from claiming a session that was created by watcher 2's
-// agent just because watcher 1 polled first.
-//
-// Recency handling differs from the file-based watchers (claude, codex, ...).
-// Those filter by file mtime, which advances when a reattached old session
-// receives a new message — so a /sessions reattach in a fresh agent launch is
-// found naturally. OpenCode stores every session in a single shared SQLite DB,
-// so there is no per-session file mtime; filtering by session.time_created
-// (a row column set once at creation) would permanently exclude any session
-// the user reattaches to via /sessions. Instead we use session.time_updated:
-// a session whose time_updated advanced past the watcher start time was
-// recently interacted with (the user sent a message or reattached via
-// /sessions), so it is claimable. A stale old session that hasn't been touched
-// since a previous Caw run has time_updated well before the watcher started and
-// is skipped — this prevents a fresh OpenCode launch from spuriously binding
-// to a leftover session just because the TUI rendered PTY bytes on startup.
+// The session's user message is written milliseconds after the Enter that
+// produced it, so ownership is decided by agent.PtyLineSubmitOwner:
+//  1. a candidate whose latest user message this pane submitted is claimed
+//     (most recent first);
+//  2. a candidate another pane submitted is never claimed;
+//  3. only when no pane submitted around the candidate's activity (e.g.
+//     `opencode --prompt`, or a session created outside Caw) the legacy
+//     recency rules apply: on resume (`--continue`) the most recently updated
+//     session; on a fresh launch a session created after the watcher started,
+//     or an older one updated since (reattached via /sessions). A stale
+//     session untouched since the watcher started is never claimed, so a fresh
+//     launch does not adopt a leftover conversation.
 func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.Time, agentID string, resume bool, leaf string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
@@ -336,155 +447,146 @@ func findUnclaimedOpenCodeSession(dbPath string, cwd string, watcherStart time.T
 	}
 	defer db.Close()
 
-	type row struct {
-		id          string
-		timeCreated int64
-		timeUpdated int64
+	// Only fall back to an unfiltered (all directories) scan when there is no
+	// cwd to narrow by: grabbing a session from another workspace would bind
+	// two agents in different workspaces to the same session.
+	var minUpdated int64
+	order := `time_created ASC`
+	if resume {
+		order = `time_updated DESC`
+	} else {
+		minUpdated = watcherStart.UnixMilli()
 	}
-	var candidates []row
+	candidates := listOpenCodeCandidates(db, cwd, minUpdated, order)
 
-	if cwd != "" {
-		rows, qerr := db.Query(
-			`SELECT id, time_created, time_updated FROM session WHERE directory = ? AND (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
-			cwd,
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var r row
-				rows.Scan(&r.id, &r.timeCreated, &r.timeUpdated)
-				candidates = append(candidates, r)
-			}
-			rows.Close()
+	type scored struct {
+		openCodeCandidate
+		owner string
+	}
+	var mine []scored
+	var orphans []scored
+	for _, c := range candidates {
+		if by := ClaimedBy(agentID, cwd, c.id); by != "" && by != leaf {
+			continue
+		}
+		var prompt string
+		c.activity, prompt = openCodeActivity(db, c.id, c.timeCreated)
+		owner, undecided := openCodeSubmitOwner(agentID, cwd, c.activity, prompt)
+		if undecided {
+			continue
+		}
+		switch owner {
+		case leaf:
+			mine = append(mine, scored{c, owner})
+		case "":
+			orphans = append(orphans, scored{c, owner})
 		}
 	}
-	if len(candidates) == 0 {
-		// Only fall back to the unfiltered scan when we have no cwd to
-		// narrow by. When a cwd IS set, an empty cwd-specific result means
-		// no session has been created in this workspace yet — grabbing a
-		// session from a different workspace here is exactly what would
-		// associate two agents in different workspaces with the same
-		// session. The watcher retries on the next DB change instead.
-		if cwd == "" {
-			rows, qerr := db.Query(
-				`SELECT id, time_created, time_updated FROM session WHERE (parent_id IS NULL OR parent_id = '') ORDER BY time_created ASC`,
-			)
-			if qerr == nil {
-				for rows.Next() {
-					var r row
-					rows.Scan(&r.id, &r.timeCreated, &r.timeUpdated)
-					candidates = append(candidates, r)
-				}
-				rows.Close()
+	// 1. Sessions this pane submitted to, most recent activity first.
+	for len(mine) > 0 {
+		best := 0
+		for i := range mine {
+			if mine[i].activity > mine[best].activity {
+				best = i
 			}
 		}
+		if ClaimSessionForLeaf(agentID, cwd, mine[best].id, leaf) {
+			return mine[best].id
+		}
+		mine = append(mine[:best], mine[best+1:]...)
 	}
-
-	for _, r := range candidates {
-		// On resume, skip the recency filter entirely — the session may
-		// predate the watcher (the agent reattaches to an old session).
-		// On fresh start:
-		//   - A session created after the watcher launched is claimable with
-		//     no extra gate (it was just created, most likely by this agent).
-		//   - An older session is claimable only when it was recently
-		//     updated (time_updated after watcherStart) — i.e. the user just
-		//     interacted with it or reattached to it via /sessions. A stale
-		//     old session that hasn't been touched since a previous Caw run
-		//     is skipped, preventing a fresh OpenCode launch from spuriously
-		//     binding to a leftover session just because the TUI rendered
-		//     PTY bytes on startup. We deliberately do NOT gate on PTY
-		//     activity alone: the OpenCode TUI emits control sequences on
-		//     connect regardless of whether the user sent a message, so a
-		//     PTY-activity gate would let every new instance claim the next
-		//     stale session in the cwd and show its old title/status in Idle.
+	// 3. Legacy recency rules for sessions no pane is known to own.
+	for _, c := range orphans {
 		if !resume {
-			sessionCreated := time.UnixMilli(r.timeCreated)
-			if !sessionCreated.After(watcherStart) {
-				sessionUpdated := time.UnixMilli(r.timeUpdated)
-				if !sessionUpdated.After(watcherStart) {
-					continue
-				}
+			if !time.UnixMilli(c.timeCreated).After(watcherStart) && !time.UnixMilli(c.timeUpdated).After(watcherStart) {
+				continue
 			}
 		}
-		if ClaimSessionForLeaf(agentID, cwd, r.id, leaf) {
-			return r.id
+		if ClaimSessionForLeaf(agentID, cwd, c.id, leaf) {
+			return c.id
 		}
 	}
 	return ""
 }
 
-// findRebindOpenCodeSession looks for a different OpenCode session in the same
-// cwd whose time_updated is more recent than lastActivity. Used by the
-// mid-session re-bind pass to detect /new and /resume. It does NOT claim the
-// returned session; the caller is responsible for calling ClaimSession.
-// Gates on PTY activity to ensure only the watcher whose PTY is producing
-// output switches to the new session.
+// findRebindOpenCodeSession detects /new, /sessions and /resume inside a
+// running OpenCode pane: it returns a different top-level session of the cwd
+// that received a user message more recently than the bound session AND that
+// THIS pane submitted (agent.PtyLineSubmitOwner), or "". It does not claim; the
+// caller does.
 //
-// Subagent sessions (parent_id != '') are excluded: a subagent launched by the
-// current agent (e.g. via the "task" tool) shares the same directory and, while
-// it runs, has a more recent time_updated than the blocked parent. Without this
-// guard the parent watcher would re-bind to the subagent, report its terminal
-// "stop" as "idle" (firing a false finished notification), then re-bind back to
-// the parent once it resumes — the "idle for a second then working again"
-// flicker. /new and /resume always create top-level sessions with no parent_id.
-func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, currentID string) string {
+// The submit correlation replaces the old "PTY recently active or pane
+// focused" gate, which re-bound a focused idle pane to whatever session of
+// the cwd was updated last — e.g. a sibling pane's conversation, or after a
+// Caw restart a stale session another pane had used — so the card followed
+// the wrong conversation and missed its own turns.
+//
+// Subagent sessions (parent_id set) are excluded: a subagent launched by the
+// task tool shares the cwd and is updated while the parent waits; following
+// it would report its terminal "stop" as idle (false finished push).
+func findRebindOpenCodeSession(dbPath string, cwd string, agentID string, currentID string, leaf string) string {
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
 		return ""
 	}
 	defer db.Close()
 
-	var currentUpdated int64
-	_ = db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, currentID).Scan(&currentUpdated)
+	var curCreated int64
+	_ = db.QueryRow(`SELECT time_created FROM session WHERE id = ?`, currentID).Scan(&curCreated)
+	curActivity, _ := openCodeActivity(db, currentID, curCreated)
 
 	var bestID string
-	var bestTime int64
-
-	if cwd != "" {
-		rows, qerr := db.Query(
-			`SELECT id, time_updated FROM session WHERE directory = ? AND (parent_id IS NULL OR parent_id = '') ORDER BY time_updated DESC`,
-			cwd,
-		)
-		if qerr == nil {
-			for rows.Next() {
-				var id string
-				var tu int64
-				if rows.Scan(&id, &tu) != nil {
-					continue
-				}
-				if id == currentID {
-					continue
-				}
-				if tu > currentUpdated && tu > bestTime {
-					bestID = id
-					bestTime = tu
-				}
-			}
-			rows.Close()
+	var bestActivity int64
+	for _, c := range listOpenCodeCandidates(db, cwd, curActivity, `time_updated DESC`) {
+		if c.id == currentID {
+			continue
 		}
+		if by := ClaimedBy(agentID, cwd, c.id); by != "" && by != leaf {
+			continue
+		}
+		act, prompt := openCodeActivity(db, c.id, c.timeCreated)
+		if act <= curActivity || act <= bestActivity {
+			continue
+		}
+		if owner, undecided := openCodeSubmitOwner(agentID, cwd, act, prompt); undecided || owner != leaf {
+			continue
+		}
+		bestID, bestActivity = c.id, act
 	}
 	return bestID
 }
 
+// openCodeState is the status derived from the bound session's rows.
+type openCodeState struct {
+	status, tool, details, title string
+	// activeToolStart is the state.time.start (ms) of the running tool part,
+	// 0 when none. Used to scope the PTY permission-dialog signal to the tool
+	// call that is currently blocked.
+	activeToolStart int64
+}
+
 func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSessionID string, callback func(status, tool, details, title string)) {
+	if openCodeSessionID == "" {
+		callback("idle", "", "", "")
+		return
+	}
+	if st, ok := w.readOpenCodeState(dbPath, openCodeSessionID); ok {
+		callback(st.status, st.tool, st.details, st.title)
+	}
+}
+
+// readOpenCodeState derives the lifecycle status of an OpenCode session from
+// its latest message and that message's parts.
+func (w *OpenCodeWatcher) readOpenCodeState(dbPath string, resolvedID string) (openCodeState, bool) {
 	// Open in read-only WAL mode to avoid interfering with the running OpenCode process.
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_journal_mode=WAL")
 	if err != nil {
-		return
+		return openCodeState{}, false
 	}
 	defer db.Close()
 
 	var openCodeTitle string
-	resolvedID := openCodeSessionID
-
-	if resolvedID == "" {
-		callback("idle", "", "", "")
-		return
-	}
-
-	_ = db.QueryRow(
-		`SELECT title FROM session WHERE id = ?`,
-		resolvedID,
-	).Scan(&openCodeTitle)
+	_ = db.QueryRow(`SELECT title FROM session WHERE id = ?`, resolvedID).Scan(&openCodeTitle)
 
 	// Retrieve the user's prompt. OpenCode stores the initial prompt as the
 	// first 'text' part in the session. session_input exists in the schema but
@@ -513,6 +615,7 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 	if sessionTitle == "" {
 		sessionTitle = userPrompt
 	}
+	idle := openCodeState{status: "idle", title: sessionTitle}
 
 	// 1. Get the latest message in the session.
 	var msgID string
@@ -522,24 +625,17 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 		resolvedID,
 	).Scan(&msgID, &msgDataJSON)
 	if err != nil {
-		callback("idle", "", "", sessionTitle)
-		return
+		return idle, true
 	}
 
 	var msg openCodeMessage
 	if err := json.Unmarshal([]byte(msgDataJSON), &msg); err != nil {
-		callback("idle", "", "", sessionTitle)
-		return
+		return idle, true
 	}
 
 	// 2. Query all parts associated with this latest message.
-	rows, err := db.Query(
-		`SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC`,
-		msgID,
-	)
 	var parts []openCodePart
-	if err == nil {
-		defer rows.Close()
+	if rows, err := db.Query(`SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC`, msgID); err == nil {
 		for rows.Next() {
 			var partData string
 			if rows.Scan(&partData) == nil {
@@ -549,150 +645,166 @@ func (w *OpenCodeWatcher) parseOpenCodeDB(dbPath string, cwd string, openCodeSes
 				}
 			}
 		}
+		rows.Close()
 	}
 
-	// 3. Determine status based on message role, finish reason, and part states.
+	st := deriveOpenCodeState(msg, parts)
+	st.title = sessionTitle
+	return st, true
+}
+
+// deriveOpenCodeState maps the latest message of a session (and its parts) to
+// a lifecycle status. Title is filled in by the caller.
+func deriveOpenCodeState(msg openCodeMessage, parts []openCodePart) openCodeState {
 	switch msg.Role {
 	case "user":
 		// User just sent a message — agent is thinking/preparing response.
-		callback("thinking", "", "", sessionTitle)
-
+		return openCodeState{status: "thinking"}
 	case "assistant":
-		// Check for any currently running/pending tool calls.
-		var hasQuestion bool
-		var activeTool string
-		var lastToolName string
-		// failedTool/failedErr track the most recent tool part whose state is
-		// "error". When no tool is currently running and the assistant turn
-		// hasn't produced a follow-up, surface it as tool_failed.
-		var failedTool string
-		var failedErr string
+	default:
+		return openCodeState{status: "idle"}
+	}
 
-		for _, p := range parts {
-			if p.Type == "tool" {
-				if p.Tool != "" {
-					lastToolName = p.Tool
-				}
-				toolStatus := ""
-				if p.State != nil {
-					toolStatus = p.State.Status
-				}
-				if toolStatus == "running" || toolStatus == "pending" {
-					if p.Tool == "question" {
-						hasQuestion = true
-					} else {
-						activeTool = p.Tool
-					}
-				}
-				if toolStatus == "error" {
-					failedTool = p.Tool
-					if p.State != nil && p.State.Error != "" {
-						failedErr = p.State.Error
-					}
-				}
-			}
+	var hasQuestion bool
+	var activeTool string
+	var activeToolStart int64
+	var lastToolName string
+	// failedTool/failedErr track the most recent tool part whose state is
+	// "error".
+	var failedTool string
+	var failedErr string
+	for _, p := range parts {
+		if p.Type != "tool" {
+			continue
 		}
-
-		if hasQuestion {
-			callback("waiting_input", "question", "", sessionTitle)
-			return
+		if p.Tool != "" {
+			lastToolName = p.Tool
 		}
-		if activeTool != "" {
-			callback("executing", activeTool, "", sessionTitle)
-			return
+		toolStatus := ""
+		if p.State != nil {
+			toolStatus = p.State.Status
 		}
-		// The user dismissed or aborted an open "question" prompt (e.g. ESC
-		// on the question dialog). OpenCode marks the question part as error
-		// ("The user dismissed this question") and stops the turn — no new
-		// rows are written until the user prompts again. The message finish
-		// stays "tool-calls" (or "") so the generic branches below would
-		// report "executing"/"tool_failed" and leave the card stuck in
-		// Working forever. Surface it as "interrupted" instead so the card
-		// leaves Working and shows a red dot until the user resumes.
-		if failedTool == "question" && isDismissedQuestionError(failedErr) {
-			if failedErr == "" {
-				failedErr = "question dismissed"
-			}
-			callback("interrupted", "question", failedErr, sessionTitle)
-			return
-		}
-		// No tool is actively running. If the last tool part ended in an
-		// error and the assistant hasn't emitted a follow-up tool or text
-		// yet, surface the failure with a red dot.
-		if failedTool != "" && msg.Finish == "" {
-			if failedErr == "" {
-				failedErr = "tool call failed"
-			}
-			callback("tool_failed", failedTool, failedErr, sessionTitle)
-			return
-		}
-
-		// If no tool is actively running/pending but the turn expects more tool calls:
-		if msg.Finish == "tool-calls" {
-			if lastToolName != "" {
-				callback("executing", lastToolName, "", sessionTitle)
+		switch toolStatus {
+		case "running", "pending":
+			if p.Tool == "question" {
+				hasQuestion = true
 			} else {
-				callback("thinking", "", "", sessionTitle)
+				activeTool = p.Tool
+				if p.State.Time.Start > 0 {
+					activeToolStart = p.State.Time.Start
+				}
 			}
-			return
+		case "error":
+			failedTool = p.Tool
+			failedErr = p.State.Error
 		}
+	}
 
-		// Empty finish means the message row is still being written to — the
-		// turn is in progress but the tool state hasn't been updated yet (or
-		// a new step is about to start). Reporting "idle" here causes the
-		// status to flash idle→executing repeatedly. Treat an unfinished
-		// assistant message as "thinking" (actively working) instead.
-		if msg.Finish == "" {
-			if msg.Error != nil && msg.Error.Name == "MessageAbortedError" {
-				// The user aborted the turn. Report "interrupted" (not idle)
-				// so the UI surfaces it with a red dot and no push is sent.
-				callback("interrupted", "", "", sessionTitle)
-				return
-			}
-			// A shell command executed with "!" (e.g. "!git status") is
-			// written by OpenCode as an assistant message with a single
-			// bash tool part and no finish reason: the command runs directly
-			// in the PTY, not through the model, so the message is finalized
-			// (time.completed set) without finish. A mid-flight LLM turn
-			// never has time.completed set, so this only matches finished
-			// shell commands. Without this, the branch below would report
-			// "executing bash" forever and leave the card stuck in Working.
-			if msg.Time.Completed != 0 && lastToolName != "" {
-				callback("idle", "", "", sessionTitle)
-				return
-			}
-			if lastToolName != "" {
-				callback("executing", lastToolName, "", sessionTitle)
-			} else {
-				callback("thinking", "", "", sessionTitle)
-			}
-			return
+	if hasQuestion {
+		return openCodeState{status: "waiting_input", tool: "question"}
+	}
+	if activeTool != "" {
+		return openCodeState{status: "executing", tool: activeTool, activeToolStart: activeToolStart}
+	}
+
+	// The user aborted the turn (ESC twice). Report "interrupted" (not idle)
+	// so the UI surfaces it with a red dot and no push is sent.
+	if msg.Error != nil && msg.Error.Name == "MessageAbortedError" {
+		return openCodeState{status: "interrupted", tool: failedTool}
+	}
+	// The user dismissed an open "question" prompt or rejected a permission
+	// request. OpenCode marks the tool part as error ("The user dismissed this
+	// question" / "The user rejected permission to use this specific tool
+	// call.") and stops the turn — no new rows are written until the user
+	// prompts again. The message finish stays "tool-calls", so the generic
+	// branches below would leave the card stuck in Working forever.
+	if failedTool != "" && isUserRejectedToolError(failedTool, failedErr) {
+		if failedErr == "" {
+			failedErr = "question dismissed"
 		}
+		return openCodeState{status: "interrupted", tool: failedTool, details: failedErr}
+	}
+	// The turn ended with a provider/API error (e.g. HTTP 400, auth, context
+	// overflow): OpenCode finalizes the assistant message with an error and no
+	// finish reason and stops. Without this the empty-finish branch below
+	// reported "thinking" forever. The agent is no longer working, so report
+	// "interrupted" (idle column, red dot) with the error text.
+	if msg.Error != nil && msg.Finish == "" && msg.Time.Completed != 0 {
+		return openCodeState{status: "interrupted", tool: failedTool, details: msg.Error.text()}
+	}
+	// A tool call failed and the agent is about to process the failure (the
+	// step finished with "tool-calls", or is still being written): surface it
+	// with a red dot while the turn keeps running.
+	if failedTool != "" && (msg.Finish == "" || msg.Finish == "tool-calls") {
+		if failedErr == "" {
+			failedErr = "tool call failed"
+		}
+		return openCodeState{status: "tool_failed", tool: failedTool, details: failedErr}
+	}
 
-	// Otherwise, the assistant turn is complete (finish = "stop" or "completed").
+	// If no tool is actively running/pending but the turn expects more tool calls:
+	if msg.Finish == "tool-calls" {
+		if lastToolName != "" {
+			return openCodeState{status: "executing", tool: lastToolName}
+		}
+		return openCodeState{status: "thinking"}
+	}
+
+	// Empty finish means the message row is still being written to — the
+	// turn is in progress but the tool state hasn't been updated yet (or a new
+	// step is about to start). Reporting "idle" here causes the status to
+	// flash idle→executing repeatedly, so treat it as working.
+	if msg.Finish == "" {
+		// A shell command executed with "!" (e.g. "!git status") is written
+		// by OpenCode as an assistant message with a single bash tool part and
+		// no finish reason: the command runs directly in the PTY, not through
+		// the model, so the message is finalized (time.completed set) without
+		// finish. A mid-flight LLM turn never has time.completed set, so this
+		// only matches finished shell commands.
+		if msg.Time.Completed != 0 && lastToolName != "" {
+			return openCodeState{status: "idle"}
+		}
+		if lastToolName != "" {
+			return openCodeState{status: "executing", tool: lastToolName}
+		}
+		return openCodeState{status: "thinking"}
+	}
+
+	// Otherwise, the assistant turn is complete (finish = "stop" or other).
 	// Only the canonical "question" tool (handled above) signals waiting_input;
 	// scanning the assistant text for confirmation keywords produces false
-	// positives (e.g. planning prose that happens to contain "confirm" or
-	// "approve"), so it has been removed.
+	// positives, so it is not done.
 	var textContent string
 	for _, p := range parts {
 		if p.Type == "text" {
 			textContent = p.Text
 		}
 	}
-	callback("idle", "", textContent, sessionTitle)
+	return openCodeState{status: "idle", details: textContent}
+}
 
-	default:
-		callback("idle", "", "", sessionTitle)
+// isUserRejectedToolError reports whether a failed tool part was cancelled by
+// the user rather than failing on its own:
+//   - "question" dismissed with ESC ("The user dismissed this question"), or
+//     an equivalent "aborted" wording;
+//   - any tool whose permission request the user rejected ("The user rejected
+//     permission to use this specific tool call.").
+//
+// Deliberately narrow: an invalid-arguments schema error keeps the model
+// working, so it must not be treated as a cancellation.
+func isUserRejectedToolError(tool, err string) bool {
+	lower := strings.ToLower(err)
+	if strings.Contains(lower, "rejected permission") {
+		return true
 	}
+	return tool == "question" && isDismissedQuestionError(err)
 }
 
 // isDismissedQuestionError reports whether the error on a "question" tool
 // part means the user cancelled the question rather than answered it.
 // OpenCode writes "The user dismissed this question" when the user escapes
 // the prompt; "aborted" covers the equivalent user-initiated cancellation
-// wording on other agents. Deliberately narrow: an invalid-arguments schema
-// error keeps the model working, so it must not be treated as a dismissal.
+// wording on other agents.
 func isDismissedQuestionError(err string) bool {
 	lower := strings.ToLower(err)
 	return strings.Contains(lower, "dismissed") || strings.Contains(lower, "aborted")

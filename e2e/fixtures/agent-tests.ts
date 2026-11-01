@@ -150,7 +150,7 @@ export function createAgentStatusTests(cfg: AgentTestConfig) {
   })
 }
 
-async function launchAndAwait(page: Page, baseURL: string, label: string, agentId: string): Promise<AgentStatus> {
+export async function launchAndAwait(page: Page, baseURL: string, label: string, agentId: string): Promise<AgentStatus> {
   await waitForAppReady(page)
   await openControlCenter(page)
   const existingIds = await getExistingSessionIds(baseURL, agentId)
@@ -160,7 +160,7 @@ async function launchAndAwait(page: Page, baseURL: string, label: string, agentI
   return session
 }
 
-async function acceptTrustDialog(page: Page): Promise<void> {
+export async function acceptTrustDialog(page: Page): Promise<void> {
   // Many agents (Claude Code, Antigravity, Codex) show a trust/safety dialog
   // on first launch in a new directory. We detect it by checking the terminal
   // text for "trust" and accept by pressing the appropriate key.
@@ -170,7 +170,13 @@ async function acceptTrustDialog(page: Page): Promise<void> {
   const lower = termText.toLowerCase()
   if (lower.includes('trust this folder') || lower.includes('safety check')) {
     // Claude Code: "1. Yes, I trust this folder" — press 1 then Enter
-    await page.keyboard.press('1')
+    // Claude Code 2.1 lists "No, exit" first (highlighted) and "Yes, I trust
+    // this folder" second, unnumbered; older versions numbered "1. Yes".
+    if (lower.indexOf('no, exit') !== -1 && lower.indexOf('no, exit') < lower.indexOf('yes, i trust')) {
+      await page.keyboard.press('ArrowDown')
+    } else {
+      await page.keyboard.press('1')
+    }
     await page.keyboard.press('Enter')
     await page.waitForTimeout(5000)
   } else if (lower.includes('trust the contents') || lower.includes('do you trust')) {

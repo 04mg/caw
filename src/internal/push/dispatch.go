@@ -43,6 +43,7 @@ var agentDisplayName = map[string]string{
 	"omp":         "Oh My Pi",
 	"hermes":      "Hermes",
 	"commandcode": "Command Code",
+	"fx":          "Fx",
 }
 
 func agentName(agentID string) string {
