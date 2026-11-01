@@ -1,0 +1,106 @@
+{
+ "conversation": "baefa8e0-df2b-4750-96f1-5b9eec485f83",
+ "steps": [
+  {
+   "idx": 0,
+   "type": 14,
+   "tool": "",
+   "args": "",
+   "err": ""
+  },
+  {
+   "idx": 1,
+   "type": 15,
+   "tool": "",
+   "args": "",
+   "err": ""
+  },
+  {
+   "idx": 2,
+   "type": 132,
+   "tool": "run_command",
+   "args": "{\"CommandLine\":\"touch perm3.txt\",\"WaitMsBeforeAsync\":5000,\"toolSummary\":\"Touch perm3.txt\"}",
+   "err": ""
+  },
+  {
+   "idx": 3,
+   "type": 15,
+   "tool": "",
+   "args": "",
+   "err": ""
+  },
+  {
+   "idx": 4,
+   "type": 14,
+   "tool": "",
+   "args": "",
+   "err": ""
+  },
+  {
+   "idx": 5,
+   "type": 15,
+   "tool": "",
+   "args": "",
+   "err": ""
+  },
+  {
+   "idx": 6,
+   "type": 132,
+   "tool": "run_command",
+   "args": "{\"CommandLine\":\"touch perm4.txt\",\"WaitMsBeforeAsync\":5000,\"toolSummary\":\"Touch perm4.txt\"}",
+   "err": "permission check failed for unsandboxed \"touch perm4.txt\": user denied permission to run command:"
+  }
+ ],
+ "terms": [
+  {
+   "reason": 4,
+   "last": 3
+  },
+  {
+   "reason": 2,
+   "last": 6
+  }
+ ],
+ "timeline": [
+  [
+   1,
+   3,
+   false
+  ],
+  [
+   2,
+   9,
+   false
+  ],
+  [
+   2,
+   3,
+   false
+  ],
+  [
+   3,
+   3,
+   false
+  ],
+  [
+   4,
+   3,
+   false
+  ],
+  [
+   5,
+   3,
+   false
+  ],
+  [
+   6,
+   9,
+   false
+  ],
+  [
+   6,
+   7,
+   false
+  ]
+ ]
+}
