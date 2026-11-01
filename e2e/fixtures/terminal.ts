@@ -16,7 +16,7 @@ export async function openCommandPalette(page: Page): Promise<void> {
 export async function launchAgent(page: Page, agentLabel: string): Promise<void> {
   await openCommandPalette(page)
   const input = page.getByTestId('command-palette-input')
-  await input.fill(`Launch ${agentLabel}`)
+  await input.fill(`> New ${agentLabel}`)
   const item = page.locator(`[data-testid^="command-palette-item-agent-"]`).filter({ hasText: agentLabel })
   await expect(item).toBeVisible()
   await item.click()

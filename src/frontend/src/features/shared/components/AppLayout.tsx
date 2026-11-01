@@ -933,10 +933,11 @@ export function AppLayout() {
           const prevS = prev.status
           const nextS = next.status
 
-          // If the agent goes back to a working state, cancel any pending
-          // "finished" notification — it was a transient idle blip, not a
-          // real completion.
-          if (nextS === 'thinking' || nextS === 'executing') {
+          // If the agent goes back to a working state (or blocks on the user,
+          // or is interrupted), cancel any pending "finished" notification —
+          // it was a transient idle blip, not a real completion. Mirrors the
+          // backend push dispatch in agent/status.go.
+          if (nextS === 'thinking' || nextS === 'executing' || nextS === 'tool_failed' || nextS === 'waiting_input' || nextS === 'interrupted') {
             const timer = pendingFinishedRef.current[sessionId]
             if (timer) {
               clearTimeout(timer)
@@ -948,7 +949,10 @@ export function AppLayout() {
             triggerAgentNotification(next, 'needs_input')
           } else if (
             (nextS === 'idle' || nextS === 'stopped') &&
-            (prevS === 'thinking' || prevS === 'executing') &&
+            // tool_failed is still a working state (the agent keeps going
+            // after a failed tool call), so a turn that ends right after one
+            // has finished too.
+            (prevS === 'thinking' || prevS === 'executing' || prevS === 'tool_failed') &&
             !subagentTool(prev.tool)
           ) {
             // Debounce the "finished" notification: wait 3s before firing.
