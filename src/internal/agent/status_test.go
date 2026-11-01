@@ -207,3 +207,35 @@ func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struc
 		}
 	}
 }
+
+func TestHandlePtyInputCtrlCOnlyTracksCtrlC(t *testing.T) {
+	const id = "ctrlc-only-leaf"
+	defer SetPtyCtrlCForTest(id, time.Time{})
+	defer SetPtyInterruptForTest(id, time.Time{})
+
+	handlePtyInput(id, "\x1b")
+	time.Sleep(150 * time.Millisecond)
+	if LastPtyInterrupt(id).IsZero() {
+		t.Fatal("standalone ESC should still count as a generic interrupt")
+	}
+	if !LastPtyCtrlC(id).IsZero() {
+		t.Fatal("standalone ESC must not be recorded as Ctrl+C")
+	}
+	handlePtyInput(id, "\x03")
+	if LastPtyCtrlC(id).IsZero() {
+		t.Fatal("Ctrl+C was not recorded")
+	}
+}
+
+func TestWasWorkingStatusIncludesToolFailed(t *testing.T) {
+	for _, s := range []string{"thinking", "executing", "tool_failed"} {
+		if !wasWorkingStatus(s) {
+			t.Errorf("%s should count as working (a later idle is a finished turn)", s)
+		}
+	}
+	for _, s := range []string{"idle", "unknown", "interrupted", "waiting_input", "crashed", ""} {
+		if wasWorkingStatus(s) {
+			t.Errorf("%s should not count as working", s)
+		}
+	}
+}

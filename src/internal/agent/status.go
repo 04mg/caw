@@ -170,6 +170,13 @@ var (
 	// persist an interrupted turn to state.db).
 	ptyInterrupt   = make(map[string]time.Time)
 	ptyInterruptMu sync.RWMutex
+	// ptyCtrlC records the last time the user sent Ctrl+C (byte 0x03) into
+	// each leaf's PTY. Unlike ptyInterrupt it ignores a standalone ESC: some
+	// agents (Hermes) only cancel a turn on Ctrl+C and treat ESC as a no-op or
+	// an overlay/selection dismiss, so counting ESC as an interrupt would flip
+	// a still-working card to "interrupted" and swallow its "finished" push.
+	// Guarded by ptyInterruptMu.
+	ptyCtrlC = make(map[string]time.Time)
 	// ptyEscapePending delays a standalone ESC long enough to distinguish it
 	// from the first byte of a fragmented terminal escape sequence.
 	ptyEscapePending = make(map[string]*time.Timer)
@@ -312,7 +319,9 @@ func handlePtyInput(id string, data string) {
 			timer.Stop()
 			delete(ptyEscapePending, id)
 		}
-		ptyInterrupt[id] = time.Now()
+		now := time.Now()
+		ptyInterrupt[id] = now
+		ptyCtrlC[id] = now
 		ptyInterruptMu.Unlock()
 		return
 	}
@@ -533,6 +542,28 @@ func LastPtyInterrupt(sessionID string) time.Time {
 	return ptyInterrupt[sessionID]
 }
 
+// LastPtyCtrlC returns the time the user most recently sent Ctrl+C (0x03)
+// into the given leaf's PTY, or the zero time if none was recorded. Unlike
+// LastPtyInterrupt it does not count a standalone ESC, for agents whose TUI
+// only interrupts a turn on Ctrl+C (Hermes).
+func LastPtyCtrlC(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	return ptyCtrlC[sessionID]
+}
+
+// SetPtyCtrlCForTest records (or clears) the last Ctrl+C timestamp for a
+// leaf/session id. Intended only for tests.
+func SetPtyCtrlCForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptyCtrlC, sessionID)
+	} else {
+		ptyCtrlC[sessionID] = at
+	}
+	ptyInterruptMu.Unlock()
+}
+
 // SetPtyActivityForTest records (or clears) the last-activity timestamp for a
 // leaf/session id. It is intended only for tests that need to simulate PTY
 // output without a real terminal; production code drives ptyActivity via
@@ -703,7 +734,7 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 			//     finishes, the parent briefly transitions executing→idle
 			//     before continuing, which would otherwise fire a spurious
 			//     "finished" push notification.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
+			if exists && wasWorkingStatus(prev.Status) && !isSubagentTool(prev.Tool) {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}
@@ -1135,6 +1166,19 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}, func() {
 		lastHeartbeat = time.Now()
 	})
+}
+
+// wasWorkingStatus reports whether a card in the given status was in the
+// middle of a turn, so that a transition to idle means the turn finished and
+// deserves a "finished" push. "tool_failed" counts: the agent keeps working
+// after a failed tool call (the card stays in the working column), so a turn
+// whose last tool failed still finishes with idle and must notify.
+func wasWorkingStatus(status string) bool {
+	switch status {
+	case "thinking", "executing", "tool_failed":
+		return true
+	}
+	return false
 }
 
 // isSubagentTool reports whether the given tool name represents a background
