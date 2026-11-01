@@ -245,3 +245,22 @@ func TestPushDecision(t *testing.T) {
 		}
 	}
 }
+
+func TestHandlePtyInputCtrlCOnlyTracksCtrlC(t *testing.T) {
+	const id = "ctrlc-only-leaf"
+	defer SetPtyCtrlCForTest(id, time.Time{})
+	defer SetPtyInterruptForTest(id, time.Time{})
+
+	handlePtyInput(id, "\x1b")
+	time.Sleep(150 * time.Millisecond)
+	if LastPtyInterrupt(id).IsZero() {
+		t.Fatal("standalone ESC should still count as a generic interrupt")
+	}
+	if !LastPtyCtrlC(id).IsZero() {
+		t.Fatal("standalone ESC must not be recorded as Ctrl+C")
+	}
+	handlePtyInput(id, "\x03")
+	if LastPtyCtrlC(id).IsZero() {
+		t.Fatal("Ctrl+C was not recorded")
+	}
+}
