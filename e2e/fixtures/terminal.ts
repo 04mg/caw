@@ -16,7 +16,8 @@ export async function openCommandPalette(page: Page): Promise<void> {
 export async function launchAgent(page: Page, agentLabel: string): Promise<void> {
   await openCommandPalette(page)
   const input = page.getByTestId('command-palette-input')
-  await input.fill(`Launch ${agentLabel}`)
+  // Agent entries are command items labelled "> New <Agent>".
+  await input.fill(`> New ${agentLabel}`)
   const item = page.locator(`[data-testid^="command-palette-item-agent-"]`).filter({ hasText: agentLabel })
   await expect(item).toBeVisible()
   await item.click()
@@ -25,7 +26,7 @@ export async function launchAgent(page: Page, agentLabel: string): Promise<void>
 export async function launchTerminal(page: Page): Promise<void> {
   await openCommandPalette(page)
   const input = page.getByTestId('command-palette-input')
-  await input.fill('New Terminal')
+  await input.fill('> New Terminal')
   await page.getByTestId('command-palette-item-new-terminal').click()
 }
 
@@ -177,7 +178,7 @@ export async function waitForRedDot(
   throw new Error(`Card ${sessionId} did not show a red dot within ${timeout}ms`)
 }
 
-export async function setWorkspace(baseURL: string, workspacePath: string): Promise<void> {
+export async function setWorkspace(baseURL: string, workspacePath: string, enableWorktrees = true): Promise<void> {
   const wsId = `ws-${Date.now()}`
   const name = workspacePath.split(/[\\/]/).pop() || 'workspace'
   const state = {
@@ -189,7 +190,7 @@ export async function setWorkspace(baseURL: string, workspacePath: string): Prom
       layouts: [],
       activeTabIndex: 0,
       activePaneId: '',
-      enableWorktrees: true,
+      enableWorktrees,
       tabGroupsJson: '',
     }],
     activeWorkspaceId: wsId,
