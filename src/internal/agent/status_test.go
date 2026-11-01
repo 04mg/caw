@@ -198,12 +198,50 @@ func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struc
 		{"opencode exact session -s", []string{"opencode", "-s", "ses_abc"}, true},
 		{"opencode exact session --session", []string{"opencode", "--session", "ses_abc"}, true},
 		{"codex resume subcommand", []string{"codex", "resume", "uuid-123"}, true},
+		{"agy exact conversation", []string{"agy", "--dangerously-skip-permissions", "--conversation", "009a8fe5-332e"}, true},
 		{"plain launch", []string{"opencode"}, false},
 		{"flag without value is not resume", []string{"opencode", "-s"}, false},
 	}
 	for _, c := range cases {
 		if got := isResumeCmd(c.cmd); got != c.want {
 			t.Errorf("%s: isResumeCmd(%v) = %v, want %v", c.name, c.cmd, got, c.want)
+		}
+	}
+}
+
+func TestPushDecision(t *testing.T) {
+	st := func(status, tool string) AgentStatus { return AgentStatus{Status: status, Tool: tool} }
+	cases := []struct {
+		name                         string
+		exists                       bool
+		prev                         AgentStatus
+		status, tool                 string
+		needsInput, finished, cancel bool
+	}{
+		{"thinking -> idle finishes", true, st("thinking", ""), "idle", "", false, true, false},
+		{"executing -> idle finishes", true, st("executing", "run_command"), "idle", "", false, true, false},
+		// A turn whose last tool call failed still finishes.
+		{"tool_failed -> idle finishes", true, st("tool_failed", "run_command"), "idle", "", false, true, false},
+		// The watchdog revert is not a completion, but the real idle after it is.
+		{"thinking -> unknown is silent", true, st("thinking", ""), "unknown", "", false, false, false},
+		{"unknown -> idle finishes", true, st("unknown", ""), "idle", "", false, true, false},
+		{"idle -> idle is silent", true, st("idle", ""), "idle", "", false, false, false},
+		{"background task -> idle is silent", true, st("executing", "background_task"), "idle", "", false, false, false},
+		{"opencode subagent -> idle is silent", true, st("executing", "task"), "idle", "", false, false, false},
+		{"interrupted -> idle is silent", true, st("interrupted", ""), "idle", "", false, false, false},
+		{"waiting_input -> idle is silent", true, st("waiting_input", "write_file"), "idle", "", false, false, false},
+		{"enter waiting_input notifies", true, st("executing", "run_command"), "waiting_input", "run_command", true, false, true},
+		{"same prompt refresh does not re-notify", true, st("waiting_input", "ask_question"), "waiting_input", "ask_question", false, false, true},
+		{"new prompt while waiting notifies", true, st("waiting_input", "write_file"), "waiting_input", "ask_question", true, false, true},
+		{"interrupt cancels pending finished", true, st("idle", ""), "interrupted", "", false, false, true},
+		{"tool_failed cancels pending finished", true, st("idle", ""), "tool_failed", "x", false, false, true},
+		{"thinking cancels pending finished", true, st("idle", ""), "thinking", "", false, false, true},
+		{"first status idle is silent", false, AgentStatus{}, "idle", "", false, false, false},
+	}
+	for _, c := range cases {
+		n, f, cancel := pushDecision(c.exists, c.prev, c.status, c.tool)
+		if n != c.needsInput || f != c.finished || cancel != c.cancel {
+			t.Errorf("%s: got needsInput=%v finished=%v cancel=%v, want %v %v %v", c.name, n, f, cancel, c.needsInput, c.finished, c.cancel)
 		}
 	}
 }

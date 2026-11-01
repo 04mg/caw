@@ -436,6 +436,14 @@ func handlePtyActivity(id string, n int) {
 	ptyActivityMu.Unlock()
 }
 
+// LeafPID returns the OS process id of the agent process running in the given
+// leaf's PTY, or 0 if unknown. Watchers use it to resolve the agent's native
+// session from resources held by that exact process (see the Antigravity
+// watcher's presence-lock lookup), instead of guessing from file mtimes.
+func LeafPID(sessionID string) int {
+	return terminal.SessionPID(sessionID)
+}
+
 // LastPtyActivity returns the timestamp of the most recent PTY output for the
 // given leaf/session id, or the zero time if no activity has been recorded.
 // Used by watchers to determine whether their agent process is currently
@@ -679,35 +687,48 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 	})
 
 	if pushStore != nil {
-		switch status {
-		case "waiting_input":
+		needsInput, finished, cancelFinished := pushDecision(exists, prev, status, tool)
+		if cancelFinished {
 			push.CancelFinishedDebounced(sessionID)
+		}
+		if needsInput {
 			go push.Dispatch(pushStore, "needs_input", sessionID, agentID, title, "")
-		case "thinking", "executing":
-			push.CancelFinishedDebounced(sessionID)
-		case "interrupted", "tool_failed":
-			// The user interrupted the agent, or a tool call failed. Neither
-			// is something the user needs a push notification for: an
-			// interrupt is the user's own action, and a tool failure is
-			// surfaced in the UI (red dot + error text) but the agent keeps
-			// running. Cancel any pending "finished" notification so a
-			// transition into these states from working doesn't fire one.
-			push.CancelFinishedDebounced(sessionID)
-		case "idle", "stopped", "unknown":
-			// Suppress the "finished" notification when the agent was running
-			// a background task or subagent — the agent is still working, it
-			// just completed a sub-task. A "finished" notification here would
-			// mislead the user.
-			//   - "background_task": Antigravity's background tasks.
-			//   - "task": OpenCode's subagent launcher. When the subagent
-			//     finishes, the parent briefly transitions executing→idle
-			//     before continuing, which would otherwise fire a spurious
-			//     "finished" push notification.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
-				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
-			}
+		}
+		if finished {
+			push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 		}
 	}
+}
+
+// pushDecision decides which web push side effects a status transition has.
+//
+//   - needsInput: entering "waiting_input" notifies once per prompt; a
+//     title/details refresh while still blocked on the same tool must not
+//     re-send it.
+//   - cancelFinished: any state other than idle/stopped/unknown cancels a
+//     pending (debounced) "finished" push — the agent resumed working, is
+//     blocked on the user, was interrupted by the user, or is recovering from
+//     a failed tool call. None of those is a completion.
+//   - finished: a transition from a working state into "idle"/"stopped".
+//     "tool_failed" and "unknown" count as working: a turn whose last tool
+//     call failed (or that the stale watchdog could not observe for a while)
+//     still finishes and must notify like any other. The watchdog's own
+//     revert to "unknown" means "cannot tell" and is never a completion.
+//     Background-task / subagent launchers are excluded: when such a tool was
+//     the last action the agent only finished a sub-task
+//     ("background_task": Antigravity, "task": OpenCode's subagent launcher,
+//     whose parent briefly flips executing→idle before continuing).
+func pushDecision(exists bool, prev AgentStatus, status, tool string) (needsInput, finished, cancelFinished bool) {
+	switch status {
+	case "waiting_input":
+		cancelFinished = true
+		needsInput = !(exists && prev.Status == "waiting_input" && prev.Tool == tool)
+	case "thinking", "executing", "interrupted", "tool_failed":
+		cancelFinished = true
+	case "idle", "stopped":
+		finished = exists && isWorkingStatus(prev.Status) && !isSubagentTool(prev.Tool)
+	}
+	return needsInput, finished, cancelFinished
 }
 
 func handleSessionStart(id string, cmd []string, cwd string) {
@@ -1137,6 +1158,18 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	})
 }
 
+// isWorkingStatus reports whether a status means the agent was busy with a
+// turn, so that a following transition to "idle" is a turn completion that
+// deserves a "finished" notification. "unknown" is only ever entered from a
+// working state (the stale watchdog), so it counts as working here.
+func isWorkingStatus(s string) bool {
+	switch s {
+	case "thinking", "executing", "tool_failed", "unknown":
+		return true
+	}
+	return false
+}
+
 // isSubagentTool reports whether the given tool name represents a background
 // task or subagent launcher. When such a tool was the agent's last action,
 // transitioning to "idle" should NOT fire a "finished" push notification —
@@ -1156,6 +1189,7 @@ func isSubagentTool(tool string) bool {
 //
 // It recognizes every resume form across the supported agents:
 //   - --continue / -c / --resume / --last (claude, pi, omp, copilot, agy)
+//   - --conversation <id> (agy exact-conversation resume)
 //   - -s <id> / --session <id> (opencode exact-session resume)
 //   - resume <id> / resume --last (codex subcommand)
 func isResumeCmd(cmd []string) bool {
@@ -1163,7 +1197,7 @@ func isResumeCmd(cmd []string) bool {
 		switch a {
 		case "--continue", "-c", "--resume", "--last":
 			return true
-		case "-s", "--session":
+		case "-s", "--session", "--conversation":
 			// opencode -s <session-id> | opencode --session <session-id>
 			if i+1 < len(cmd) && cmd[i+1] != "" {
 				return true

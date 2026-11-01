@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -23,201 +22,223 @@ func init() {
 	agent.RegisterStatusWatcher("agy", &AntigravityWatcher{})
 }
 
-// antigravityStep mirrors one line of the transcript.jsonl written by the
-// Antigravity CLI (agy). Steps are appended once complete (status: "DONE").
-type antigravityStep struct {
-	StepIndex int    `json:"step_index"`
-	Source    string `json:"source"`
-	// Type is the canonical step kind: USER_INPUT, PLANNER_RESPONSE,
-	// RUN_COMMAND, VIEW_FILE, GREP_SEARCH, LIST_DIRECTORY, WRITE_TO_FILE,
-	// REPLACE_FILE_CONTENT, ASK_PERMISSION, ASK_QUESTION, etc.
-	Type      string                  `json:"type"`
-	Status    string                  `json:"status"`
-	ToolCalls []antigravityToolCall   `json:"tool_calls,omitempty"`
-	Content   string                  `json:"content,omitempty"`
-	CreatedAt string                  `json:"created_at,omitempty"`
-}
+// antigravityLeafPID resolves the PID of the agy process running in a leaf.
+// Overridable in tests.
+var antigravityLeafPID = agent.LeafPID
 
-// antigravityToolCall reflects the actual JSON structure in transcript.jsonl:
-//
-//	{"name": "run_command", "args": {...}}
-//
-// (The old code incorrectly expected {"function": {"name": ...}}.)
-type antigravityToolCall struct {
-	Name string         `json:"name"`
-	Args map[string]any `json:"args,omitempty"`
-}
+// antigravityPollInterval is the fallback poll period; fsnotify on the
+// transcript and the conversation DB's WAL delivers most updates sooner.
+const antigravityPollInterval = 2 * time.Second
 
-// toolStepTypes is the set of step types that represent tool execution results.
-// When the last recorded step is one of these, the planner has just issued the
-// call and is waiting for (or processing) the result → status "thinking".
-var toolStepTypes = map[string]bool{
-	"RUN_COMMAND":          true,
-	"VIEW_FILE":            true,
-	"GREP_SEARCH":          true,
-	"LIST_DIRECTORY":       true,
-	"WRITE_TO_FILE":        true,
-	"REPLACE_FILE_CONTENT": true,
-	"MULTI_REPLACE_FILE_CONTENT": true,
-	"READ_URL_CONTENT":     true,
-	"SEARCH_WEB":           true,
-	"GENERATE_IMAGE":       true,
-	"INVOKE_SUBAGENT":      true,
-	"SEND_MESSAGE":         true,
-	"MANAGE_SUBAGENTS":     true,
-	"COMMAND_STATUS":       true,
-	"SCHEDULE":             true,
+// antigravityBinding is the conversation a watcher is currently following.
+type antigravityBinding struct {
+	conv       string
+	transcript string
+	dbPath     string
+	tx         *agyTranscript
+	// staleBefore: see deriveAntigravityStatus.
+	staleBefore int
 }
-
-// permissionStepTypes are tool steps that require user approval.
-var permissionStepTypes = map[string]bool{
-	"ASK_PERMISSION": true,
-	"ASK_QUESTION":   true,
-}
-
-var (
-	taskStartRx   = regexp.MustCompile(`(?i)task id:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
-	taskFinishRx  = regexp.MustCompile(`(?i)task id\s+"?([a-zA-Z0-9_\-\./]+)"?\s+finished`)
-	taskStatusRx  = regexp.MustCompile(`(?i)task:\s*"?([a-zA-Z0-9_\-\./]+)"?`)
-	taskSenderRx  = regexp.MustCompile(`(?i)sender=([a-zA-Z0-9_\-\./]+)`)
-)
 
 func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd string, resume bool, callback func(status, tool, details, title string), heartbeat func()) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(antigravityPollInterval)
 	defer ticker.Stop()
 
-	// Antigravity stores transcripts under ~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl
-	// and per-conversation database files under ~/.gemini/antigravity-cli/conversations/<conversationId>.db.
-	// Because storage is located in the central ~/.gemini/antigravity-cli tree without per-cwd subdirectories,
-	// claims are keyed globally (claimCwd = "") so that two Antigravity instances across any workspace in Caw
-	// never bind or track the same conversation transcript.
+	// Antigravity stores everything under ~/.gemini/antigravity-cli:
+	//   brain/<conv>/.system_generated/logs/transcript.jsonl  (completed steps)
+	//   conversations/<conv>.db                               (live step state)
+	//   presence/<conv>.lock                                  (held open by the agy process)
+	// Storage is global (no per-cwd subdirectories), so claims are keyed
+	// globally (claimCwd = "") and two Antigravity panes anywhere in Caw never
+	// follow the same conversation.
 	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
+	root := filepath.Join(home, ".gemini", "antigravity-cli")
+	dir := filepath.Join(root, "brain")
+	convDir := filepath.Join(root, "conversations")
+	presenceDir := filepath.Join(root, "presence")
 
 	const agentID = "agy"
 	const claimCwd = ""
-	// On resume (--continue / --conversation), the agent reattaches to a pre-existing
-	// conversation whose transcript may predate this watcher. Widen the search window
-	// to 1 hour so the resumed session is found. For a fresh start, look back 10s to
-	// avoid missing a transcript created slightly before the watcher started.
+	startedAt := time.Now()
+	// On resume (--continue / --conversation), the agent reattaches to a
+	// pre-existing conversation whose transcript may predate this watcher.
+	// Widen the heuristic search window to 1 hour so the resumed session is
+	// found. For a fresh start, look back 10s.
 	lookback := 10 * time.Second
 	if resume {
 		lookback = 1 * time.Hour
 	}
 	lastCheck := time.Now().Add(-lookback)
-	var lastFileSize int64 = 0
-	var watchedFilePath string
-	var sessionTitle string
-	// Re-bind bookkeeping for /new and /resume detection.
+
+	var b antigravityBinding
+	// Re-bind bookkeeping for the heuristic (non-PID) path.
 	var lastActivity time.Time
 	var silentTicks int
+	var lastTxSize int64 = -1
+	var lastEmit agyDerived
+	var lastEmitTitle string
+	emitted := false
 
-	var notifyCh <-chan struct{}
-	notifier, nerr := NewFileChangeNotifier()
+	txNotifier, nerr := NewFileChangeNotifier()
+	var txCh <-chan struct{}
 	if nerr == nil {
-		defer notifier.Close()
-		notifyCh = notifier.Notify()
+		defer txNotifier.Close()
+		txCh = txNotifier.Notify()
+	}
+	dbNotifier, nerr := NewFileChangeNotifier()
+	var dbCh <-chan struct{}
+	if nerr == nil {
+		defer dbNotifier.Close()
+		dbCh = dbNotifier.Notify()
 	}
 
 	defer func() {
-		if watchedFilePath != "" {
-			UnclaimSession(agentID, claimCwd, watchedFilePath)
+		if b.transcript != "" {
+			UnclaimSession(agentID, claimCwd, b.transcript)
 		}
 	}()
 
-	readWatched := func() bool {
-		if watchedFilePath == "" {
+	bind := func(conv string) bool {
+		transcript := filepath.Join(dir, conv, ".system_generated", "logs", "transcript.jsonl")
+		if transcript == b.transcript {
+			return true
+		}
+		if !ClaimSessionForLeaf(agentID, claimCwd, transcript, sessionID) {
 			return false
 		}
-		info, err := os.Stat(watchedFilePath)
-		if err != nil {
-			UnclaimSession(agentID, claimCwd, watchedFilePath)
-			watchedFilePath = ""
-			if notifyCh != nil {
-				notifier.Watch("")
+		if b.transcript != "" {
+			UnclaimSession(agentID, claimCwd, b.transcript)
+		}
+		b = antigravityBinding{
+			conv:        conv,
+			transcript:  transcript,
+			dbPath:      filepath.Join(convDir, conv+".db"),
+			tx:          newAgyTranscript(transcript),
+			staleBefore: -1,
+		}
+		// A conversation that has not been written since before this
+		// watcher started is being resumed: whatever turn or background
+		// task it shows as in flight belonged to a previous agy process.
+		if mt := antigravityConversationModTime(b.dbPath); !mt.IsZero() && mt.Before(startedAt.Add(-2*time.Second)) {
+			if snap, err := readAntigravityDB(b.dbPath); err == nil {
+				b.staleBefore = snap.MaxIdx
 			}
-			return false
 		}
-		if info.Size() <= lastFileSize {
-			return false
-		}
-		wrappedCallback := func(status, tool, details, title string) {
-			if title != "" {
-				sessionTitle = title
-			}
-			callback(status, tool, details, sessionTitle)
-		}
-		w.parseAntigravityLog(watchedFilePath, lastFileSize, wrappedCallback)
-		lastFileSize = info.Size()
-		lastActivity = info.ModTime()
+		lastCheck = time.Now()
+		lastTxSize = -1
 		silentTicks = 0
+		if info, err := os.Stat(transcript); err == nil {
+			lastActivity = info.ModTime()
+		} else {
+			lastActivity = time.Now()
+		}
+		if txNotifier != nil {
+			txNotifier.Watch(transcript)
+		}
+		if dbNotifier != nil {
+			dbNotifier.Watch(b.dbPath + "-wal")
+		}
+		agent.RecordExternalSession(sessionID, conv)
 		return true
+	}
+
+	evaluate := func(keepalive bool) {
+		if b.conv == "" {
+			return
+		}
+		if b.tx.refresh() {
+			silentTicks = 0
+			if info, err := os.Stat(b.transcript); err == nil {
+				lastActivity = info.ModTime()
+			}
+		}
+		snap, err := readAntigravityDB(b.dbPath)
+		haveDB := err == nil
+		var term *agyTermination
+		if haveDB {
+			term = snap.Term
+		} else {
+			snap = nil
+		}
+		d := deriveAntigravityStatus(mergeAntigravitySteps(b.tx, snap), term, haveDB, b.staleBefore, b.tx.runningTasks)
+		title := b.tx.title
+		changed := !emitted || d.Status != lastEmit.Status || d.Tool != lastEmit.Tool || d.Details != lastEmit.Details || title != lastEmitTitle
+		// While the agent is provably busy, re-emit on every poll so the
+		// shared idle watchdog does not revert a long silent LLM wait or a
+		// long background task to "unknown".
+		if changed || (keepalive && d.Working) {
+			callback(d.Status, d.Tool, d.Details, title)
+			lastEmit, lastEmitTitle, emitted = d, title, true
+		}
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-notifyCh:
-			readWatched()
+		case <-txCh:
+			evaluate(false)
+		case <-dbCh:
+			evaluate(false)
 		case <-ticker.C:
 			heartbeat()
-			if watchedFilePath == "" {
+
+			// 1. Exact binding: the conversation whose presence lock the
+			//    leaf's agy process holds. Follows /clear, /new and /resume
+			//    immediately and never confuses sibling panes.
+			//    When the process could be inspected but holds no lock yet,
+			//    the agent has no conversation (agy creates it on the first
+			//    prompt): stay as is rather than guessing from mtimes, which
+			//    would let this pane grab a sibling's conversation.
+			pidBound := false
+			if pid := antigravityLeafPID(sessionID); pid > 0 {
+				conv, inspected := antigravityPresenceConversation(pid, presenceDir)
+				if conv != "" && (conv == b.conv || bind(conv)) {
+					pidBound = true
+				} else if inspected && conv == "" {
+					pidBound = true
+				}
+			}
+
+			// 2. Heuristic fallback (no procfs, or the lock is not visible).
+			if !pidBound && b.conv == "" {
 				// Prefer the exact conversation id persisted for this leaf by
 				// a previous Caw process so a reopened pane follows its own
 				// conversation when several panes share a cwd.
 				if exact := agent.PersistedExternalSession(sessionID); exact != "" && antigravityConversationMatchesWorkspace(exact, cwd) {
-					if exactPath := antigravityTranscriptForConversation(dir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, claimCwd, exactPath, sessionID) {
-						watchedFilePath = exactPath
-						lastFileSize = 0
-						lastCheck = time.Now()
-						if info, err := os.Stat(watchedFilePath); err == nil {
-							lastActivity = info.ModTime()
-						}
-						silentTicks = 0
-						if notifyCh != nil {
-							notifier.Watch(watchedFilePath)
-						}
-						agent.RecordExternalSession(sessionID, exact)
+					if antigravityTranscriptForConversation(dir, exact) != "" {
+						bind(exact)
 					}
 				}
-				if watchedFilePath == "" {
-					// Search for the earliest unclaimed transcript.jsonl matching this workspace.
+				if b.conv == "" {
 					candidates, err := findAntigravityTranscripts(dir, cwd, lastCheck, agentID)
-					if err == nil && len(candidates) > 0 {
+					if err == nil {
 						for _, c := range candidates {
-							if ClaimSessionForLeaf(agentID, claimCwd, c, sessionID) {
-								watchedFilePath = c
-								lastFileSize = 0
-								lastCheck = time.Now()
-								if info, err := os.Stat(watchedFilePath); err == nil {
-									lastActivity = info.ModTime()
-								}
-								silentTicks = 0
-								if notifyCh != nil {
-									notifier.Watch(watchedFilePath)
-								}
-								if conv := antigravityConversationIDForTranscript(dir, c); conv != "" {
-									agent.RecordExternalSession(sessionID, conv)
-								}
+							if conv := antigravityConversationIDForTranscript(dir, c); conv != "" && bind(conv) {
 								break
 							}
 						}
 					}
 				}
 			}
-			if watchedFilePath != "" {
-				if !readWatched() {
-					silentTicks++
-				}
 
-				// Mid-session re-bind for /new and /resume. Gated on PTY
-				// activity OR user focus: only the watcher whose PTY is producing
-				// output (or whose pane the user is currently driving) switches,
-				// so a sibling Antigravity writing to its own transcript can't
-				// make this idle, unfocused watcher steal its session. The focus
-				// exemption covers a /new or /resume issued in the focused pane
-				// before the agent emits any PTY output.
+			if b.conv != "" && !pidBound {
+				// Heuristic mid-session re-bind for /new and /resume. Gated
+				// on PTY activity OR user focus: only the watcher whose PTY is
+				// producing output (or whose pane the user is driving)
+				// switches, so a sibling Antigravity writing to its own
+				// transcript can't make this idle, unfocused watcher steal
+				// its session.
+				size := int64(-1)
+				if info, err := os.Stat(b.transcript); err == nil {
+					size = info.Size()
+				}
+				if size == lastTxSize {
+					silentTicks++
+				} else {
+					silentTicks = 0
+					lastTxSize = size
+				}
 				if silentTicks >= rebindSilenceTicks {
 					focused := agent.IsPtyFocused(sessionID)
 					lastPtyOut := agent.LastPtyActivity(sessionID)
@@ -230,27 +251,30 @@ func (w *AntigravityWatcher) Watch(ctx context.Context, sessionID string, cwd st
 							}
 							others = append(others, RebindCandidate{Key: c.path, ModTime: c.modTime})
 						}
-						newKey := ShouldRebind(silentTicks, watchedFilePath, lastActivity, others)
-						if newKey != "" && newKey != watchedFilePath {
-							if ClaimSessionForLeaf(agentID, claimCwd, newKey, sessionID) {
-								UnclaimSession(agentID, claimCwd, watchedFilePath)
-								watchedFilePath = newKey
-								lastFileSize = 0
-								lastCheck = time.Now()
-								silentTicks = 0
-								if notifyCh != nil {
-									notifier.Watch(watchedFilePath)
-								}
-								if conv := antigravityConversationIDForTranscript(dir, newKey); conv != "" {
-									agent.RecordExternalSession(sessionID, conv)
-								}
+						if newKey := ShouldRebind(silentTicks, b.transcript, lastActivity, others); newKey != "" && newKey != b.transcript {
+							if conv := antigravityConversationIDForTranscript(dir, newKey); conv != "" {
+								bind(conv)
 							}
 						}
 					}
 				}
 			}
+
+			evaluate(true)
 		}
 	}
+}
+
+// antigravityConversationModTime returns the newest modification time of a
+// conversation DB and its WAL, or the zero time when neither exists.
+func antigravityConversationModTime(dbPath string) time.Time {
+	var newest time.Time
+	for _, p := range []string{dbPath, dbPath + "-wal"} {
+		if info, err := os.Stat(p); err == nil && info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	return newest
 }
 
 // antigravityConversationIDForTranscript returns the conversation id (the
@@ -530,314 +554,6 @@ func listAntigravityCandidates(brainDir string, cwd string, after time.Time) ([]
 	return cands, nil
 }
 
-func (w *AntigravityWatcher) parseAntigravityLog(filePath string, offset int64, callback func(status, tool, details, title string)) {
-	// Always read from the beginning to correctly track background tasks
-	lines, err := ReadNewLines(filePath, 0)
-	if err != nil || len(lines) == 0 {
-		return
-	}
-
-	// Forward pass: accumulate user prompt and the final state of each step.
-	var sessionTitle string
-	var lastType string
-	var lastToolNames []string
-
-	runningTasks := make(map[string]bool)
-	// pendingArtifactApproval is set when a PLANNER_RESPONSE issues a
-	// write_to_file whose ArtifactMetadata carries RequestFeedback=true. This
-	// is Antigravity's plan/artifact-approval flow: the agent ends its turn
-	// and waits for the user to approve or reject the artifact. It is cleared
-	// once a new USER_INPUT starts a fresh turn.
-	pendingArtifactApproval := false
-
-	for _, line := range lines {
-		var step antigravityStep
-		if err := json.Unmarshal([]byte(line), &step); err != nil {
-			continue
-		}
-
-		if strings.Contains(step.Content, "USER Objective:") {
-			idx := strings.Index(step.Content, "USER Objective:")
-			sub := step.Content[idx+len("USER Objective:"):]
-			parts := strings.Split(strings.TrimSpace(sub), "\n")
-			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				sessionTitle = CleanPrompt(parts[0])
-			}
-		}
-
-		switch step.Type {
-		case "USER_INPUT":
-			// The content field holds the raw user message (may include XML
-			// wrapper tags — strip them for display).
-			p := CleanPrompt(step.Content)
-			if p != "" && sessionTitle == "" {
-				sessionTitle = p
-			}
-			// A new user turn starts after an artifact-approval request; the
-			// user has responded, so the pending approval is resolved.
-			pendingArtifactApproval = false
-		case "PLANNER_RESPONSE":
-			lastType = step.Type
-			lastToolNames = nil
-			for _, tc := range step.ToolCalls {
-				if tc.Name != "" {
-					lastToolNames = append(lastToolNames, tc.Name)
-				}
-				if tc.Name == "write_to_file" && antigravityArtifactRequestsFeedback(tc.Args) {
-					pendingArtifactApproval = true
-				}
-			}
-		default:
-			if step.Type != "" {
-				lastType = step.Type
-			}
-		}
-
-		// Check for background tasks started in this step
-		if step.Status == "RUNNING" {
-			if m := taskStartRx.FindStringSubmatch(step.Content); len(m) > 1 {
-				runningTasks[m[1]] = true
-			}
-		}
-		// Scan for finished/cancelled tasks in SYSTEM_MESSAGE content.
-		if m := taskFinishRx.FindStringSubmatch(step.Content); len(m) > 1 {
-			delete(runningTasks, m[1])
-		}
-		// SYSTEM_MESSAGE cancellation: "sender=<task-id> ... was cancelled"
-		// The task id is in the sender= field, not as "task id ... finished".
-		if step.Type == "SYSTEM_MESSAGE" {
-			if ms := taskSenderRx.FindStringSubmatch(step.Content); len(ms) > 1 {
-				if strings.Contains(strings.ToLower(step.Content), "cancelled") ||
-					strings.Contains(strings.ToLower(step.Content), "canceled") {
-					delete(runningTasks, ms[1])
-				}
-			}
-		}
-		// GENERIC steps report "Task: <id>\nStatus: DONE|RUNNING" — when the
-		// status is DONE, the task has completed and should be removed from
-		// the running set.
-		if step.Type == "GENERIC" && step.Status == "DONE" {
-			if mt := taskStatusRx.FindStringSubmatch(step.Content); len(mt) > 1 {
-				if strings.Contains(step.Content, "Status: DONE") {
-					delete(runningTasks, mt[1])
-				}
-			}
-			// manage_task's empty result is the authoritative task list. It can
-			// omit a completion notification for a scheduled task, so clear any
-			// stale task ids previously observed in the transcript.
-			if strings.Contains(strings.ToLower(step.Content), "no background tasks are currently running") {
-				clear(runningTasks)
-			}
-		}
-	}
-
-	// Determine current status from the last step type written to the transcript.
-	// Because steps are only written once complete ("DONE"), the last written
-	// step tells us what just finished, which implies what the agent is doing now.
-	//
-	// Once a PLANNER_RESPONSE with no tool calls is seen, the agent has given
-	// a final answer and is idle. Subsequent SYSTEM_MESSAGE or GENERIC steps
-	// (e.g. session metadata, task notifications) must NOT override this idle
-	// state — only a new USER_INPUT (which starts a new turn) should.
-
-	// Detect an interrupt (user cancelled the in-flight planner turn) and a
-	// tool-call failure from the last written step. Antigravity doesn't write
-	// a dedicated interrupt step; an interrupt surfaces as a SYSTEM_MESSAGE or
-	// GENERIC step whose content references the planner being
-	// "interrupted"/"cancelled"/"canceled". A tool failure surfaces as a tool
-	// step (RUN_COMMAND, VIEW_FILE, ...) whose content begins with an error
-	// marker (e.g. "Error:", "Command failed", "ENOENT").
-	lastStepErrTool := ""
-	lastStepErrText := ""
-	interrupted := false
-	if len(lines) > 0 {
-		var lastStep antigravityStep
-		if json.Unmarshal([]byte(lines[len(lines)-1]), &lastStep) == nil {
-			lc := strings.ToLower(lastStep.Content)
-			if strings.Contains(lc, "interrupted") ||
-				((strings.Contains(lc, "cancelled") || strings.Contains(lc, "canceled")) &&
-					!taskSenderRx.MatchString(lastStep.Content)) {
-				interrupted = true
-			}
-			if toolStepTypes[lastStep.Type] {
-				if strings.Contains(lc, "error") || strings.Contains(lc, "failed") ||
-					strings.Contains(lc, "enoent") || strings.Contains(lc, "no such file") {
-					lastStepErrTool = strings.ToLower(lastStep.Type)
-					lastStepErrText = strings.TrimSpace(firstLine(lastStep.Content))
-					if lastStepErrText == "" {
-						lastStepErrText = "tool call failed"
-					}
-				}
-			}
-		}
-	}
-
-	// An interrupt takes precedence: the user cancelled, so surface it with a
-	// red dot and no push notification.
-	if interrupted {
-		callback("interrupted", "", "", sessionTitle)
-		return
-	}
-	// A tool failure surfaces with a red dot; the planner continues afterward.
-	if lastStepErrTool != "" {
-		callback("tool_failed", lastStepErrTool, lastStepErrText, sessionTitle)
-		return
-	}
-
-	seenFinalAnswer := false
-	switch lastType {
-	case "USER_INPUT":
-		// The user just sent a message; planner hasn't responded yet.
-		callback("thinking", "", "", sessionTitle)
-
-	case "PLANNER_RESPONSE":
-		if len(lastToolNames) == 0 {
-			// A PLANNER_RESPONSE with no tool calls is a final answer: the
-			// planner's turn is over. When that answer accompanies a pending
-			// artifact-approval request (write_to_file with RequestFeedback),
-			// the agent is blocked waiting for the user to approve the plan →
-			// waiting_input. When background tasks are still running, the
-			// agent is waiting for them to complete and will be re-prompted
-			// when they do — keep it in "executing" (background_task) so the
-			// card does not flip to idle and back to working on every task
-			// completion. Only when no background tasks remain is the agent
-			// truly idle.
-			if pendingArtifactApproval {
-				callback("waiting_input", "write_to_file", "", sessionTitle)
-				return
-			}
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
-				return
-			}
-			callback("idle", "", "", sessionTitle)
-			return
-		}
-		// Check for permission / question tools — agent needs user input.
-		for _, name := range lastToolNames {
-			nameLower := strings.ToLower(name)
-			if nameLower == "ask_permission" || nameLower == "ask_question" {
-				callback("waiting_input", name, "", sessionTitle)
-				return
-			}
-		}
-		// A PLANNER_RESPONSE that requests artifact feedback (write_to_file
-		// with RequestFeedback) ends the turn and waits for the user, even
-		// though it carries a tool call.
-		if pendingArtifactApproval {
-			callback("waiting_input", "write_to_file", "", sessionTitle)
-			return
-		}
-		// Planner issued tool calls; tool results not yet written → executing.
-		callback("executing", lastToolNames[0], "", sessionTitle)
-
-	default:
-		// Scan backwards to find the last PLANNER_RESPONSE. If it had no
-		// tool calls, the agent already gave a final answer and is idle —
-		// any subsequent SYSTEM_MESSAGE/GENERIC steps should not override.
-		for i := len(lines) - 1; i >= 0; i-- {
-			var step antigravityStep
-			if json.Unmarshal([]byte(lines[i]), &step) != nil {
-				continue
-			}
-			if step.Type == "USER_INPUT" {
-				// A new user turn started after the last PLANNER_RESPONSE —
-				// the agent is thinking (waiting for planner to respond).
-				break
-			}
-			if step.Type == "PLANNER_RESPONSE" {
-				if len(step.ToolCalls) == 0 {
-					seenFinalAnswer = true
-				}
-				break
-			}
-		}
-
-		if seenFinalAnswer {
-			if pendingArtifactApproval {
-				callback("waiting_input", "write_to_file", "", sessionTitle)
-				return
-			}
-			// The planner gave a final answer but subsequent SYSTEM_MESSAGE /
-			// GENERIC steps (e.g. task notifications) were appended. When
-			// background tasks are still running, the agent is waiting for
-			// them — keep "executing" instead of flipping to idle.
-			if len(runningTasks) > 0 {
-				var activeTask string
-				for t := range runningTasks {
-					activeTask = t
-					break
-				}
-				callback("executing", "background_task", activeTask, sessionTitle)
-				return
-			}
-			callback("idle", "", "", sessionTitle)
-			return
-		}
-
-		if permissionStepTypes[lastType] {
-			// The permission/question tool itself just completed — still need input
-			// until the next PLANNER_RESPONSE is written.
-			callback("waiting_input", strings.ToLower(lastType), "", sessionTitle)
-			return
-		}
-		if toolStepTypes[lastType] {
-			// A tool result was just written; the planner is about to respond.
-			callback("thinking", "", "", sessionTitle)
-			return
-		}
-		if len(runningTasks) > 0 {
-			var activeTask string
-			for t := range runningTasks {
-				activeTask = t
-				break
-			}
-			callback("executing", "background_task", activeTask, sessionTitle)
-			return
-		}
-		// Unknown step type — stay thinking.
-		callback("thinking", "", "", sessionTitle)
-	}
-}
-
-// antigravityArtifactRequestsFeedback reports whether a write_to_file tool
-// call's args request user feedback on the artifact it creates. Antigravity's
-// plan-approval flow sets ArtifactMetadata to a JSON object with a truthy
-// RequestFeedback field; when present, the agent ends its turn and waits for
-// the user to approve or reject the artifact.
-func antigravityArtifactRequestsFeedback(args map[string]any) bool {
-	if args == nil {
-		return false
-	}
-	raw, ok := args["ArtifactMetadata"]
-	if !ok || raw == nil {
-		return false
-	}
-	var metadata string
-	switch v := raw.(type) {
-	case string:
-		metadata = v
-	case map[string]any:
-		if b, ok := v["RequestFeedback"].(bool); ok {
-			return b
-		}
-		return false
-	default:
-		return false
-	}
-	var parsed map[string]any
-	if json.Unmarshal([]byte(metadata), &parsed) != nil {
-		return false
-	}
-	b, _ := parsed["RequestFeedback"].(bool)
-	return b
-}
-
 // uriToPath converts a file:// URI as stored in the Antigravity
 // conversation_summaries.db workspace_uris column back into an OS filesystem
 // path. Handles the triple-slash form ("file:///C:/...") and URL-encoded
@@ -861,16 +577,4 @@ func uriToPath(uri string) string {
 	// platforms, then convert to the OS-native separator.
 	p = strings.ReplaceAll(p, "|", ":")
 	return filepath.FromSlash(p)
-}
-
-// firstLine returns the first non-empty line of s, trimmed. Used to extract a
-// short error message from a tool step's content blob.
-func firstLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }

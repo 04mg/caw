@@ -271,3 +271,20 @@ func HandleTerminalWS(w http.ResponseWriter, r *http.Request, id string, upgrade
 		}
 	}
 }
+
+// SessionPID returns the OS process id of the program running in the given
+// terminal session (the agent CLI launched in the PTY), or 0 when the session
+// does not exist or its process has not started. Status watchers use it to
+// map a Caw leaf to the agent's own native session through process-held
+// resources (e.g. Antigravity's per-conversation presence lock), which is
+// exact even when several agents of the same type share a cwd.
+func SessionPID(id string) int {
+	if defaultManagerMgr == nil {
+		return 0
+	}
+	sess, ok := defaultManagerMgr.Get(id)
+	if !ok || sess.Pty == nil || sess.Pty.cmd == nil || sess.Pty.cmd.Process == nil {
+		return 0
+	}
+	return sess.Pty.cmd.Process.Pid
+}
