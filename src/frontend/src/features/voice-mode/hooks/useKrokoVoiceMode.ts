@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
 	createKrokoRecognizer,
 	downsampleBuffer,
 	loadSherpaOnnx,
 } from '../services/krokoAsr'
+import { joinTranscript } from '../services/transcript'
 
 type VoicePhase = 'idle' | 'loading' | 'listening' | 'review'
 
@@ -56,16 +57,22 @@ export async function ensureRecognizer(): Promise<any> {
 	return recognizerCache
 }
 
+// The capture session lives at module level: several components call
+// useVoiceMode() (status bar, mobile control bar, hotkeys) and a session
+// started from one must be stoppable from any other. With per-hook refs, stopping
+// from a different component than the one that started left the microphone
+// stream and audio processor running.
+const audioCtxRef: { current: AudioContext | null } = { current: null }
+const mediaStreamRef: { current: MediaStream | null } = { current: null }
+const processorRef: { current: ScriptProcessorNode | null } = { current: null }
+const recognizerRef: { current: any } = { current: null }
+const streamRef: { current: any } = { current: null }
+const finalizedRef = { current: '' }
+const activeRef = { current: false }
+const sessionGenRef = { current: 0 }
+
 export function useKrokoVoiceMode() {
 	const [, forceRender] = useState(0)
-	const audioCtxRef = useRef<AudioContext | null>(null)
-	const mediaStreamRef = useRef<MediaStream | null>(null)
-	const processorRef = useRef<ScriptProcessorNode | null>(null)
-	const recognizerRef = useRef<any>(null)
-	const streamRef = useRef<any>(null)
-	const finalizedRef = useRef('')
-	const activeRef = useRef(false)
-	const sessionGenRef = useRef(0)
 
 	useEffect(() => {
 		const listener = () => forceRender((n) => n + 1)
@@ -104,6 +111,18 @@ export function useKrokoVoiceMode() {
 	const start = useCallback(async () => {
 		const gen = ++sessionGenRef.current
 		try {
+			// getUserMedia only exists in secure contexts. Check before loading
+			// the (large) model so plain-http LAN access fails fast and clearly
+			// instead of with "Cannot read properties of undefined".
+			if (!navigator.mediaDevices?.getUserMedia) {
+				setState({
+					phase: 'idle',
+					error: window.isSecureContext === false
+						? 'Microphone needs HTTPS (or localhost)'
+						: 'Microphone access is not available in this browser',
+				})
+				return
+			}
 			setState({ phase: 'loading', transcript: '', error: null })
 			finalizedRef.current = ''
 			activeRef.current = false
@@ -172,13 +191,14 @@ export function useKrokoVoiceMode() {
 					if (gen !== sessionGenRef.current) return
 					const text = result.text || ''
 
-					if (text.length > 0 && finalizedRef.current + text !== globalState.transcript) {
-						setState({ transcript: finalizedRef.current + text })
+					const combined = joinTranscript(finalizedRef.current, text)
+					if (text.length > 0 && combined !== globalState.transcript) {
+						setState({ transcript: combined })
 					}
 
 					if (isEndpoint) {
 						if (text.length > 0) {
-							finalizedRef.current += text
+							finalizedRef.current = combined
 						}
 						await recognizer.reset(recognizerStream)
 						if (gen !== sessionGenRef.current) return
@@ -202,7 +222,9 @@ export function useKrokoVoiceMode() {
 				error:
 					err.name === 'NotAllowedError'
 						? 'Microphone permission denied'
-						: err.message || 'Failed to start local voice recognition',
+						: err.name === 'NotFoundError'
+							? 'No microphone found'
+							: err.message || 'Failed to start local voice recognition',
 				phase: 'idle',
 			})
 		}
