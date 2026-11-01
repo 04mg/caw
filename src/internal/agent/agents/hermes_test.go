@@ -194,7 +194,7 @@ CREATE TABLE messages (
 
 func insertHermesSession(t *testing.T, dbPath, id string, startedAt float64, endedAt interface{}, title string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -210,7 +210,7 @@ func insertHermesSession(t *testing.T, dbPath, id string, startedAt float64, end
 
 func insertHermesMessage(t *testing.T, dbPath, sid, role, content, toolCalls, finishReason string, ts float64) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestHermesSessionTitle(t *testing.T) {
 
 func execHermesTestDB(t *testing.T, dbPath, q string, args ...any) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
