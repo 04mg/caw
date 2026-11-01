@@ -73,7 +73,7 @@ func TestPiFormatParserRealPiTranscript(t *testing.T) {
 		{"thinking", "", ""}, {"idle", "", ""},
 		{"thinking", "", ""}, {"idle", "", ""},
 	})
-	if p.title != "CAWTEST:slow:20" {
+	if p.title != "CAWTEST:text:after restart" { // latest prompt
 		t.Errorf("title = %q", p.title)
 	}
 }
@@ -150,8 +150,14 @@ func TestPiFormatParserHistoryThenLive(t *testing.T) {
 	p := newPiFormatParser(3)
 	got := p.parse([]string{old, oldDone, live}, time.Date(2026, 11, 1, 19, 9, 0, 0, time.UTC))
 	assertEvents(t, got, []piStatusEvent{{"idle", "", ""}, {"thinking", "", ""}})
-	if p.title != "first" {
-		t.Errorf("title = %q (string user content must be decoded)", p.title)
+	if p.title != "second" {
+		t.Errorf("title = %q, want the latest prompt", p.title)
+	}
+	// String user content (Pi's UserMessage allows it) is decoded.
+	p2 := newPiFormatParser(3)
+	p2.parse([]string{old}, time.Time{})
+	if p2.title != "first" {
+		t.Errorf("string content title = %q", p2.title)
 	}
 }
 
