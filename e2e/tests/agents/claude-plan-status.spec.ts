@@ -122,7 +122,13 @@ async function acceptTrustDialog(page: Page): Promise<void> {
   if (!termText) return
   const lower = termText.toLowerCase()
   if (lower.includes('trust this folder') || lower.includes('safety check')) {
-    await page.keyboard.press('1')
+    // Claude Code 2.1 lists "No, exit" first (highlighted) and "Yes, I trust
+    // this folder" second, unnumbered; older versions numbered "1. Yes".
+    if (lower.indexOf('no, exit') !== -1 && lower.indexOf('no, exit') < lower.indexOf('yes, i trust')) {
+      await page.keyboard.press('ArrowDown')
+    } else {
+      await page.keyboard.press('1')
+    }
     await page.keyboard.press('Enter')
     await page.waitForTimeout(5000)
   } else if (lower.includes('trust the contents') || lower.includes('do you trust')) {
