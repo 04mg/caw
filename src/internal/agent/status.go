@@ -93,6 +93,7 @@ type watcherContext struct {
 	cwd       string
 	cmd       []string
 	resume    bool
+	startedAt time.Time
 }
 
 // StatusWatcher is the interface that each agent status provider must implement.
@@ -330,6 +331,7 @@ func handlePtyInput(id string, data string) {
 		recordPtySubmitLocked(id, time.Now())
 		ptyInterruptMu.Unlock()
 	}
+	recordPtyInputText(id, data)
 	if strings.Contains(data, "\x03") {
 		ptyInterruptMu.Lock()
 		if timer := ptyEscapePending[id]; timer != nil {
@@ -524,6 +526,11 @@ var ptyPromptMarkers = []string{
 	"Would you like to send input to the existing terminal?",
 	"Do you want to approve network access to",
 	"Implement this plan?",
+	// Oh My Pi's tool-approval dialog footer ("↑/↓ choose · ⏎ select ·
+	// Ctrl+⏎/Ctrl+Q approve · ⎋ deny · ..."), shown when tools.approvalMode
+	// asks before running a tool. omp only records the pending tool call in
+	// its transcript, not the prompt.
+	"Ctrl+Q approve",
 }
 
 func containsPtyPromptMarker(s string) bool {
@@ -551,6 +558,7 @@ func handlePtyOutput(id string, data string) {
 	if containsPtyPromptMarker(search) {
 		ptyPendingInput[id] = time.Now()
 	}
+	notePtyWorking(id, search)
 }
 
 // LastPtyPendingInput returns the time an interactive prompt footer was last
@@ -942,6 +950,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		cwd:       cwd,
 		cmd:       cmd,
 		resume:    isResumeCmd(cmd),
+		startedAt: time.Now(),
 	}
 
 	activeSesMu.Lock()
@@ -1026,6 +1035,8 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	ptyInterruptMu.Unlock()
 
 	ClearPtyPendingInput(id)
+	clearPtyInput(id)
+	clearPtyWorking(id)
 
 	if !crashed {
 		// Clean exit or user kill: card simply leaves the board, as before.

@@ -1,9 +1,8 @@
-import { createAgentStatusTests } from '../../fixtures/agent-tests'
+import { createPiFamilyStatusTests } from '../../fixtures/pi-family-status'
 
-createAgentStatusTests({
+createPiFamilyStatusTests({
   agentId: 'omp',
   label: 'Oh My Pi',
-  workPrompt: 'list all files in this directory and describe each one in one sentence',
-  failPrompt: 'read the file /nonexistent/xyz.txt and tell me what is in it',
+  hasAskTool: true,
   responseTimeout: 180_000,
 })
