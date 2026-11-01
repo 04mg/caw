@@ -272,7 +272,7 @@ func TestCommandCodeWatcherPendingTurnFrozenTranscriptShowsWorking(t *testing.T)
 
 	// Pending turn + a live PTY → the frozen transcript must not leave the
 	// card stale on idle; it reports working until the prompt is committed.
-	agent.SetPtyActivityForTest(leafID, time.Now())
+	agent.SetPtyBusyForTest(leafID, time.Now())
 	waitFor("thinking", 8*time.Second)
 
 	cancel()
@@ -348,7 +348,7 @@ func TestCommandCodeWatcherFrozenTurnQuietPTYShowsWaitingInput(t *testing.T) {
 
 	// Active turn with a PTY that has gone quiet past the wait threshold →
 	// the card must report waiting_input instead of staying on thinking.
-	agent.SetPtyActivityForTest(leafID, time.Now().Add(-(inputWaitThreshold + 2*time.Second)))
+	agent.SetPtyBusyForTest(leafID, time.Now().Add(-(inputWaitThreshold + 2*time.Second)))
 	waitFor("waiting_input", 8*time.Second)
 
 	cancel()
