@@ -936,7 +936,10 @@ export function AppLayout() {
           // If the agent goes back to a working state, cancel any pending
           // "finished" notification — it was a transient idle blip, not a
           // real completion.
-          if (nextS === 'thinking' || nextS === 'executing') {
+          // Mirrors the server push logic (agent/status.go): any non-idle
+          // state (working again, waiting for input, interrupted, failed
+          // tool) supersedes a pending "finished".
+          if (nextS !== 'idle' && nextS !== 'stopped') {
             const timer = pendingFinishedRef.current[sessionId]
             if (timer) {
               clearTimeout(timer)
@@ -947,8 +950,12 @@ export function AppLayout() {
           if (nextS === 'waiting_input') {
             triggerAgentNotification(next, 'needs_input')
           } else if (
-            (nextS === 'idle' || nextS === 'stopped') &&
-            (prevS === 'thinking' || prevS === 'executing') &&
+            ((nextS === 'idle' &&
+              // A turn whose last state was a recovered tool failure, or
+              // "unknown" (the stale watchdog could not observe a long
+              // silent LLM wait), was still a working turn.
+              (prevS === 'thinking' || prevS === 'executing' || prevS === 'tool_failed' || prevS === 'unknown')) ||
+              (nextS === 'stopped' && (prevS === 'thinking' || prevS === 'executing'))) &&
             !subagentTool(prev.tool)
           ) {
             // Debounce the "finished" notification: wait 3s before firing.

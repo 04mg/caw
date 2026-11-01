@@ -93,6 +93,7 @@ type watcherContext struct {
 	cwd       string
 	cmd       []string
 	resume    bool
+	startedAt time.Time
 }
 
 // StatusWatcher is the interface that each agent status provider must implement.
@@ -306,6 +307,7 @@ func init() {
 // flipping the status. Recording only the explicit interrupt keys keeps the
 // hook safe and narrow.
 func handlePtyInput(id string, data string) {
+	recordPtyInputText(id, data)
 	if strings.Contains(data, "\x03") {
 		ptyInterruptMu.Lock()
 		if timer := ptyEscapePending[id]; timer != nil {
@@ -467,7 +469,12 @@ func containsPtyPromptMarker(s string) bool {
 		strings.Contains(s, "Tab Questions") ||
 		strings.Contains(s, "Enter Confirm") ||
 		strings.Contains(s, "Tab Amend") ||
-		strings.Contains(s, "Choose now")
+		strings.Contains(s, "Choose now") ||
+		// Oh My Pi's tool-approval dialog footer ("↑/↓ choose · ⏎ select ·
+		// Ctrl+⏎/Ctrl+Q approve · ⎋ deny · ..."), shown when
+		// tools.approvalMode asks before running a tool. omp only records
+		// the pending tool call in its transcript, not the prompt.
+		strings.Contains(s, "Ctrl+Q approve")
 }
 
 // handlePtyOutput scans raw PTY output for interactive prompt footers and
@@ -486,6 +493,7 @@ func handlePtyOutput(id string, data string) {
 	if containsPtyPromptMarker(search) {
 		ptyPendingInput[id] = time.Now()
 	}
+	notePtyWorking(id, search)
 }
 
 // LastPtyPendingInput returns the time an interactive prompt footer was last
@@ -703,9 +711,19 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 			//     finishes, the parent briefly transitions executing→idle
 			//     before continuing, which would otherwise fire a spurious
 			//     "finished" push notification.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
+			//
+			// A turn whose last observed state was "tool_failed" (a failed
+			// tool call the agent recovered from) or "unknown" (the watchdog
+			// could not observe a long silent LLM wait) was still a working
+			// turn: when it ends the user must get the "finished" push too.
+			if exists && status == "idle" && finishedPushFrom(prev.Status) && !isSubagentTool(prev.Tool) {
+				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
+			} else if exists && status == "stopped" && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
+			// "unknown" is only set by the stale watchdog: Caw could not
+			// confirm the turn ended, so it must not claim it "finished".
+			// The push fires once the watcher reports the real idle.
 		}
 	}
 }
@@ -752,6 +770,7 @@ func handleSessionStart(id string, cmd []string, cwd string) {
 		cwd:       cwd,
 		cmd:       cmd,
 		resume:    isResumeCmd(cmd),
+		startedAt: time.Now(),
 	}
 
 	activeSesMu.Lock()
@@ -832,6 +851,8 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	ptyFocusMu.Unlock()
 
 	ClearPtyPendingInput(id)
+	clearPtyInput(id)
+	clearPtyWorking(id)
 
 	if !crashed {
 		// Clean exit or user kill: card simply leaves the board, as before.
@@ -1135,6 +1156,16 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}, func() {
 		lastHeartbeat = time.Now()
 	})
+}
+
+// finishedPushFrom reports whether a transition from prevStatus into "idle"
+// ends a working turn and therefore warrants the "finished" push.
+func finishedPushFrom(prevStatus string) bool {
+	switch prevStatus {
+	case "thinking", "executing", "tool_failed", "unknown":
+		return true
+	}
+	return false
 }
 
 // isSubagentTool reports whether the given tool name represents a background
