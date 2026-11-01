@@ -186,6 +186,11 @@ var (
 	// ReadLoop chunks so a prompt footer marker split across two chunks is
 	// still detected. Guarded by ptyPendingInputMu.
 	ptyOutputTail = make(map[string]string)
+	// ptyBusy / ptyToolRunning record the last time a leaf's PTY rendered a
+	// "working" status line or a running-tool marker (see ptyBusyMarkers and
+	// ptyToolRunningMarkers). Guarded by ptyPendingInputMu.
+	ptyBusy        = make(map[string]time.Time)
+	ptyToolRunning = make(map[string]time.Time)
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -447,45 +452,217 @@ func LastPtyActivity(sessionID string) time.Time {
 	return ptyActivity[sessionID]
 }
 
-// ptyTailKeep is how many trailing output bytes are carried between ReadLoop
-// chunks for prompt-marker detection. It only needs to cover the longest
-// marker string plus slack, not a full frame.
-const ptyTailKeep = 64
+// ptyTailKeep is how many trailing raw output bytes are carried between
+// ReadLoop chunks for marker detection. It must cover the longest marker
+// plus the ANSI styling escapes TUIs interleave with its words (a footer like
+// "tab amend    enter confirm" arrives with SGR codes around every token).
+const ptyTailKeep = 256
 
-// fxPromptMarkers are substrings of Fx's TUI prompt footers. When one of them
-// appears in the PTY output stream, Fx has rendered an interactive screen that
-// blocks on user input:
-//   - "Enter Answer" / "Tab Questions": the ask_user_question screen.
-//   - "Enter Confirm" / "Tab Amend": permission (allow/deny) and confirmation
-//     screens.
-//   - "Choose now": the option-picker footer shared by those screens.
+// ptyPromptMarkers are lowercase substrings of TUI prompt footers that block
+// on user input. They are matched against the ANSI-stripped, lowercased PTY
+// output, so they are case-insensitive and survive interleaved SGR styling.
 //
-// Fx writes nothing to its event log while such a screen is pending, so this
-// is the only ask-time signal available to the status watcher.
-func containsPtyPromptMarker(s string) bool {
-	return strings.Contains(s, "Enter Answer") ||
-		strings.Contains(s, "Tab Questions") ||
-		strings.Contains(s, "Enter Confirm") ||
-		strings.Contains(s, "Tab Amend") ||
-		strings.Contains(s, "Choose now")
+// Fx (fx.sh) — writes nothing to its event log while such a screen is pending,
+// and recent releases (0.0.16+) render the footer in lowercase:
+//   - "enter answer" / "tab questions": the ask_user_question screen.
+//   - "enter confirm" / "tab amend": permission (allow/deny) and confirmation
+//     screens.
+//   - "choose now": the option-picker footer shared by those screens.
+//
+// Command Code — persists a turn only once its iteration completes, so a
+// pending tool approval or question is invisible in its transcript:
+//   - "navigate · enter select": the tool-permission footer
+//     ("↑/↓ navigate · enter select · ctrl+e explain").
+//   - "type something...": the free-text option of the ask_user_question
+//     screen; "to go back and edit": its review/submit step.
+var ptyPromptMarkers = []string{
+	"enter answer",
+	"tab questions",
+	"enter confirm",
+	"tab amend",
+	"choose now",
+	"navigate · enter select",
+	"type something...",
+	"to go back and edit",
 }
 
-// handlePtyOutput scans raw PTY output for interactive prompt footers and
-// records the sighting time per leaf. Called from terminal.ReadLoop on every
-// read. A small tail of the previous chunk is prepended so a footer split
-// across two reads is still detected.
+// ptyBusyMarkers are lowercase substrings of the "agent is working" status
+// line some TUIs repaint continuously while a turn is in flight (spinner +
+// elapsed timer). They disappear as soon as the agent blocks on the user or
+// finishes, which makes them a far better liveness signal than raw PTY
+// activity: Command Code, for example, re-emits its terminal title every few
+// seconds even while idle or blocked on a question, so "any PTY output" can
+// never go quiet.
+//   - Command Code: "esc to interrupt" (e.g. "✧ Hypothesizing… esc to
+//     interrupt • 14s").
+//   - Fx: "• thinking (" / "• running (" (e.g. "• Running (4s) (↑6 ↓27)").
+var ptyBusyMarkers = []string{
+	"esc to interrupt",
+	"• thinking (",
+	"• running (",
+}
+
+// ptyToolRunningMarkers are lowercase substrings rendered inside a tool block
+// while the tool itself is still running (Command Code shows "└ Processing…"
+// under the SHELL/READ/... block until the tool returns). Combined with a busy
+// marker they distinguish "executing a tool" from "waiting on the model".
+var ptyToolRunningMarkers = []string{
+	"processing…",
+}
+
+func containsAnyMarker(plain string, markers []string) bool {
+	for _, m := range markers {
+		if strings.Contains(plain, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// markerEndsAfter reports whether any marker occurrence in plain ends after
+// byte offset from, i.e. at least partly inside the newly received chunk. It
+// prevents a marker that sat entirely in the carried tail from being counted
+// again (and its timestamp refreshed) when an unrelated chunk arrives later.
+func markerEndsAfter(plain string, markers []string, from int) bool {
+	for _, m := range markers {
+		if i := strings.LastIndex(plain, m); i >= 0 && i+len(m) > from {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPtyPromptMarker reports whether raw PTY output contains one of the
+// interactive prompt footers in ptyPromptMarkers (case-insensitive, ANSI
+// styling ignored).
+func containsPtyPromptMarker(s string) bool {
+	return containsAnyMarker(strings.ToLower(stripANSI(s)), ptyPromptMarkers)
+}
+
+// stripANSI removes terminal escape sequences (CSI, OSC, and two-byte ESC
+// sequences) from s so marker matching sees only the rendered text. A cursor
+// forward (CSI n C), which diff-based renderers use in place of runs of
+// spaces, is replaced by a single space so words stay separated.
+func stripANSI(s string) string {
+	if strings.IndexByte(s, 0x1b) < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c != 0x1b {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			break
+		}
+		switch s[i+1] {
+		case '[':
+			j := i + 2
+			for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+				j++
+			}
+			if j < len(s) && s[j] == 'C' {
+				b.WriteByte(' ')
+			}
+			i = j + 1
+		case ']':
+			j := i + 2
+			for j < len(s) {
+				if s[j] == 0x07 {
+					j++
+					break
+				}
+				if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+					j += 2
+					break
+				}
+				j++
+			}
+			i = j
+		default:
+			// Two-byte escapes (ESC 7, ESC =, ...) and nF sequences with
+			// intermediate bytes such as charset designation (ESC ( B).
+			j := i + 1
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x2f {
+				j++
+			}
+			i = j + 1
+		}
+	}
+	return b.String()
+}
+
+// handlePtyOutput scans raw PTY output for interactive prompt footers, busy
+// status lines and running-tool markers, and records the sighting time per
+// leaf. Called from terminal.ReadLoop on every read. A small tail of the
+// previous chunk is prepended so a marker split across two reads is still
+// detected; a marker is only counted when it ends inside the new chunk.
 func handlePtyOutput(id string, data string) {
 	ptyPendingInputMu.Lock()
 	defer ptyPendingInputMu.Unlock()
-	search := ptyOutputTail[id] + data
+	tail := ptyOutputTail[id]
+	search := tail + data
 	if len(search) > ptyTailKeep {
 		ptyOutputTail[id] = search[len(search)-ptyTailKeep:]
 	} else {
 		ptyOutputTail[id] = search
 	}
-	if containsPtyPromptMarker(search) {
-		ptyPendingInput[id] = time.Now()
+	plain := strings.ToLower(stripANSI(search))
+	from := len(strings.ToLower(stripANSI(tail)))
+	now := time.Now()
+	if markerEndsAfter(plain, ptyPromptMarkers, from) {
+		ptyPendingInput[id] = now
 	}
+	if markerEndsAfter(plain, ptyBusyMarkers, from) {
+		ptyBusy[id] = now
+	}
+	if markerEndsAfter(plain, ptyToolRunningMarkers, from) {
+		ptyToolRunning[id] = now
+	}
+}
+
+// LastPtyBusy returns the time a "working" status line (see ptyBusyMarkers)
+// was last rendered in the given leaf's PTY, or the zero time if never.
+func LastPtyBusy(sessionID string) time.Time {
+	ptyPendingInputMu.RLock()
+	defer ptyPendingInputMu.RUnlock()
+	return ptyBusy[sessionID]
+}
+
+// LastPtyToolRunning returns the time a running-tool marker (see
+// ptyToolRunningMarkers) was last rendered in the given leaf's PTY.
+func LastPtyToolRunning(sessionID string) time.Time {
+	ptyPendingInputMu.RLock()
+	defer ptyPendingInputMu.RUnlock()
+	return ptyToolRunning[sessionID]
+}
+
+// SetPtyBusyForTest records (or clears) the last busy-marker sighting for a
+// leaf. Intended only for tests.
+func SetPtyBusyForTest(sessionID string, at time.Time) {
+	ptyPendingInputMu.Lock()
+	if at.IsZero() {
+		delete(ptyBusy, sessionID)
+	} else {
+		ptyBusy[sessionID] = at
+	}
+	ptyPendingInputMu.Unlock()
+}
+
+// SetPtyToolRunningForTest records (or clears) the last running-tool marker
+// sighting for a leaf. Intended only for tests.
+func SetPtyToolRunningForTest(sessionID string, at time.Time) {
+	ptyPendingInputMu.Lock()
+	if at.IsZero() {
+		delete(ptyToolRunning, sessionID)
+	} else {
+		ptyToolRunning[sessionID] = at
+	}
+	ptyPendingInputMu.Unlock()
 }
 
 // LastPtyPendingInput returns the time an interactive prompt footer was last
@@ -506,6 +683,16 @@ func LastPtyPendingInput(sessionID string) time.Time {
 func ClearPtyPendingInput(sessionID string) {
 	ptyPendingInputMu.Lock()
 	delete(ptyPendingInput, sessionID)
+	ptyPendingInputMu.Unlock()
+}
+
+// clearPtyMarkers drops every PTY marker sighting and the carried output tail
+// for a leaf. Called when the session exits.
+func clearPtyMarkers(sessionID string) {
+	ptyPendingInputMu.Lock()
+	delete(ptyPendingInput, sessionID)
+	delete(ptyBusy, sessionID)
+	delete(ptyToolRunning, sessionID)
 	delete(ptyOutputTail, sessionID)
 	ptyPendingInputMu.Unlock()
 }
@@ -703,7 +890,11 @@ func updateStatus(sessionID, agentID, cwd, status, tool, details, title, source 
 			//     finishes, the parent briefly transitions executing→idle
 			//     before continuing, which would otherwise fire a spurious
 			//     "finished" push notification.
-			if exists && (prev.Status == "thinking" || prev.Status == "executing") && !isSubagentTool(prev.Tool) {
+			//
+			// "tool_failed" counts as working here: the agent keeps running
+			// after a failed tool call, so a turn whose last visible state was
+			// a tool failure and that then completes has finished its task.
+			if exists && (prev.Status == "thinking" || prev.Status == "executing" || prev.Status == "tool_failed") && !isSubagentTool(prev.Tool) {
 				push.DispatchFinishedDebounced(pushStore, sessionID, agentID, title, "")
 			}
 		}
@@ -831,7 +1022,7 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	delete(ptyFocus, id)
 	ptyFocusMu.Unlock()
 
-	ClearPtyPendingInput(id)
+	clearPtyMarkers(id)
 
 	if !crashed {
 		// Clean exit or user kill: card simply leaves the board, as before.
