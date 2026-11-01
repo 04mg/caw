@@ -768,6 +768,11 @@ export function AppLayout() {
   // means the sub-task just finished — not the whole session — so it must not
   // fire a "finished" notification.
   const subagentTool = (tool?: string) => tool === 'task' || tool === 'background_task'
+  // States in which the agent is busy with a turn. A later transition to idle
+  // is a completion. tool_failed keeps working after the failed call, and
+  // unknown is only entered from a working state (the backend watchdog), so
+  // both must still produce the "finished" notification when the turn ends.
+  const workingStatus = (s: string) => s === 'thinking' || s === 'executing' || s === 'tool_failed' || s === 'unknown'
   // Pending "finished" notifications: keyed by sessionId, each with a timer
   // that fires after a short delay. If the agent goes back to working before
   // the timer elapses, the notification is cancelled.
@@ -936,7 +941,7 @@ export function AppLayout() {
           // If the agent goes back to a working state, cancel any pending
           // "finished" notification — it was a transient idle blip, not a
           // real completion.
-          if (nextS === 'thinking' || nextS === 'executing') {
+          if (nextS === 'thinking' || nextS === 'executing' || nextS === 'tool_failed' || nextS === 'waiting_input' || nextS === 'interrupted') {
             const timer = pendingFinishedRef.current[sessionId]
             if (timer) {
               clearTimeout(timer)
@@ -948,7 +953,7 @@ export function AppLayout() {
             triggerAgentNotification(next, 'needs_input')
           } else if (
             (nextS === 'idle' || nextS === 'stopped') &&
-            (prevS === 'thinking' || prevS === 'executing') &&
+            workingStatus(prevS) &&
             !subagentTool(prev.tool)
           ) {
             // Debounce the "finished" notification: wait 3s before firing.
