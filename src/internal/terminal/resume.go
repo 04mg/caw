@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -79,10 +80,19 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return appendNonFlag(cmd, "--continue")
 	case "pi":
-		// pi --continue / -c continues the previous session.
+		// pi --session <file> reopens an exact transcript; --continue / -c
+		// continues the most recent session in the cwd. The external id
+		// recorded by the status watcher is the transcript path.
+		if transcriptExists(externalID) && !hasAnyFlag(cmd, "--session", "--continue", "-c", "--resume", "-r") {
+			return append(cmd, "--session", externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "omp":
-		// Oh My Pi (omp) --continue / -c continues the previous session.
+		// Oh My Pi: --resume <file|id> reopens an exact session; --continue
+		// falls back to this terminal's (or the cwd's) most recent one.
+		if transcriptExists(externalID) && !hasAnyFlag(cmd, "--session", "--continue", "-c", "--resume", "-r") {
+			return append(cmd, "--resume", externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "hermes":
 		// Hermes: --resume <session-id> reattaches to an exact session;
@@ -171,4 +181,25 @@ func injectCodexResume(cmd []string, sessionID string) []string {
 	}
 	out = append(out, cmd[1:]...)
 	return out
+}
+// transcriptExists reports whether p names an existing JSONL transcript file
+// (the external session id Pi-family watchers record).
+func transcriptExists(p string) bool {
+	if p == "" || !strings.HasSuffix(p, ".jsonl") || !filepath.IsAbs(p) {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// hasAnyFlag reports whether cmd already contains any of the given flags.
+func hasAnyFlag(cmd []string, flags ...string) bool {
+	for _, a := range cmd {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+		}
+	}
+	return false
 }

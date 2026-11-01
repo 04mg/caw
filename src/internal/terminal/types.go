@@ -1,5 +1,7 @@
 package terminal
 
+import "sync"
+
 type CreateRequest struct {
 	Cwd string     `json:"cwd"`
 	ID  string     `json:"id"`
@@ -45,3 +47,32 @@ var (
 	// so re-binds are biased toward the pane the user is actually driving.
 	OnPtyFocus func(id string, focused bool)
 )
+var (
+	ttyNamesMu sync.RWMutex
+	ttyNames   = make(map[string]string)
+)
+
+func setTtyName(id, name string) {
+	if id == "" || name == "" {
+		return
+	}
+	ttyNamesMu.Lock()
+	ttyNames[id] = name
+	ttyNamesMu.Unlock()
+}
+
+func clearTtyName(id string) {
+	ttyNamesMu.Lock()
+	delete(ttyNames, id)
+	ttyNamesMu.Unlock()
+}
+
+// TtyName returns the slave device path (e.g. "/dev/pts/3") of the PTY
+// running the given leaf/session id, or "" if unknown. Agents that record a
+// per-terminal breadcrumb keyed by their controlling TTY (Oh My Pi writes
+// ~/.omp/agent/terminal-sessions/pts-N) can be bound to the exact leaf with it.
+func TtyName(id string) string {
+	ttyNamesMu.RLock()
+	defer ttyNamesMu.RUnlock()
+	return ttyNames[id]
+}
