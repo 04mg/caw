@@ -411,6 +411,14 @@ func (n *FileChangeNotifier) loop() {
 						n.mu.Unlock()
 					}
 					relevant = true
+				} else if ev.Has(fsnotify.Create) && strings.HasPrefix(target, ev.Name+string(filepath.Separator)) {
+					// A missing intermediate directory of the target was
+					// just created (e.g. Claude creates its per-project
+					// transcript dir lazily together with the first
+					// transcript). Descend so the target's own Create is
+					// not missed; the target may already exist by now.
+					n.Watch(target)
+					relevant = true
 				}
 			} else if ev.Has(fsnotify.Write) || ev.Has(fsnotify.Create) {
 				relevant = true
