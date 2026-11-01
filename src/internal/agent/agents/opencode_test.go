@@ -2,6 +2,7 @@ package agents
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/04mg/caw/internal/agent"
 	_ "modernc.org/sqlite"
 )
 
@@ -712,5 +714,305 @@ func TestOpenCodeExactSessionClaimOwnership(t *testing.T) {
 	}
 	if ClaimedBy(testAgent, testCwd, oldSession) != "leaf-restored" {
 		t.Fatal("ownership must report the restored leaf")
+	}
+}
+// ---- Fixtures captured from a live OpenCode 1.18.35 session (paths scrubbed) ----
+
+// ocMsgAPIError is the assistant message OpenCode wrote when the provider
+// answered HTTP 400 (non-retryable): error set, time.completed set, no finish,
+// no parts. The turn is over.
+const ocMsgAPIError = `{"parentID":"msg_u","role":"assistant","mode":"build","agent":"build","path":{"cwd":"/home/user/project","root":"/home/user/project"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"m","providerID":"p","time":{"created":1793559146012,"completed":1793559146557},"error":{"name":"APIError","data":{"message":"CAWTEST scripted failure","statusCode":400,"isRetryable":false}}}`
+
+// ocMsgToolCalls is a finished step that requested tool calls (finish
+// "tool-calls"); the next step's message follows once the LLM answers.
+const ocMsgToolCalls = `{"parentID":"msg_u","role":"assistant","mode":"build","agent":"build","finish":"tool-calls","time":{"created":1793559107662,"completed":1793559108700}}`
+
+// ocPartReadFailed is a read tool call that failed on its own (missing file).
+const ocPartReadFailed = `{"type":"tool","tool":"read","callID":"call_1","state":{"status":"error","input":{"filePath":"/home/user/project/missing.txt"},"error":"File not found: /home/user/project/missing.txt","time":{"start":1793559092652,"end":1793559092712}}}`
+
+// ocPartBashRejected is a bash call whose permission request the user
+// rejected (ESC on the permission dialog). OpenCode stops the turn.
+const ocPartBashRejected = `{"type":"tool","tool":"bash","callID":"call_2","state":{"status":"error","input":{"command":"touch perm2.txt"},"error":"The user rejected permission to use this specific tool call.","time":{"start":1793559650293,"end":1793559657864}}}`
+
+// ocPartBashRunning is a bash call in progress (also what the DB shows while
+// OpenCode's permission dialog for it is open).
+const ocPartBashRunning = `{"type":"tool","tool":"bash","callID":"call_3","state":{"status":"running","input":{"command":"touch perm.txt"},"time":{"start":1793559596488}}}`
+
+func mustOCMessage(t *testing.T, js string) openCodeMessage {
+	t.Helper()
+	var m openCodeMessage
+	if err := json.Unmarshal([]byte(js), &m); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+	return m
+}
+
+func mustOCParts(t *testing.T, js ...string) []openCodePart {
+	t.Helper()
+	var out []openCodePart
+	for _, j := range js {
+		var p openCodePart
+		if err := json.Unmarshal([]byte(j), &p); err != nil {
+			t.Fatalf("unmarshal part: %v", err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// An API error ends the turn: it must not stay "thinking" forever (the old
+// behavior) but report interrupted with the error text.
+func TestDeriveOpenCodeStateAPIErrorEndsTurn(t *testing.T) {
+	st := deriveOpenCodeState(mustOCMessage(t, ocMsgAPIError), nil)
+	if st.status != "interrupted" {
+		t.Fatalf("status = %q, want interrupted", st.status)
+	}
+	if st.details != "APIError: CAWTEST scripted failure" {
+		t.Fatalf("details = %q", st.details)
+	}
+}
+
+// A rejected permission stops the turn with finish "tool-calls"; the old code
+// reported "executing bash" forever.
+func TestDeriveOpenCodeStateRejectedPermissionIsInterrupted(t *testing.T) {
+	st := deriveOpenCodeState(mustOCMessage(t, ocMsgToolCalls), mustOCParts(t, `{"type":"step-start"}`, ocPartBashRejected, `{"type":"step-finish","reason":"tool-calls"}`))
+	if st.status != "interrupted" || st.tool != "bash" || !strings.Contains(st.details, "rejected permission") {
+		t.Fatalf("got %+v, want interrupted bash with rejection text", st)
+	}
+}
+
+// A tool that failed on its own inside a finished "tool-calls" step is
+// surfaced as tool_failed while the agent processes the failure (the old code
+// reported "executing read", so tool_failed was never shown).
+func TestDeriveOpenCodeStateFailedToolInToolCallsStep(t *testing.T) {
+	st := deriveOpenCodeState(mustOCMessage(t, ocMsgToolCalls), mustOCParts(t, `{"type":"step-start"}`, ocPartReadFailed, `{"type":"step-finish","reason":"tool-calls"}`))
+	if st.status != "tool_failed" || st.tool != "read" || !strings.Contains(st.details, "File not found") {
+		t.Fatalf("got %+v, want tool_failed read", st)
+	}
+}
+
+// A running tool reports executing and exposes its start time, which scopes
+// the PTY permission-dialog signal to this tool call.
+func TestDeriveOpenCodeStateRunningToolStart(t *testing.T) {
+	st := deriveOpenCodeState(mustOCMessage(t, `{"role":"assistant","time":{"created":1}}`), mustOCParts(t, `{"type":"step-start"}`, ocPartBashRunning))
+	if st.status != "executing" || st.tool != "bash" || st.activeToolStart != 1793559596488 {
+		t.Fatalf("got %+v", st)
+	}
+}
+
+func TestOpenCodePermissionPending(t *testing.T) {
+	const leaf = "oc-perm-leaf"
+	defer agent.SetPtyPendingInputForTest(leaf, time.Time{})
+	defer agent.SetPtyLineSubmitForTest(leaf, time.Time{})
+	defer agent.SetPtyInterruptForTest(leaf, time.Time{})
+
+	toolStart := time.Now().Add(-5 * time.Second)
+	if openCodePermissionPending(leaf, toolStart.UnixMilli()) {
+		t.Fatal("no dialog seen: must not be pending")
+	}
+	// Dialog seen before this tool started (an older prompt): not pending.
+	agent.SetPtyPendingInputForTest(leaf, toolStart.Add(-time.Second))
+	if openCodePermissionPending(leaf, toolStart.UnixMilli()) {
+		t.Fatal("dialog from before the tool started must not count")
+	}
+	// Dialog seen after the tool started, unanswered: pending.
+	agent.SetPtyPendingInputForTest(leaf, toolStart.Add(time.Second))
+	if !openCodePermissionPending(leaf, toolStart.UnixMilli()) {
+		t.Fatal("dialog after tool start must be pending")
+	}
+	// The user pressed Enter (allow): answered.
+	agent.SetPtyLineSubmitForTest(leaf, toolStart.Add(2*time.Second))
+	if openCodePermissionPending(leaf, toolStart.UnixMilli()) {
+		t.Fatal("dialog answered with Enter must not be pending")
+	}
+	// A later ESC also answers (reject) a later dialog.
+	agent.SetPtyPendingInputForTest(leaf, toolStart.Add(3*time.Second))
+	agent.SetPtyInterruptForTest(leaf, toolStart.Add(4*time.Second))
+	if openCodePermissionPending(leaf, toolStart.UnixMilli()) {
+		t.Fatal("dialog answered with ESC must not be pending")
+	}
+}
+
+func TestResolveOpenCodeDBPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
+	if got, want := resolveOpenCodeDBPath(), filepath.Join(home, ".local", "share", "opencode", "opencode.db"); got != want {
+		t.Fatalf("default: got %q want %q", got, want)
+	}
+
+	xdg := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdg)
+	if got, want := resolveOpenCodeDBPath(), filepath.Join(xdg, "opencode", "opencode.db"); got != want {
+		t.Fatalf("XDG_DATA_HOME: got %q want %q", got, want)
+	}
+
+	// Non-release channels write opencode-<channel>.db.
+	if err := os.MkdirAll(filepath.Join(xdg, "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ch := filepath.Join(xdg, "opencode", "opencode-dev.db")
+	if err := os.WriteFile(ch, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveOpenCodeDBPath(); got != ch {
+		t.Fatalf("channel db: got %q want %q", got, ch)
+	}
+	// opencode.db wins when it exists.
+	main := filepath.Join(xdg, "opencode", "opencode.db")
+	if err := os.WriteFile(main, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveOpenCodeDBPath(); got != main {
+		t.Fatalf("main db: got %q want %q", got, main)
+	}
+
+	t.Setenv("OPENCODE_DB", "custom.db")
+	if got, want := resolveOpenCodeDBPath(), filepath.Join(xdg, "opencode", "custom.db"); got != want {
+		t.Fatalf("relative OPENCODE_DB: got %q want %q", got, want)
+	}
+	t.Setenv("OPENCODE_DB", "/abs/oc.db")
+	if got := resolveOpenCodeDBPath(); got != "/abs/oc.db" {
+		t.Fatalf("absolute OPENCODE_DB: got %q", got)
+	}
+}
+
+// ocSessions/ocMessages/ocParts alias the anonymous fixture structs used by
+// setupOpenCodeDBWithMessages.
+type ocSession = struct {
+	id            string
+	directory     string
+	timeCreatedMs int64
+	timeUpdatedMs int64
+	parentID      string
+}
+type ocMessage = struct {
+	id            string
+	sessionID     string
+	timeCreatedMs int64
+	dataJSON      string
+}
+type ocPart = struct {
+	id            string
+	messageID     string
+	sessionID     string
+	timeCreatedMs int64
+	dataJSON      string
+}
+
+func registerOCLeaves(t *testing.T, leaves ...string) {
+	t.Helper()
+	for _, l := range leaves {
+		agent.RegisterActiveSessionWithCwdForTest(l, testAgent, testCwd)
+		agent.SetPtyLineSubmitForTest(l, time.Time{})
+	}
+	t.Cleanup(func() {
+		for _, l := range leaves {
+			agent.RegisterActiveSessionWithCwdForTest(l, "", "")
+			agent.SetPtyLineSubmitForTest(l, time.Time{})
+		}
+	})
+}
+
+// Reproduces the live bug: an idle, never-prompted pane (leaf-idle) shares the
+// cwd with a pane (leaf-busy) that just created a session with /new. The idle
+// pane must not claim it; the submitting pane must.
+func TestUnboundPaneDoesNotStealSiblingSession(t *testing.T) {
+	resetClaimRegistry()
+	registerOCLeaves(t, "leaf-idle", "leaf-busy")
+	now := time.Now()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]ocSession{{newSession, testCwd, now.UnixMilli(), now.UnixMilli(), ""}},
+		[]ocMessage{{"msg_u", newSession, now.UnixMilli(), `{"role":"user"}`}},
+		[]ocPart{{"prt_t", "msg_u", newSession, now.UnixMilli(), `{"type":"text","text":"CAWTEST:shell:sleep 10"}`}},
+	)
+	defer cleanup()
+	agent.SetPtyLineSubmitForTest("leaf-busy", now.Add(-60*time.Millisecond))
+
+	watcherStart := now.Add(-time.Minute)
+	if got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-idle"); got != "" {
+		t.Fatalf("idle pane claimed sibling's session %q", got)
+	}
+	if got := findUnclaimedOpenCodeSession(dbPath, testCwd, watcherStart, testAgent, false, "leaf-busy"); got != newSession {
+		t.Fatalf("submitting pane got %q, want %q", got, newSession)
+	}
+}
+
+// Near-simultaneous Enters (the user pressed Enter on an empty prompt in one
+// pane right after submitting in another): the pane whose typed line matches
+// the persisted prompt owns the session.
+func TestSubmitOwnerPrefersMatchingPromptText(t *testing.T) {
+	registerOCLeaves(t, "leaf-a", "leaf-b")
+	now := time.Now()
+	agent.SetPtyLineSubmitForTest("leaf-a", time.Time{})
+	// leaf-a typed the prompt; leaf-b pressed Enter on an empty prompt later.
+	agent.RecordPtyLineInputForTest("leaf-a", "CAWTEST:shell:sleep 4\r", now.Add(-60*time.Millisecond))
+	agent.RecordPtyLineInputForTest("leaf-b", "\r", now.Add(-20*time.Millisecond))
+	if got := agent.PtyLineSubmitOwner(testAgent, testCwd, now, "CAWTEST:shell:sleep 4"); got != "leaf-a" {
+		t.Fatalf("owner = %q, want leaf-a (matching text)", got)
+	}
+	// Without the prompt text, the closest Enter wins.
+	if got := agent.PtyLineSubmitOwner(testAgent, testCwd, now, ""); got != "leaf-b" {
+		t.Fatalf("owner without text = %q, want leaf-b (closest Enter)", got)
+	}
+}
+
+// A session whose prompt text is not written yet is left undecided rather than
+// claimed by whichever pane pressed Enter last.
+func TestFreshSessionWithoutPromptIsUndecided(t *testing.T) {
+	resetClaimRegistry()
+	registerOCLeaves(t, "leaf-x")
+	now := time.Now()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]ocSession{{newSession, testCwd, now.UnixMilli(), now.UnixMilli(), ""}},
+		[]ocMessage{{"msg_u", newSession, now.UnixMilli(), `{"role":"user"}`}},
+		nil,
+	)
+	defer cleanup()
+	agent.SetPtyLineSubmitForTest("leaf-x", now.Add(-50*time.Millisecond))
+	if got := findUnclaimedOpenCodeSession(dbPath, testCwd, now.Add(-time.Minute), testAgent, false, "leaf-x"); got != "" {
+		t.Fatalf("claimed %q before the prompt text landed", got)
+	}
+}
+
+// Reproduces the live bug after a Caw restart: a focused, idle pane resumed on
+// its own session must not re-bind to a more recently updated sibling session
+// it did not submit to (the old focus/PTY gate did). It must re-bind to a
+// session it did submit to (/new or /sessions + prompt).
+func TestRebindRequiresOwnSubmit(t *testing.T) {
+	resetClaimRegistry()
+	registerOCLeaves(t, "leaf-me", "leaf-sib")
+	agent.SetPtyFocusForTest("leaf-me", true)
+	defer agent.SetPtyFocusForTest("leaf-me", false)
+	now := time.Now()
+	old := now.Add(-time.Minute).UnixMilli()
+	dbPath, cleanup := setupOpenCodeDBWithMessages(t,
+		[]ocSession{
+			{oldSession, testCwd, old, old, ""},
+			{"ses_sib", testCwd, old, now.UnixMilli(), ""},
+		},
+		[]ocMessage{
+			{"m1", oldSession, old, `{"role":"user"}`},
+			{"m2", "ses_sib", now.UnixMilli(), `{"role":"user"}`},
+		},
+		[]ocPart{
+			{"p1", "m1", oldSession, old, `{"type":"text","text":"first"}`},
+			{"p2", "m2", "ses_sib", now.UnixMilli(), `{"type":"text","text":"sibling prompt"}`},
+		},
+	)
+	defer cleanup()
+
+	if got := findRebindOpenCodeSession(dbPath, testCwd, testAgent, oldSession, "leaf-me"); got != "" {
+		t.Fatalf("re-bound to unowned sibling session %q", got)
+	}
+	agent.RecordPtyLineInputForTest("leaf-sib", "sibling prompt\r", now.Add(-40*time.Millisecond))
+	if got := findRebindOpenCodeSession(dbPath, testCwd, testAgent, oldSession, "leaf-me"); got != "" {
+		t.Fatalf("re-bound to the sibling's session %q", got)
+	}
+	agent.SetPtyLineSubmitForTest("leaf-sib", time.Time{})
+	agent.RecordPtyLineInputForTest("leaf-me", "sibling prompt\r", now.Add(-40*time.Millisecond))
+	if got := findRebindOpenCodeSession(dbPath, testCwd, testAgent, oldSession, "leaf-me"); got != "ses_sib" {
+		t.Fatalf("own /new session not re-bound: got %q", got)
 	}
 }
