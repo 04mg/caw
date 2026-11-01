@@ -124,13 +124,19 @@ func parseTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		// Fall back to the SQLite default datetime format.
-		t, err = time.Parse("2006-01-02 15:04:05", s)
-		if err != nil {
-			return time.Time{}
+	// The SQLite driver stores a time.Time argument as its String() form
+	// ("2006-01-02 15:04:05.999999999 -0700 MST"), which is what
+	// SaveCrashedSession writes. RFC3339 and SQLite's own datetime format are
+	// accepted too. Without the first layout every rehydrated crashed card
+	// came back with zero StartedAt/EndedAt timestamps after a restart.
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
 		}
 	}
-	return t
+	return time.Time{}
 }
