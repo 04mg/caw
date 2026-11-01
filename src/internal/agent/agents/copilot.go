@@ -80,16 +80,132 @@ type copilotSubagentEvent struct {
 }
 
 // copilotWatchState carries state that must survive across incremental reads
-// of the watched events.jsonl file. In particular it tracks subagents that
-// have started but not yet completed, so an intermediate assistant.turn_end
-// (the parent pausing after delegating work) is not mistaken for the end of
-// the whole session.
+// of the watched events.jsonl file:
+//   - activeSubagents: subagents that have started but not yet completed, so
+//     an intermediate assistant.turn_end (the parent pausing after delegating
+//     work) is not mistaken for the end of the whole session.
+//   - pendingPermissions: permission.requested events not yet resolved by a
+//     permission.completed. While one is pending Copilot is blocked on the
+//     user's approval (the TUI "Do you want to run this command?" dialog).
+//   - lastMsgHadTools: whether the most recent assistant.message requested
+//     tools. Copilot writes assistant.turn_end after EVERY model call (one
+//     "turn" per LLM round-trip), including the call that only requested a
+//     tool, so a turn_end is the end of the user's turn only when the last
+//     assistant message carried no tool requests.
+//   - toolNames: toolCallId -> tool name, to label permission and
+//     execution-complete events that only carry the call id.
 type copilotWatchState struct {
-	activeSubagents map[string]string
+	activeSubagents    map[string]string
+	pendingPermissions map[string]copilotPendingPermission
+	pendingOrder       []string
+	lastMsgHadTools    bool
+	toolNames          map[string]string
+	// toolFailure holds the error of the most recent failed tool call in the
+	// current turn (tool + message). Copilot writes turn_end/turn_start right
+	// after a tool completes, so a failure would otherwise be overwritten
+	// within milliseconds; it stays surfaced (tool_failed) while the model
+	// works on the error, until the next tool starts or the turn ends.
+	toolFailure     string
+	toolFailureTool string
+	// lastText is the latest visible assistant text of the current turn,
+	// shown as the idle card's details once the turn ends (the final message
+	// and its turn_end may arrive in different reads).
+	lastText string
+	// sawWork is set by each parse when the batch it read contained turn
+	// activity (prompt, model call, tool run). Not carried across reads.
+	sawWork bool
+}
+
+// copilotPendingPermission is one unresolved permission.requested event.
+type copilotPendingPermission struct {
+	tool    string
+	details string
 }
 
 func (s *copilotWatchState) reset() {
-	s.activeSubagents = nil
+	*s = copilotWatchState{}
+}
+
+func (s *copilotWatchState) clearPermissions() {
+	s.pendingPermissions = nil
+	s.pendingOrder = nil
+}
+
+// latestPendingPermission returns the most recently requested permission that
+// is still unresolved.
+func (s *copilotWatchState) latestPendingPermission() (copilotPendingPermission, bool) {
+	for i := len(s.pendingOrder) - 1; i >= 0; i-- {
+		if p, ok := s.pendingPermissions[s.pendingOrder[i]]; ok {
+			return p, true
+		}
+	}
+	return copilotPendingPermission{}, false
+}
+
+// copilotPermissionRequested is the data payload for "permission.requested"
+// events (persisted to events.jsonl only when the user is actually prompted;
+// auto-approved read-only tools never write one).
+type copilotPermissionRequested struct {
+	RequestID         string `json:"requestId"`
+	ResolvedByHook    bool   `json:"resolvedByHook,omitempty"`
+	PermissionRequest struct {
+		Kind            string `json:"kind"`
+		ToolCallID      string `json:"toolCallId"`
+		FullCommandText string `json:"fullCommandText,omitempty"`
+		Intention       string `json:"intention,omitempty"`
+		Path            string `json:"path,omitempty"`
+		FileName        string `json:"fileName,omitempty"`
+		ToolName        string `json:"toolName,omitempty"`
+	} `json:"permissionRequest"`
+}
+
+// copilotPermissionCompleted is the data payload for "permission.completed".
+type copilotPermissionCompleted struct {
+	RequestID  string `json:"requestId"`
+	ToolCallID string `json:"toolCallId,omitempty"`
+	Result     struct {
+		Kind string `json:"kind"`
+	} `json:"result"`
+}
+
+// copilotToolComplete is the data payload for "tool.execution_complete", the
+// event Copilot CLI actually persists when a tool finishes. success is false
+// when the tool itself failed; a shell command that ran but exited non-zero is
+// reported with success:true and a non-zero shellExecution.exitCode.
+type copilotToolComplete struct {
+	ToolCallID string `json:"toolCallId"`
+	Success    *bool  `json:"success,omitempty"`
+	Error      *struct {
+		Message string `json:"message,omitempty"`
+		Code    string `json:"code,omitempty"`
+	} `json:"error,omitempty"`
+	Result *struct {
+		Content string `json:"content,omitempty"`
+	} `json:"result,omitempty"`
+	ShellExecution *struct {
+		ExitCode *int `json:"exitCode,omitempty"`
+	} `json:"shellExecution,omitempty"`
+}
+
+// failure returns a short error text when the completed tool call failed, or
+// "" when it succeeded.
+func (c copilotToolComplete) failure() string {
+	if c.Success != nil && !*c.Success {
+		if c.Error != nil && c.Error.Message != "" {
+			return firstLine(c.Error.Message)
+		}
+		if c.Result != nil && c.Result.Content != "" {
+			return firstLine(c.Result.Content)
+		}
+		return "tool call failed"
+	}
+	if c.ShellExecution != nil && c.ShellExecution.ExitCode != nil && *c.ShellExecution.ExitCode != 0 {
+		if c.Result != nil && c.Result.Content != "" {
+			return firstLine(c.Result.Content)
+		}
+		return "command failed"
+	}
+	return ""
 }
 
 // copilotUserMsg is the data payload for "user.message" events.
@@ -121,6 +237,9 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 	var lastActivity time.Time
 	var silentTicks int
 	var parseState copilotWatchState
+	// replay marks the first read after binding to a pre-existing session
+	// (reopen/resume/rebind): its history must not produce live transitions.
+	var replay bool
 
 	var notifyCh <-chan struct{}
 	notifier, nerr := NewFileChangeNotifier()
@@ -151,6 +270,8 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 		if info.Size() <= lastFileSize {
 			return false
 		}
+		replaying := lastFileSize == 0 && replay
+		replay = false
 		wrappedCallback := func(status, tool, details, title string) {
 			// The events file only contains user prompts. Copilot's generated
 			// session name is persisted separately in session-store.db and
@@ -165,6 +286,15 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			}
 			if status == "idle" && details != "" {
 				lastAssistantDetails = details
+			}
+			// A single read can cover a whole stretch of work that ended
+			// the turn (the user answered a prompt and the agent finished
+			// within one poll, or a fast turn). Report the working state
+			// first so the "finished" notification (working -> idle) fires.
+			// Not when replaying a pre-existing log on bind.
+			if status == "idle" && parseState.sawWork && !replaying &&
+				lastStatus != "thinking" && lastStatus != "executing" && lastStatus != "tool_failed" {
+				callback("thinking", "", "", sessionTitle)
 			}
 			lastStatus, lastTool, lastDetails = status, tool, details
 			callback(status, tool, details, sessionTitle)
@@ -205,6 +335,7 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 					if exactPath := copilotEventsForSession(stateDir, exact); exactPath != "" && ClaimSessionForLeaf(agentID, cwd, exactPath, sessionID) {
 						watchedFilePath = exactPath
 						lastFileSize = 0
+						replay = true
 						lastActivity = time.Now()
 						silentTicks = 0
 						parseState.reset()
@@ -215,30 +346,34 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 					}
 				}
 				if watchedFilePath == "" {
-				// Walk every candidate newest-first and claim the first free
-				// one. Trying only the single newest means a watcher whose
-				// newest candidate is already claimed by a sibling Copilot in
-				// the same cwd can never bind — it retries the same claimed
-				// file forever instead of falling back to the next session.
-				for _, cand := range findCopilotEventsFiles(stateDir, cwd, watcherStart, resume) {
-					if ClaimSessionForLeaf(agentID, cwd, cand.path, sessionID) {
-						watchedFilePath = cand.path
-						lastFileSize = 0
-						lastActivity = time.Now()
-						silentTicks = 0
-						parseState.reset()
-						if notifyCh != nil {
-							notifier.Watch(watchedFilePath)
+					// Walk every candidate newest-first and claim the first free
+					// one. Trying only the single newest means a watcher whose
+					// newest candidate is already claimed by a sibling Copilot in
+					// the same cwd can never bind — it retries the same claimed
+					// file forever instead of falling back to the next session.
+					for _, cand := range findCopilotEventsFiles(stateDir, cwd, watcherStart, resume) {
+						if !resume && copilotSessionEnded(cand.path) {
+							continue
 						}
-						// Persist the native session id (the session directory
-						// name) so a reopen can restore the exact session even
-						// when another Copilot pane shares the same cwd.
-						if sid := copilotSessionIDFromPath(cand.path); sid != "" {
-							agent.RecordExternalSession(sessionID, sid)
+						if ClaimSessionForLeaf(agentID, cwd, cand.path, sessionID) {
+							watchedFilePath = cand.path
+							lastFileSize = 0
+							replay = resume
+							lastActivity = time.Now()
+							silentTicks = 0
+							parseState.reset()
+							if notifyCh != nil {
+								notifier.Watch(watchedFilePath)
+							}
+							// Persist the native session id (the session directory
+							// name) so a reopen can restore the exact session even
+							// when another Copilot pane shares the same cwd.
+							if sid := copilotSessionIDFromPath(cand.path); sid != "" {
+								agent.RecordExternalSession(sessionID, sid)
+							}
+							break
 						}
-						break
 					}
-				}
 				}
 			}
 			if watchedFilePath != "" {
@@ -258,25 +393,39 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 					focused := agent.IsPtyFocused(sessionID)
 					lastPtyOut := agent.LastPtyActivity(sessionID)
 					if time.Since(lastPtyOut) < 3*time.Second || focused {
-						// Prefer sessions modified after this pane's last
-						// activity (a /new or a resumed session being written
-						// to again). Fall back to the full pool newest-first
-						// so a /resume that select an older, unchanged file
-						// can still be picked up. Either way, walk the whole
-						// list so an already-claimed newest doesn't block the
+						// Only sessions modified after this pane's last
+						// activity are candidates: /new writes a fresh
+						// events.jsonl and /resume appends a session.resume
+						// event to the resumed one, so both show up here.
+						// (Falling back to every session in the cwd, as this
+						// code once did, re-bound a pane running a long tool —
+						// silent transcript, busy PTY — to an old finished
+						// session, flipping the card to idle and firing a
+						// bogus "finished" notification.) Walk the whole list
+						// so an already-claimed newest doesn't block the
 						// watcher from claiming the next candidate.
 						recent := findCopilotEventsFiles(stateDir, cwd, lastActivity, false)
-						if len(recent) == 0 {
-							recent = findCopilotEventsFiles(stateDir, cwd, lastActivity, true)
-						}
 						for _, cand := range recent {
 							if cand.path == watchedFilePath {
+								continue
+							}
+							// A session whose last event is session.shutdown
+							// has ended: its process exited (e.g. a sibling
+							// pane that was closed or killed, which writes
+							// the shutdown as it dies and thereby looks
+							// "recently modified"). It can never be the
+							// session this live pane is running.
+							if copilotSessionEnded(cand.path) {
 								continue
 							}
 							if ClaimSessionForLeaf(agentID, cwd, cand.path, sessionID) {
 								UnclaimSession(agentID, cwd, watchedFilePath)
 								watchedFilePath = cand.path
 								lastFileSize = 0
+								// /new creates a session that started after this
+								// pane's last activity: its first read is live.
+								// /resume re-attaches to an older one: replay.
+								replay = !sessionStartedAfter(copilotSessionStart(cand.path), lastActivity)
 								silentTicks = 0
 								parseState.reset()
 								if notifyCh != nil {
@@ -293,6 +442,52 @@ func (w *CopilotWatcher) Watch(ctx context.Context, sessionID string, cwd string
 			}
 		}
 	}
+}
+
+// copilotSessionStart returns the creation time recorded in the first line
+// (session.start) of an events.jsonl, or the zero time.
+func copilotSessionStart(eventsPath string) time.Time {
+	head, err := ReadFirstLine(eventsPath)
+	if err != nil {
+		return time.Time{}
+	}
+	var ev struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	}
+	if json.Unmarshal([]byte(head), &ev) != nil || ev.Type != "session.start" {
+		return time.Time{}
+	}
+	t, _ := time.Parse(time.RFC3339Nano, ev.Timestamp)
+	return t
+}
+
+// copilotSessionEnded reports whether the last event in an events.jsonl is
+// session.shutdown, i.e. the Copilot process that owned the session exited.
+// Resuming the session appends session.resume after it, so a resumed session
+// is not considered ended.
+func copilotSessionEnded(eventsPath string) bool {
+	info, err := os.Stat(eventsPath)
+	if err != nil {
+		return false
+	}
+	const tailBytes = 64 * 1024
+	start := info.Size() - tailBytes
+	if start < 0 {
+		start = 0
+	}
+	lines, err := ReadNewLines(eventsPath, start)
+	if err != nil {
+		return false
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev copilotEvent
+		if json.Unmarshal([]byte(lines[i]), &ev) != nil {
+			continue // partial first line of the tail window
+		}
+		return ev.Type == "session.shutdown"
+	}
+	return false
 }
 
 // copilotSessionIDFromPath returns the Copilot session id (the parent
@@ -425,10 +620,9 @@ func copilotEventsMatchesCwd(eventsPath, cwd string) bool {
 
 // parseCopilotEvents reads new lines from the events.jsonl file and derives
 // the current status from the last meaningful event. The supplied state is
-// updated in place and must survive across incremental reads: Copilot writes
-// subagent lifecycle events (subagent.started/completed) in the parent's
-// stream, so the watcher has to remember active subagents to avoid reporting
-// the parent's intermediate pause as "idle"/finished.
+// updated in place and must survive across incremental reads (see
+// copilotWatchState): subagent lifecycle, pending permission prompts and
+// whether the last model call requested tools all span several reads.
 func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state *copilotWatchState, callback func(status, tool, details, title string)) {
 	lines, err := ReadNewLines(filePath, offset)
 	if err != nil || len(lines) == 0 {
@@ -437,17 +631,21 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 
 	// Forward pass: collect the first user prompt as the session title
 	// fallback, retain the final visible assistant response, and maintain the
-	// set of active subagents. Copilot follows a visible assistant response
-	// with assistant.turn_end, which carries no text.
+	// cross-read state (subagents, pending permissions, tool names).
+	state.sawWork = false
 	var sessionTitle string
-	var lastAssistantText string
 	for _, line := range lines {
 		var ev copilotEvent
 		if json.Unmarshal([]byte(line), &ev) != nil {
 			continue
 		}
 		switch ev.Type {
+		case "assistant.turn_start", "tool.execution_complete", "subagent.started", "subagent.completed":
+			state.sawWork = true
+		}
+		switch ev.Type {
 		case "user.message":
+			state.sawWork = true
 			var msg copilotUserMsg
 			if json.Unmarshal(ev.Data, &msg) == nil {
 				prompt := msg.Content
@@ -458,11 +656,79 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 					sessionTitle = CleanPrompt(prompt)
 				}
 			}
+			state.clearPermissions()
+			state.lastMsgHadTools = false
+			state.toolFailure, state.toolFailureTool = "", ""
+			state.lastText = ""
 		case "assistant.message":
+			state.sawWork = true
 			var msg copilotAssistantMsg
-			if json.Unmarshal(ev.Data, &msg) == nil && msg.Content != "" {
-				lastAssistantText = msg.Content
+			if json.Unmarshal(ev.Data, &msg) == nil {
+				if msg.Content != "" {
+					state.lastText = msg.Content
+				}
+				state.lastMsgHadTools = len(msg.ToolRequests) > 0
+				for _, tr := range msg.ToolRequests {
+					if tr.ToolCallID != "" && tr.Name != "" {
+						if state.toolNames == nil {
+							state.toolNames = make(map[string]string)
+						}
+						state.toolNames[tr.ToolCallID] = tr.Name
+					}
+				}
 			}
+		case "tool.execution_complete":
+			var tc copilotToolComplete
+			if json.Unmarshal(ev.Data, &tc) == nil {
+				if errText := tc.failure(); errText != "" {
+					state.toolFailure, state.toolFailureTool = errText, state.toolNames[tc.ToolCallID]
+				}
+			}
+		case "tool.execution_start":
+			state.toolFailure, state.toolFailureTool = "", ""
+			var exec copilotToolExecution
+			if json.Unmarshal(ev.Data, &exec) == nil && exec.ToolCallID != "" && exec.ToolName != "" {
+				if state.toolNames == nil {
+					state.toolNames = make(map[string]string)
+				}
+				state.toolNames[exec.ToolCallID] = exec.ToolName
+			}
+		case "permission.requested":
+			var pr copilotPermissionRequested
+			if json.Unmarshal(ev.Data, &pr) == nil && pr.RequestID != "" && !pr.ResolvedByHook {
+				if state.pendingPermissions == nil {
+					state.pendingPermissions = make(map[string]copilotPendingPermission)
+				}
+				req := pr.PermissionRequest
+				tool := state.toolNames[req.ToolCallID]
+				if tool == "" {
+					tool = req.ToolName
+				}
+				if tool == "" {
+					tool = req.Kind
+				}
+				details := req.FullCommandText
+				if details == "" {
+					details = req.Path
+				}
+				if details == "" {
+					details = req.FileName
+				}
+				if details == "" {
+					details = req.Intention
+				}
+				state.pendingPermissions[pr.RequestID] = copilotPendingPermission{tool: tool, details: details}
+				state.pendingOrder = append(state.pendingOrder, pr.RequestID)
+			}
+		case "permission.completed":
+			var pc copilotPermissionCompleted
+			if json.Unmarshal(ev.Data, &pc) == nil {
+				delete(state.pendingPermissions, pc.RequestID)
+			}
+		case "abort", "session.error", "session.shutdown":
+			// The turn ended: any prompt still on screen was dismissed.
+			state.clearPermissions()
+			state.toolFailure, state.toolFailureTool = "", ""
 		case "subagent.started":
 			var sub copilotSubagentEvent
 			if json.Unmarshal(ev.Data, &sub) == nil && sub.ToolCallID != "" {
@@ -471,7 +737,7 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 				}
 				state.activeSubagents[sub.ToolCallID] = sub.AgentName
 			}
-		case "subagent.completed":
+		case "subagent.completed", "subagent.failed":
 			var sub copilotSubagentEvent
 			if json.Unmarshal(ev.Data, &sub) == nil && sub.ToolCallID != "" {
 				delete(state.activeSubagents, sub.ToolCallID)
@@ -479,9 +745,27 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 		}
 	}
 
+	// A permission prompt still awaiting the user's decision dominates: the
+	// agent is blocked until it is answered, whatever event preceded it.
+	if p, ok := state.latestPendingPermission(); ok {
+		callback("waiting_input", p.tool, p.details, sessionTitle)
+		return
+	}
+
+	// working reports the in-turn "model is working" state: thinking, or
+	// tool_failed while a failed tool call from this turn is still the latest
+	// tool outcome.
+	working := func(details string) {
+		if state.toolFailure != "" {
+			callback("tool_failed", state.toolFailureTool, state.toolFailure, sessionTitle)
+			return
+		}
+		callback("thinking", "", details, sessionTitle)
+	}
+
 	// Reverse pass: determine status from the last meaningful event.
-	// Skip intermediate events (hooks, tool execution_start/complete) that
-	// don't represent agent status.
+	// Skip intermediate events (hooks, usage records, session.*) that don't
+	// represent agent status.
 	for i := len(lines) - 1; i >= 0; i-- {
 		var ev copilotEvent
 		if json.Unmarshal([]byte(lines[i]), &ev) != nil {
@@ -489,6 +773,13 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 		}
 		switch ev.Type {
 		case "assistant.turn_end":
+			// Copilot ends a "turn" after every model call. When the last
+			// assistant message requested tools, the model is about to be
+			// called again with the tool results: the user's turn is NOT over.
+			if state.lastMsgHadTools {
+				working("")
+				return
+			}
 			// The parent agent may finish one of several turns (e.g. the
 			// turn that delegated work to a subagent) while background work
 			// is still running. In that case the whole session is NOT done:
@@ -497,10 +788,11 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 			// than "executing"/"background_task") also preserves the true
 			// finished notification once the subagent actually completes.
 			if len(state.activeSubagents) > 0 {
-				callback("thinking", "", lastAssistantText, sessionTitle)
+				callback("thinking", "", state.lastText, sessionTitle)
 				return
 			}
-			callback("idle", "", lastAssistantText, sessionTitle)
+			state.toolFailure, state.toolFailureTool = "", ""
+			callback("idle", "", state.lastText, sessionTitle)
 			return
 		case "abort":
 			// The user aborted the turn. Report "interrupted" (not idle) so
@@ -527,8 +819,9 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 			callback("waiting_input", "ask_user", question, sessionTitle)
 			return
 		case "tool.result":
-			// A failed tool result carries is_error:true (or an error object).
-			// Surface it as tool_failed; otherwise the agent continues thinking.
+			// Legacy event shape: a failed tool result carries is_error:true
+			// (or an error object). Surface it as tool_failed; otherwise the
+			// agent continues thinking.
 			var tr copilotToolResult
 			if json.Unmarshal(ev.Data, &tr) == nil && tr.IsError {
 				errText := "tool call failed"
@@ -542,21 +835,49 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 			}
 			callback("thinking", "", "", sessionTitle)
 			return
+		case "tool.execution_complete":
+			// The event Copilot CLI persists when a tool finishes. A failed
+			// call (success:false, or a shell command exiting non-zero) is
+			// surfaced as tool_failed until the agent moves on.
+			var tc copilotToolComplete
+			if json.Unmarshal(ev.Data, &tc) == nil {
+				if errText := tc.failure(); errText != "" {
+					callback("tool_failed", state.toolNames[tc.ToolCallID], errText, sessionTitle)
+					return
+				}
+			}
+			callback("thinking", "", "", sessionTitle)
+			return
+		case "permission.completed":
+			// The user (or a rule) answered the permission prompt. Approved:
+			// the tool is now running. Denied: the model gets the rejection
+			// and continues.
+			var pc copilotPermissionCompleted
+			if json.Unmarshal(ev.Data, &pc) == nil {
+				if strings.HasPrefix(pc.Result.Kind, "approved") {
+					callback("executing", state.toolNames[pc.ToolCallID], "", sessionTitle)
+					return
+				}
+			}
+			callback("thinking", "", "", sessionTitle)
+			return
 		case "tool.execution_start":
 			// Copilot emits this immediately before it starts running a tool.
 			// For user-input tools (ask_user, exit_plan_mode) "starting" means
 			// the assistant is blocked waiting for the user to answer; it
-			// never executes autonomously. This is a backstop for the
-			// assistant.message tool-request case above: it works even when
-			// the assistant.message event isn't present (e.g. a plan-mode
-			// exit whose only durable trace is the execution event).
+			// never executes autonomously. This also covers a plan-mode exit
+			// whose only durable trace is the execution event.
 			var exec copilotToolExecution
-			if json.Unmarshal(ev.Data, &exec) == nil && isUserInputTool(strings.ToLower(exec.ToolName)) {
-				callback("waiting_input", exec.ToolName, "", sessionTitle)
-				return
+			if json.Unmarshal(ev.Data, &exec) == nil {
+				if isUserInputTool(strings.ToLower(exec.ToolName)) {
+					callback("waiting_input", exec.ToolName, "", sessionTitle)
+					return
+				}
+				if exec.ToolName != "" {
+					callback("executing", exec.ToolName, "", sessionTitle)
+					return
+				}
 			}
-			// Non-user-input tools are intermediate and don't represent
-			// agent status; fall through.
 		case "assistant.message":
 			var msg copilotAssistantMsg
 			if json.Unmarshal(ev.Data, &msg) != nil {
@@ -568,43 +889,29 @@ func (w *CopilotWatcher) parseCopilotEvents(filePath string, offset int64, state
 				// Canonical user-input tools (ask_user) and plan-approval
 				// tools (exit_plan_mode) block on the user: the assistant has
 				// finished (or paused) its work and is now waiting for input,
-				// not executing. Shared with the tool.execution_start case
-				// below so the status holds even if the message carrying the
-				// tool request is skipped.
+				// not executing.
 				if isUserInputTool(strings.ToLower(toolName)) {
 					status = "waiting_input"
 				}
 				callback(status, toolName, "", sessionTitle)
 				return
 			}
-			if msg.ReasoningText != "" && msg.Content == "" {
-				callback("thinking", "", "", sessionTitle)
-				return
-			}
-			if msg.Content != "" {
-				// Only canonical user-input tools (ask_user, handled above)
-				// signal waiting_input. Keyword scanning of assistant text for
-				// "confirm"/"approve"/"[y/n]" was removed: it produced false
-				// positives when the assistant's explanation happened to use
-				// those words.
-				if len(state.activeSubagents) > 0 {
-					callback("thinking", "", msg.Content, sessionTitle)
-					return
-				}
-				callback("idle", "", msg.Content, sessionTitle)
-				return
-			}
-			callback("thinking", "", "", sessionTitle)
+			// A message without tool requests is the model's final answer for
+			// this round-trip, but the turn is only over at assistant.turn_end
+			// (written right after). Keep reporting "thinking" until then so a
+			// read that lands between the two never flips to idle early.
+			// Keyword scanning of assistant text for "confirm"/"approve" was
+			// removed: it produced false positives.
+			working(msg.Content)
 			return
 		case "assistant.turn_start":
-			callback("thinking", "", "", sessionTitle)
+			working("")
 			return
 		case "user.message":
 			callback("thinking", "", "", sessionTitle)
 			return
 		}
-		// Skip hook.start, hook.end, tool.execution_start,
-		// tool.execution_complete, session.*, system.* — they are
-		// intermediate and don't represent agent status.
+		// Skip hook.start, hook.end, session.*, system.*, usage records —
+		// they are intermediate and don't represent agent status.
 	}
 }
