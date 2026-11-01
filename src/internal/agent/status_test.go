@@ -207,3 +207,60 @@ func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struc
 		}
 	}
 }
+
+func TestRecordPtyAnswerInputTracksSubmitsAndClicks(t *testing.T) {
+	const id = "submit-leaf"
+	SetPtySubmitForTest(id, time.Time{})
+	defer SetPtySubmitForTest(id, time.Time{})
+	t0 := time.Now()
+
+	// Typing with an arrow key, a backspace and a bracketed paste, then Enter.
+	recordPtyAnswerInput(id, "hellx\x1b[D", t0)
+	recordPtyAnswerInput(id, "\x7fo \x1b[200~world\x1b[201~", t0)
+	recordPtyAnswerInput(id, "\r", t0.Add(time.Millisecond))
+	if got := LastPtySubmit(id); !got.Equal(t0.Add(time.Millisecond)) {
+		t.Fatalf("LastPtySubmit = %v", got)
+	}
+	ptySubmitMu.RLock()
+	text := ptySubmits[id][0].text
+	ptySubmitMu.RUnlock()
+	if text != "hello world" {
+		t.Fatalf("submitted text = %q, want %q", text, "hello world")
+	}
+
+	// Mouse motion does not count as an answer; a button release does.
+	before := LastPtyAnswer(id)
+	recordPtyAnswerInput(id, "\x1b[<35;10;5M", t0.Add(time.Second))
+	if !LastPtyAnswer(id).Equal(before) {
+		t.Fatal("mouse motion must not count as an answer")
+	}
+	recordPtyAnswerInput(id, "\x1b[<0;10;5M\x1b[<0;10;5m", t0.Add(2*time.Second))
+	if got := LastPtyAnswer(id); !got.Equal(t0.Add(2 * time.Second)) {
+		t.Fatalf("click not recorded as answer: %v", got)
+	}
+}
+
+func TestContainsPtyPromptMarkerOpenCodePermission(t *testing.T) {
+	if !containsPtyPromptMarker("\x1b[38;5;255m\x1b[48;5;233mPermission required\x1b[0m") {
+		t.Fatal("OpenCode permission dialog header not detected")
+	}
+}
+
+func TestWasWorkingForFinished(t *testing.T) {
+	for _, c := range []struct {
+		status, tool string
+		want         bool
+	}{
+		{"thinking", "", true},
+		{"executing", "bash", true},
+		{"tool_failed", "read", true},
+		{"executing", "task", false},
+		{"waiting_input", "question", false},
+		{"interrupted", "", false},
+		{"idle", "", false},
+	} {
+		if got := wasWorkingForFinished(AgentStatus{Status: c.status, Tool: c.tool}); got != c.want {
+			t.Fatalf("%s/%s: got %v want %v", c.status, c.tool, got, c.want)
+		}
+	}
+}
