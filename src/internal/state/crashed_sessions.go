@@ -65,7 +65,7 @@ func (s *Store) SaveCrashedSession(c CrashedSession) {
 		   exit_reason=excluded.exit_reason, started_at=excluded.started_at,
 		   ended_at=excluded.ended_at, sequence=excluded.sequence`,
 		c.SessionID, c.AgentID, c.Cwd, c.Title, c.Tool, c.Details, c.Status,
-		c.LastColumn, c.ExitCode, c.ExitReason, c.StartedAt.UTC(), c.EndedAt.UTC(), c.Sequence,
+		c.LastColumn, c.ExitCode, c.ExitReason, c.StartedAt.UTC().Format(time.RFC3339Nano), c.EndedAt.UTC().Format(time.RFC3339Nano), c.Sequence,
 	)
 }
 
@@ -124,13 +124,13 @@ func parseTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		// Fall back to the SQLite default datetime format.
-		t, err = time.Parse("2006-01-02 15:04:05", s)
-		if err != nil {
-			return time.Time{}
+	// RFC 3339 (written by SaveCrashedSession), Go's time.Time String()
+	// layout (how the SQLite driver serialized time.Time values in rows
+	// saved by older versions), then the SQLite default datetime format.
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999 -0700 MST", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
 		}
 	}
-	return t
+	return time.Time{}
 }
