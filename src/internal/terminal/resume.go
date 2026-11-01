@@ -62,7 +62,14 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return injectCodexResume(cmd, "")
 	case "copilot":
-		// copilot --allow-all-tools --allow-all-paths -> add --continue
+		// Copilot CLI: --resume <session-id> reattaches to an exact session
+		// (the session-state directory name the status watcher records);
+		// --continue resumes the most recent one, which is wrong when
+		// several Copilot panes share a cwd.
+		if externalID != "" {
+			cmd = appendNonFlag(cmd, "--resume")
+			return append(cmd, externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "agy":
 		// Antigravity: --conversation <id> reattaches to an exact conversation;
@@ -103,9 +110,14 @@ func resumeCmdForAgent(store *state.Store, leafID string, cmd []string) []string
 		}
 		return appendNonFlag(cmd, "--continue")
 	case "command-code", "commandcode":
-		// Command Code: --continue / -c resumes the most recent session in
-		// the current directory. The CLI does not expose an exact-session-id
-		// resume flag for arbitrary external ids, so fall back to it.
+		// Command Code: --session <transcript path|id> resumes an exact
+		// session (the watcher records the transcript path); --continue / -c
+		// resumes the most recent session in the current directory, which is
+		// wrong when several Command Code panes share a cwd.
+		if externalID != "" {
+			cmd = appendNonFlag(cmd, "--session")
+			return append(cmd, externalID)
+		}
 		return appendNonFlag(cmd, "--continue")
 	case "fx":
 		// Fx: --resume <session-id> reattaches to an exact session;
