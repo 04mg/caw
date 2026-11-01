@@ -65,6 +65,10 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	if m.store != nil && id != "" && len(cmd) > 0 {
 		cmd = resumeCmdForAgent(m.store, id, cmd)
 	}
+	// A fresh Claude launch gets a pinned --session-id so its status watcher
+	// can bind to the exact transcript (no-op for resumed launches, which
+	// already carry --resume/--continue, and for non-Claude commands).
+	cmd = pinClaudeSession(cmd)
 
 	ps, err := startPty(cwd, cmd, req.Env)
 	if err != nil {

@@ -938,10 +938,12 @@ export function AppLayout() {
           const prevS = prev.status
           const nextS = next.status
 
-          // If the agent goes back to a working state, cancel any pending
-          // "finished" notification — it was a transient idle blip, not a
-          // real completion.
-          if (nextS === 'thinking' || nextS === 'executing' || nextS === 'tool_failed' || nextS === 'waiting_input' || nextS === 'interrupted') {
+          // If the agent leaves idle before the debounce elapses — back to
+          // work, blocked on a question/permission, interrupted, failed or
+          // crashed — cancel any pending "finished" notification: it was a
+          // transient idle blip, not a real completion. (Mirrors the
+          // backend push dispatcher, which cancels on all of these.)
+          if (nextS !== 'idle' && nextS !== 'stopped') {
             const timer = pendingFinishedRef.current[sessionId]
             if (timer) {
               clearTimeout(timer)
