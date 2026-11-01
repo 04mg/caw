@@ -255,7 +255,7 @@ export async function createKrokoRecognizer(): Promise<any> {
 	const tokensBuf = await readCacheEntry('tokens')
 
 	if (!encoderBuf || !decoderBuf || !joinerBuf || !tokensBuf) {
-		throw new Error('Model not downloaded')
+		throw new Error('Voice model not downloaded (Settings › Voice)')
 	}
 
 	const fs = mod.FS

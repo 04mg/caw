@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useKrokoVoiceMode, subscribeKrokoVoice, getKrokoVoiceState } from './useKrokoVoiceMode'
 import { getVoiceMode } from '../services/krokoAsr'
+import { joinTranscript } from '../services/transcript'
 
 type VoicePhase = 'idle' | 'loading' | 'listening' | 'review'
 
@@ -45,10 +46,20 @@ function browserSetState(partial: Partial<VoiceModeState>) {
 	browserNotify()
 }
 
+// State of whichever engine has a session in progress; falls back to the
+// configured engine when both are idle. Reading the configured engine alone
+// went wrong when the setting changed mid-session (or a component rendered
+// before the change): the UI showed the idle engine while the other one kept
+// the microphone open.
+function activeVoiceState(): VoiceModeState {
+	if (browserGlobalState.phase !== 'idle') return browserGlobalState
+	const kroko = getKrokoVoiceState()
+	if (kroko.phase !== 'idle') return kroko
+	return getVoiceMode() === 'local' ? kroko : browserGlobalState
+}
+
 export function getVoicePhase(): VoicePhase {
-	const mode = getVoiceMode()
-	if (mode === 'local') return getKrokoVoiceState().phase
-	return browserGlobalState.phase
+	return activeVoiceState().phase
 }
 
 const SpeechRecognitionAPI =
@@ -61,110 +72,185 @@ export function isVoiceSupported(): boolean {
 	return !!SpeechRecognitionAPI
 }
 
-function BrowserVoiceMode() {
-	const speechRef = useRef<any>(null)
-	const finalizedRef = useRef('')
-
-	const start = useCallback(async () => {
-		if (!SpeechRecognitionAPI) {
-			browserSetState({ error: 'Voice input is not supported in this browser' })
-			return
-		}
-
-		const lang = localStorage.getItem('caw:voiceLanguage') || ''
-		const recognition = new SpeechRecognitionAPI()
-		recognition.continuous = true
-		recognition.interimResults = true
-		if (lang) recognition.lang = lang
-
-		finalizedRef.current = ''
-
-		recognition.onresult = (event: any) => {
-			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const result = event.results[i]
-				if (result.isFinal) {
-					finalizedRef.current += result[0].transcript
-				}
-			}
-			let interimText = ''
-			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const result = event.results[i]
-				if (!result.isFinal) {
-					interimText += result[0].transcript
-				}
-			}
-			browserSetState({ transcript: finalizedRef.current + interimText })
-		}
-
-		recognition.onerror = (event: any) => {
-			if (event.error === 'no-speech' || event.error === 'aborted') return
-			browserSetState({
-				error: event.error === 'not-allowed'
-					? 'Microphone permission denied'
-					: `Speech error: ${event.error}`,
-				phase: 'idle',
-			})
-		}
-
-		recognition.onend = () => {
-			if (browserGlobalState.phase === 'listening') {
-				try {
-					recognition.start()
-				} catch {
-					browserSetState({ phase: 'idle' })
-				}
-				return
-			}
-		}
-
-		try {
-			recognition.start()
-			speechRef.current = recognition
-			browserSetState({ phase: 'listening', transcript: '', error: null })
-		} catch {
-			browserSetState({ error: 'Failed to start voice recognition' })
-		}
-	}, [])
-
-	const stop = useCallback((autoSend?: { send: (text: string) => void }) => {
-		if (speechRef.current) {
-			try {
-				speechRef.current.stop()
-			} catch {}
-			speechRef.current = null
-		}
-		const text = browserGlobalState.transcript.trim()
-		if (!text) {
-			browserSetState({ phase: 'idle', transcript: '', error: null })
-			return
-		}
-		if (autoSend) {
-			autoSend.send(text)
-			finalizedRef.current = ''
-			browserSetState({ phase: 'idle', transcript: '', error: null })
-		} else {
-			browserSetState({ phase: 'review' })
-		}
-	}, [])
-
-	const reset = useCallback(() => {
-		if (speechRef.current) {
-			try {
-				speechRef.current.stop()
-			} catch {}
-			speechRef.current = null
-		}
-		finalizedRef.current = ''
-		browserSetState({ phase: 'idle', transcript: '', error: null })
-	}, [])
-
-	return { start, stop, reset }
+// Errors reported by the Web Speech API, mapped to messages a user can act on.
+// Anything not listed falls back to the raw error code.
+function speechErrorMessage(code: string): string {
+	switch (code) {
+		case 'not-allowed':
+			return window.isSecureContext === false
+				? 'Microphone needs HTTPS (or localhost)'
+				: 'Microphone permission denied'
+		case 'service-not-allowed':
+			return 'Speech recognition is disabled on this device'
+		case 'audio-capture':
+			return 'No microphone found'
+		case 'network':
+			return 'Speech service unreachable (network error)'
+		case 'language-not-supported':
+			return 'Voice language not supported by this browser'
+		default:
+			return `Speech error: ${code}`
+	}
 }
+
+// A session that ends this quickly after starting, several times in a row,
+// means the engine is failing rather than timing out on silence; restarting
+// forever would just loop (and beep on Android each time).
+const QUICK_END_MS = 1000
+const MAX_QUICK_RESTARTS = 3
+
+// The browser engine's session lives at module level, like its state: several
+// components call useVoiceMode() (status bar, mobile control bar, hotkeys), and
+// a session started from one must be stoppable from any other. Per-hook refs
+// left the recognizer running when e.g. a click started it and Alt+M stopped it.
+let activeRecognition: SpeechRecognitionInstance | null = null
+// A recognizer stopped into the review phase. It stays attached until the
+// review ends so the engine can still deliver the final text for the pending
+// interim result.
+let reviewRecognition: SpeechRecognitionInstance | null = null
+let finalized = ''
+
+function detach(recognition: SpeechRecognitionInstance | null) {
+	if (!recognition) return
+	recognition.onresult = null
+	recognition.onerror = null
+	recognition.onend = null
+}
+
+function abortRecognition(recognition: SpeechRecognitionInstance | null) {
+	if (!recognition) return
+	detach(recognition)
+	try {
+		recognition.abort()
+	} catch {}
+}
+
+function browserStart() {
+	if (!SpeechRecognitionAPI) {
+		browserSetState({ error: 'Voice input is not supported in this browser' })
+		return
+	}
+	if (window.isSecureContext === false) {
+		browserSetState({ error: 'Microphone needs HTTPS (or localhost)' })
+		return
+	}
+
+	abortRecognition(activeRecognition)
+	abortRecognition(reviewRecognition)
+	activeRecognition = null
+	reviewRecognition = null
+
+	const lang = localStorage.getItem('caw:voiceLanguage') || ''
+	const recognition = new SpeechRecognitionAPI()
+	recognition.continuous = true
+	recognition.interimResults = true
+	if (lang) recognition.lang = lang
+
+	finalized = ''
+	// Interim text of the running session. Committed when the engine ends a
+	// session on its own (mobile engines do this after short pauses) so words
+	// spoken right before the auto-restart aren't lost.
+	let interim = ''
+	let startedAt = Date.now()
+	let quickEnds = 0
+
+	recognition.onresult = (event: any) => {
+		for (let i = event.resultIndex; i < event.results.length; i++) {
+			const result = event.results[i]
+			if (result.isFinal) {
+				finalized = joinTranscript(finalized, result[0].transcript)
+			}
+		}
+		let interimText = ''
+		for (let i = event.resultIndex; i < event.results.length; i++) {
+			const result = event.results[i]
+			if (!result.isFinal) {
+				interimText += result[0].transcript
+			}
+		}
+		interim = interimText
+		quickEnds = 0
+		browserSetState({ transcript: joinTranscript(finalized, interimText) })
+	}
+
+	recognition.onerror = (event: any) => {
+		if (event.error === 'no-speech' || event.error === 'aborted') return
+		if (activeRecognition === recognition) activeRecognition = null
+		abortRecognition(recognition)
+		browserSetState({ error: speechErrorMessage(event.error), phase: 'idle' })
+	}
+
+	recognition.onend = () => {
+		if (activeRecognition !== recognition || browserGlobalState.phase !== 'listening') return
+		// Continuous recognition still ends on its own (silence timeouts,
+		// mobile engines after every utterance): restart to keep listening.
+		if (interim) {
+			finalized = joinTranscript(finalized, interim)
+			interim = ''
+		}
+		quickEnds = Date.now() - startedAt < QUICK_END_MS ? quickEnds + 1 : 0
+		if (quickEnds >= MAX_QUICK_RESTARTS) {
+			activeRecognition = null
+			detach(recognition)
+			browserSetState({ phase: 'idle', error: 'Voice recognition keeps stopping. Try again.' })
+			return
+		}
+		try {
+			startedAt = Date.now()
+			recognition.start()
+		} catch {
+			activeRecognition = null
+			detach(recognition)
+			browserSetState({ phase: 'idle', error: 'Voice recognition stopped unexpectedly' })
+		}
+	}
+
+	try {
+		recognition.start()
+		activeRecognition = recognition
+		browserSetState({ phase: 'listening', transcript: '', error: null })
+	} catch {
+		detach(recognition)
+		browserSetState({ error: 'Failed to start voice recognition' })
+	}
+}
+
+function browserStop(autoSend?: { send: (text: string) => void }) {
+	const recognition = activeRecognition
+	activeRecognition = null
+	if (recognition) {
+		recognition.onend = null
+		recognition.onerror = null
+		try {
+			recognition.stop()
+		} catch {}
+	}
+	const text = browserGlobalState.transcript.trim()
+	if (!text || autoSend) {
+		detach(recognition)
+		finalized = ''
+		browserSetState({ phase: 'idle', transcript: '', error: null })
+		if (text && autoSend) autoSend.send(text)
+		return
+	}
+	reviewRecognition = recognition
+	browserSetState({ phase: 'review' })
+}
+
+function browserReset() {
+	abortRecognition(activeRecognition)
+	abortRecognition(reviewRecognition)
+	activeRecognition = null
+	reviewRecognition = null
+	finalized = ''
+	browserSetState({ phase: 'idle', transcript: '', error: null })
+}
+
+const browser = { start: browserStart, stop: browserStop, reset: browserReset }
 
 export function useVoiceMode() {
 	const [, forceRender] = useState(0)
 	const kroko = useKrokoVoiceMode()
-	const browser = useRef(BrowserVoiceMode()).current
 
 	useEffect(() => {
 		const browserListener = () => forceRender((n) => n + 1)
@@ -178,36 +264,33 @@ export function useVoiceMode() {
 		}
 	}, [])
 
-	const mode = getVoiceMode()
-
 	const start = useCallback(async () => {
-		if (mode === 'local') {
+		// Resolve the engine at call time: the setting can change while this
+		// component stays mounted.
+		if (getVoiceMode() === 'local') {
 			await kroko.start()
 		} else {
-			await browser.start()
+			browser.start()
 		}
-	}, [mode, kroko, browser])
+	}, [kroko])
 
 	const stop = useCallback(
 		(autoSend?: { send: (text: string) => void }) => {
-			if (mode === 'local') {
+			if (getKrokoVoiceState().phase !== 'idle') {
 				kroko.stop(autoSend)
 			} else {
 				browser.stop(autoSend)
 			}
 		},
-		[mode, kroko, browser],
+		[kroko],
 	)
 
 	const reset = useCallback(() => {
-		if (mode === 'local') {
-			kroko.reset()
-		} else {
-			browser.reset()
-		}
-	}, [mode, kroko, browser])
+		kroko.reset()
+		browser.reset()
+	}, [kroko])
 
-	const activeState = mode === 'local' ? getKrokoVoiceState() : browserGlobalState
+	const activeState = activeVoiceState()
 
 	return {
 		phase: activeState.phase,
