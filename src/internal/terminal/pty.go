@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/aymanbagabas/go-pty"
 )
@@ -56,7 +57,7 @@ func startPty(cwd string, cmdArgs []string, extraEnv [][]string) (*Pty, error) {
 		c = ptmx.Command(shell)
 	}
 	c.Dir = cwd
-	env := os.Environ()
+	env := sanitizeChildEnv(os.Environ())
 	env = append(env, "TERM=xterm-256color")
 	for _, kv := range extraEnv {
 		if len(kv) != 2 || kv[0] == "" {
@@ -122,4 +123,41 @@ func isExecutable(p string) bool {
 		return false
 	}
 	return !fi.IsDir() && fi.Mode().Perm()&0111 != 0
+}
+
+// inheritedAgentSessionVars are environment variables that coding-agent CLIs
+// set for their *own* child processes to mark them as nested sessions. When
+// Caw itself was started from inside such an agent (e.g. launched from a
+// Claude Code terminal), these leak into every PTY Caw spawns. Claude Code
+// then believes it is a nested child session and turns transcript saving off
+// ("Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker"),
+// which silently breaks Caw's transcript-based status tracking and resume.
+// They describe Caw's parent process, never the agent Caw is launching, so
+// they are dropped. Auth/config variables (CLAUDE_CODE_OAUTH_TOKEN,
+// CLAUDE_CODE_USE_BEDROCK, ...) are left untouched.
+var inheritedAgentSessionVars = map[string]bool{
+	"CLAUDECODE":                   true,
+	"CLAUDE_CODE_ENTRYPOINT":       true,
+	"CLAUDE_CODE_CHILD_SESSION":    true,
+	"CLAUDE_CODE_SESSION_ID":       true,
+	"CLAUDE_CODE_SESSION_ATTENDED": true,
+	"CLAUDE_CODE_MESSAGING_SOCKET": true,
+	"CLAUDE_CODE_MESSAGING_TOKEN":  true,
+	"CLAUDE_CODE_EXECPATH":         true,
+	"CLAUDE_PID":                   true,
+	"CLAUDE_EFFORT":                true,
+	"CLAUDE_CODE_SSE_PORT":         true,
+}
+
+// sanitizeChildEnv returns env without inheritedAgentSessionVars.
+func sanitizeChildEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if inheritedAgentSessionVars[k] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
