@@ -348,3 +348,41 @@ func TestCodexApprovalPromptMarkers(t *testing.T) {
 	}
 	ClearPtyPendingInput(id)
 }
+
+func TestRecordPtyAnswerInputTracksSubmitsAndClicks(t *testing.T) {
+	const id = "line-submit-leaf"
+	SetPtyLineSubmitForTest(id, time.Time{})
+	defer SetPtyLineSubmitForTest(id, time.Time{})
+	t0 := time.Now()
+
+	// Typing with an arrow key, a backspace and a bracketed paste, then Enter.
+	recordPtyAnswerInput(id, "hellx\x1b[D", t0)
+	recordPtyAnswerInput(id, "\x7fo \x1b[200~world\x1b[201~", t0)
+	recordPtyAnswerInput(id, "\r", t0.Add(time.Millisecond))
+	if got := LastPtyLineSubmit(id); !got.Equal(t0.Add(time.Millisecond)) {
+		t.Fatalf("LastPtySubmit = %v", got)
+	}
+	ptySubmitMu.RLock()
+	text := ptySubmits[id][0].text
+	ptySubmitMu.RUnlock()
+	if text != "hello world" {
+		t.Fatalf("submitted text = %q, want %q", text, "hello world")
+	}
+
+	// Mouse motion does not count as an answer; a button release does.
+	before := LastPtyAnswer(id)
+	recordPtyAnswerInput(id, "\x1b[<35;10;5M", t0.Add(time.Second))
+	if !LastPtyAnswer(id).Equal(before) {
+		t.Fatal("mouse motion must not count as an answer")
+	}
+	recordPtyAnswerInput(id, "\x1b[<0;10;5M\x1b[<0;10;5m", t0.Add(2*time.Second))
+	if got := LastPtyAnswer(id); !got.Equal(t0.Add(2 * time.Second)) {
+		t.Fatalf("click not recorded as answer: %v", got)
+	}
+}
+
+func TestContainsPtyPromptMarkerOpenCodePermission(t *testing.T) {
+	if !containsPtyPromptMarker("\x1b[38;5;255m\x1b[48;5;233mPermission required\x1b[0m") {
+		t.Fatal("OpenCode permission dialog header not detected")
+	}
+}
