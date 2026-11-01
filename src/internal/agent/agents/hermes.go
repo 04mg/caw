@@ -112,6 +112,9 @@ type hermesWatchState struct {
 	boundAt    float64 // unix seconds when sid was bound
 	lastState  string  // last status passed to the callback
 	lastReport hermesReport
+	// staleRowID is the latest message row of a resumed session at bind
+	// time; an unfinished turn in it belongs to the previous process.
+	staleRowID int64
 
 	// Sticky PTY interrupt (see applyInterrupt).
 	lastCtrlCSeen       time.Time
@@ -207,6 +210,15 @@ func (st *hermesWatchState) step(callback func(status, tool, details, title stri
 			return
 		}
 		st.bind(sid)
+		if st.resume {
+			// A resumed session may end in a turn the previous process never
+			// finished (Ctrl+C during the model wait persists only the
+			// prompt, a crash leaves a tool call). This process starts idle,
+			// so that row must not read as working.
+			if row, ok := hermesLatestRow(st.db, sid); ok {
+				st.staleRowID = row.ID
+			}
+		}
 	} else if next := st.successor(); next != "" {
 		UnclaimSession(hermesAgentID, hermesClaimCwd, st.sid)
 		st.bind(next)
@@ -220,6 +232,9 @@ func (st *hermesWatchState) step(callback func(status, tool, details, title stri
 		status = "idle"
 	} else {
 		status, tool, details = hermesStatusForRow(row)
+		if row.ID == st.staleRowID && hermesWorking(status) {
+			status, tool, details = "idle", "", ""
+		}
 		if status == "thinking" {
 			// The turn died on an API error: nothing is persisted after the
 			// prompt / tool result, only the log knows the turn is over.
@@ -258,7 +273,16 @@ func (st *hermesWatchState) bind(sid string) {
 	st.lastReport = hermesReport{}
 	st.interruptApplied = false
 	st.interruptBoundaryID = 0
+	st.staleRowID = 0
 	agent.RecordExternalSession(st.leaf, sid)
+}
+
+func hermesWorking(status string) bool {
+	switch status {
+	case "thinking", "executing", "tool_failed", "waiting_input":
+		return true
+	}
+	return false
 }
 
 // applyInterrupt honours a Ctrl+C sent into the PTY while the bound turn is
@@ -270,8 +294,7 @@ func (st *hermesWatchState) bind(sid string) {
 func (st *hermesWatchState) applyInterrupt(status string, row hermesRow) string {
 	if last := st.lastCtrlC(); last.After(st.lastCtrlCSeen) {
 		st.lastCtrlCSeen = last
-		switch st.lastState {
-		case "thinking", "executing", "tool_failed", "waiting_input":
+		if hermesWorking(st.lastState) {
 			st.interruptApplied = true
 			st.interruptBoundaryID = row.ID
 		}
@@ -279,11 +302,8 @@ func (st *hermesWatchState) applyInterrupt(status string, row hermesRow) string 
 	if st.interruptApplied && strings.EqualFold(row.Role, "user") && row.ID > st.interruptBoundaryID {
 		st.interruptApplied = false
 	}
-	if st.interruptApplied {
-		switch status {
-		case "thinking", "executing", "tool_failed", "waiting_input":
-			return "interrupted"
-		}
+	if st.interruptApplied && hermesWorking(status) {
+		return "interrupted"
 	}
 	return status
 }
