@@ -641,7 +641,11 @@ type piStatusEvent struct{ status, tool, details string }
 // retries can be counted.
 type piFormatParser struct {
 	maxRetries int
-	title      string
+	// title is the card title: explicitTitle when the transcript has one,
+	// else the latest user prompt (promptTitle).
+	title         string
+	explicitTitle string
+	promptTitle   string
 	// errStreak counts consecutive stopReason:"error" assistant messages
 	// since the last successful message.
 	errStreak int
@@ -659,6 +663,8 @@ func newPiFormatParser(maxRetries int) *piFormatParser {
 
 func (p *piFormatParser) resetSession() {
 	p.title = ""
+	p.explicitTitle = ""
+	p.promptTitle = ""
 	p.errStreak = 0
 	p.retrying = false
 	p.planPending = false
@@ -674,6 +680,7 @@ func (p *piFormatParser) refreshTitleFromHead(path string) {
 		return
 	}
 	if title, ok := parsePiFormatTitleLine(line); ok {
+		p.explicitTitle = title
 		p.title = title
 	}
 }
@@ -684,27 +691,29 @@ func (p *piFormatParser) refreshTitleFromHead(path string) {
 func (p *piFormatParser) parse(lines []string, historyBefore time.Time) []piStatusEvent {
 	for _, line := range lines {
 		if title, ok := parsePiFormatTitleLine(line); ok {
-			p.title = title
+			p.explicitTitle = title
 		}
 	}
-	if p.title == "" {
-		for _, line := range lines {
-			msg, ok := parseOnePiLogLine(line)
-			if !ok || !strings.EqualFold(msg.Role, "user") {
-				continue
-			}
-			for _, b := range msg.Content {
-				if b.Type == "text" && b.Text != "" {
-					if cleaned := CleanPrompt(b.Text); cleaned != "" {
-						p.title = cleaned
-						break
-					}
+	// Without an explicit title (omp's generated title, Pi's /name), the
+	// card and its notifications show the latest prompt the user sent.
+	for _, line := range lines {
+		msg, ok := parseOnePiLogLine(line)
+		if !ok || !strings.EqualFold(msg.Role, "user") {
+			continue
+		}
+		for _, b := range msg.Content {
+			if b.Type == "text" && b.Text != "" {
+				if cleaned := CleanPrompt(b.Text); cleaned != "" {
+					p.promptTitle = cleaned
+					break
 				}
 			}
-			if p.title != "" {
-				break
-			}
 		}
+	}
+	if p.explicitTitle != "" {
+		p.title = p.explicitTitle
+	} else {
+		p.title = p.promptTitle
 	}
 
 	var out []piStatusEvent
