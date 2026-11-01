@@ -207,3 +207,86 @@ func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struc
 		}
 	}
 }
+
+func TestHandlePtyInputRecordsSubmit(t *testing.T) {
+	const id = "submit-leaf"
+	SetPtySubmitForTest(id, time.Time{})
+	handlePtyInput(id, "hello")
+	if !LastPtySubmit(id).IsZero() {
+		t.Fatal("typing without Enter must not record a submit")
+	}
+	handlePtyInput(id, "\x1b[24;1R") // cursor position report from xterm
+	if !LastPtySubmit(id).IsZero() {
+		t.Fatal("terminal replies must not record a submit")
+	}
+	before := time.Now()
+	handlePtyInput(id, "\r")
+	if got := LastPtySubmit(id); got.Before(before) {
+		t.Fatalf("LastPtySubmit = %v, want >= %v", got, before)
+	}
+	SetPtySubmitForTest(id, time.Time{})
+}
+
+func TestPtySubmitOwnerPicksLatestEnterBeforeTurn(t *testing.T) {
+	const a, b, other = "owner-a", "owner-b", "owner-other-agent"
+	SetActiveSessionForTest(a, "codex")
+	SetActiveSessionForTest(b, "codex")
+	SetActiveSessionForTest(other, "claude")
+	t.Cleanup(func() {
+		for _, id := range []string{a, b, other} {
+			SetActiveSessionForTest(id, "")
+			SetPtySubmitForTest(id, time.Time{})
+		}
+	})
+	turn := time.Now()
+	SetPtySubmitForTest(a, turn.Add(-20*time.Second))
+	SetPtySubmitForTest(b, turn.Add(-time.Second))
+	// A more recent Enter in another agent's pane is ignored.
+	SetPtySubmitForTest(other, turn.Add(-100*time.Millisecond))
+	if got := PtySubmitOwner("codex", turn, time.Minute); got != b {
+		t.Fatalf("owner = %q, want %q", got, b)
+	}
+	// More typing in b after the turn started keeps the turn b's: its
+	// earlier Enter is remembered.
+	SetPtySubmitForTest(b, turn.Add(5*time.Second))
+	if got := PtySubmitOwner("codex", turn, time.Minute); got != b {
+		t.Fatalf("owner after more input = %q, want %q", got, b)
+	}
+	// An Enter after the turn started (beyond the slack) doesn't count.
+	SetPtySubmitForTest(b, time.Time{})
+	SetPtySubmitForTest(b, turn.Add(5*time.Second))
+	if got := PtySubmitOwner("codex", turn, time.Minute); got != a {
+		t.Fatalf("owner = %q, want %q", got, a)
+	}
+	// Too old.
+	if got := PtySubmitOwner("codex", turn, 10*time.Second); got != "" {
+		t.Fatalf("owner = %q, want none", got)
+	}
+}
+
+func TestCodexApprovalPromptMarkers(t *testing.T) {
+	for _, s := range []string{
+		"\x1b[1mWould you like to run the following command?\x1b[0m",
+		"Would you like to make the following edits?",
+		"Would you like to grant these permissions?",
+		"  Implement this plan?\r\n",
+	} {
+		if !containsPtyPromptMarker(s) {
+			t.Errorf("containsPtyPromptMarker(%q) = false, want true", s)
+		}
+	}
+	for _, m := range ptyPromptMarkers {
+		if len(m) >= ptyTailKeep {
+			t.Errorf("marker %q is longer than ptyTailKeep (%d)", m, ptyTailKeep)
+		}
+	}
+	// A marker split across two reads is still detected.
+	const id = "codex-split-marker"
+	SetPtyPendingInputForTest(id, time.Time{})
+	handlePtyOutput(id, "\x1b[2mWould you like to run the fol")
+	handlePtyOutput(id, "lowing command?\x1b[0m")
+	if LastPtyPendingInput(id).IsZero() {
+		t.Fatal("split marker not detected")
+	}
+	ClearPtyPendingInput(id)
+}
