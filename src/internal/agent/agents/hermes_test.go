@@ -241,7 +241,6 @@ func TestHermesSessionTitle(t *testing.T) {
 	}
 }
 
-
 func execHermesTestDB(t *testing.T, dbPath, q string, args ...any) {
 	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
@@ -757,4 +756,27 @@ func TestHermesWatchEndToEnd(t *testing.T) {
 	waitFor("interrupted")
 	cancel()
 	<-done
+}
+
+// A resumed session whose previous process was interrupted while waiting for
+// the model ends in a bare user row. The new process is idle: the stale row
+// must not read as "thinking", but the next prompt must.
+func TestHermesResumeIgnoresUnfinishedTurnOfPreviousProcess(t *testing.T) {
+	dbPath := createHermesTestDB(t)
+	now := nowSec()
+	insertHermesSession(t, dbPath, "r1", now-200, now-50, "")
+	insertHermesMessage(t, dbPath, "r1", "user", "CAWTEST:slow:60", "", "", now-60)
+	gate := false
+	st := newTestHermesState(t, dbPath, "leaf-stale", "/w", true, &gate)
+	st.persisted = "r1"
+	var sink hermesTestSink
+	st.step(sink.cb)
+	if st.sid != "r1" || sink.last() != "idle" {
+		t.Fatalf("sid=%q status=%q, want r1/idle", st.sid, sink.last())
+	}
+	insertHermesMessage(t, dbPath, "r1", "user", "next", "", "", nowSec())
+	st.step(sink.cb)
+	if sink.last() != "thinking" {
+		t.Fatalf("status after new prompt = %q, want thinking", sink.last())
+	}
 }
