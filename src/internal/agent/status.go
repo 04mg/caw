@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/04mg/caw/internal/push"
@@ -170,6 +172,15 @@ var (
 	// persist an interrupted turn to state.db).
 	ptyInterrupt   = make(map[string]time.Time)
 	ptyInterruptMu sync.RWMutex
+	// ptySubmit records the last time the user sent "answer-like" input into
+	// each leaf's PTY: Enter, a standalone ESC, Ctrl+C, or a single printable
+	// key (TUI option shortcuts such as "1"/"2"/"y"). Terminal-generated
+	// reports (focus in/out, cursor position, device attributes) and
+	// navigation escape sequences are NOT counted. Watchers use it to tell
+	// whether an interactive prompt seen in the PTY output has since been
+	// answered, and to attribute a mid-session /clear (new transcript) to the
+	// pane the user actually typed into. Guarded by ptyInterruptMu.
+	ptySubmit = make(map[string]time.Time)
 	// ptyEscapePending delays a standalone ESC long enough to distinguish it
 	// from the first byte of a fragmented terminal escape sequence.
 	ptyEscapePending = make(map[string]*time.Timer)
@@ -186,6 +197,9 @@ var (
 	// ReadLoop chunks so a prompt footer marker split across two chunks is
 	// still detected. Guarded by ptyPendingInputMu.
 	ptyOutputTail = make(map[string]string)
+	// ptyRawCarry holds an incomplete trailing escape sequence of a Claude
+	// leaf's previous output chunk. Guarded by ptyPendingInputMu.
+	ptyRawCarry = make(map[string]string)
 )
 
 // SetStatusMux wires the multiplexer into the agent package so that status
@@ -312,16 +326,25 @@ func handlePtyInput(id string, data string) {
 			timer.Stop()
 			delete(ptyEscapePending, id)
 		}
-		ptyInterrupt[id] = time.Now()
+		now := time.Now()
+		ptyInterrupt[id] = now
+		ptySubmit[id] = now
 		ptyInterruptMu.Unlock()
 		return
 	}
 
 	ptyInterruptMu.Lock()
 	if data != "\x1b" {
+		fragment := false
 		if timer := ptyEscapePending[id]; timer != nil {
+			// Continuation of an escape sequence split across reads
+			// (e.g. "\x1b" then "[A"): neither an interrupt nor an answer.
 			timer.Stop()
 			delete(ptyEscapePending, id)
+			fragment = true
+		}
+		if !fragment && isSubmitInput(data) {
+			ptySubmit[id] = time.Now()
 		}
 		ptyInterruptMu.Unlock()
 		return
@@ -333,7 +356,10 @@ func handlePtyInput(id string, data string) {
 		ptyInterruptMu.Lock()
 		if ptyEscapePending[id] != nil {
 			delete(ptyEscapePending, id)
-			ptyInterrupt[id] = time.Now()
+			now := time.Now()
+			ptyInterrupt[id] = now
+			// A standalone ESC also dismisses/answers an interactive prompt.
+			ptySubmit[id] = now
 		}
 		ptyInterruptMu.Unlock()
 	})
@@ -388,6 +414,12 @@ func ExplainStatuses() []ExplainStatus {
 		if p := LastPtyInterrupt(id); !p.IsZero() {
 			out[i].LastPtyInterrupt = p.UTC().Format(time.RFC3339)
 		}
+		if p := LastPtyPendingInput(id); !p.IsZero() {
+			out[i].LastPtyPrompt = p.UTC().Format(time.RFC3339Nano)
+		}
+		if p := LastPtySubmit(id); !p.IsZero() {
+			out[i].LastPtySubmit = p.UTC().Format(time.RFC3339Nano)
+		}
 	}
 	return out
 }
@@ -397,6 +429,79 @@ func isInterruptInput(data string) bool {
 		return true
 	}
 	return data == "\x1b"
+}
+
+// isSubmitInput reports whether PTY input bytes look like the user answering
+// or submitting something (see ptySubmit): Enter, Ctrl+C, or typed text.
+// Pure escape sequences (arrow keys, focus reports, cursor position reports,
+// bracketed-paste markers on their own) are not answers. A standalone ESC is
+// recorded by handlePtyInput once its debounce confirms it is not the start
+// of a fragmented escape sequence.
+func isSubmitInput(data string) bool {
+	if data == "" {
+		return false
+	}
+	if strings.ContainsAny(data, "\r\n\x03") {
+		return true
+	}
+	if strings.HasPrefix(data, "\x1b") {
+		return false
+	}
+	for _, r := range data {
+		if r >= 0x20 && r != 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// LastPtySubmit returns the last time the user sent answer-like input (see
+// isSubmitInput) into the given leaf's PTY, or the zero time if none.
+func LastPtySubmit(sessionID string) time.Time {
+	ptyInterruptMu.RLock()
+	defer ptyInterruptMu.RUnlock()
+	return ptySubmit[sessionID]
+}
+
+// RegisterActiveSessionForTest marks a leaf as running the given agent with
+// the given launch command (so SessionLaunchCmd and agent-specific PTY prompt
+// detection see it) without starting a watcher. The returned func removes it.
+// Intended only for tests.
+func RegisterActiveSessionForTest(sessionID, agentID, cwd string, cmd []string) func() {
+	activeSesMu.Lock()
+	activeSessions[sessionID] = &watcherContext{cancel: func() {}, agentId: agentID, sessionId: sessionID, cwd: cwd, cmd: cmd}
+	activeSesMu.Unlock()
+	return func() {
+		activeSesMu.Lock()
+		delete(activeSessions, sessionID)
+		activeSesMu.Unlock()
+	}
+}
+
+// SetPtySubmitForTest records (or clears) the last submit-input timestamp for
+// a leaf. Intended only for tests.
+func SetPtySubmitForTest(sessionID string, at time.Time) {
+	ptyInterruptMu.Lock()
+	if at.IsZero() {
+		delete(ptySubmit, sessionID)
+	} else {
+		ptySubmit[sessionID] = at
+	}
+	ptyInterruptMu.Unlock()
+}
+
+// SessionLaunchCmd returns the exact command line the agent PTY for the given
+// leaf was started with (after Caw's resume/session-id augmentation), or nil
+// when the leaf is not running a tracked agent. Watchers use it to bind to the
+// native session the launch pinned (e.g. Claude's --session-id/--resume id)
+// instead of guessing from file modification times.
+func SessionLaunchCmd(sessionID string) []string {
+	activeSesMu.Lock()
+	defer activeSesMu.Unlock()
+	if w, ok := activeSessions[sessionID]; ok {
+		return append([]string(nil), w.cmd...)
+	}
+	return nil
 }
 
 // handlePtyFocus records whether the given leaf/session id currently has the
@@ -470,13 +575,89 @@ func containsPtyPromptMarker(s string) bool {
 		strings.Contains(s, "Choose now")
 }
 
+// ansiSeqRe matches terminal control sequences (CSI, OSC, and two-byte ESC
+// sequences). TUIs built on differential renderers (Claude Code / Ink) place
+// words with cursor-positioning sequences instead of literal spaces
+// ("Do\x1b[5Gyou\x1b[9Gwant..."), so prompt detection must replace every
+// control sequence with a space before matching text.
+var ansiSeqRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|[\x00-\x1f\x7f]`)
+
+// spaceRunRe collapses whitespace runs left behind by ansiSeqRe.
+var spaceRunRe = regexp.MustCompile(`\s+`)
+
+// normalizePtyText strips terminal control sequences from a raw PTY chunk and
+// collapses whitespace so on-screen text can be matched as plain words.
+func normalizePtyText(s string) string {
+	s = ansiSeqRe.ReplaceAllString(s, " ")
+	return spaceRunRe.ReplaceAllString(s, " ")
+}
+
+// claudePromptRe matches Claude Code's tool permission dialog as it appears
+// in the normalized PTY stream: "Do you want to proceed? ❯ 1. Yes",
+// "Do you want to make this edit to x.go? ❯ 1. Yes", "Do you want to create
+// x? ❯ 1. Yes", "Do you want to allow Claude to fetch this content? ❯ 1. Yes"
+// ... Claude writes nothing to its transcript while such a dialog is pending,
+// so the PTY stream is the only ask-time signal.
+var claudePromptRe = regexp.MustCompile(`Do you want to [^?]{0,240}\? (?:❯ )?1\. Yes`)
+
+// ptyNormTailKeep is how many trailing normalized characters are carried
+// between chunks for regex-based prompt detection (Claude's dialog question
+// and its first option may arrive in separate reads).
+const ptyNormTailKeep = 320
+
+// tailRunes returns the last n runes of s.
+func tailRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
+}
+
+func containsClaudePromptMarker(normalized string) bool {
+	return claudePromptRe.MatchString(normalized)
+}
+
 // handlePtyOutput scans raw PTY output for interactive prompt footers and
 // records the sighting time per leaf. Called from terminal.ReadLoop on every
 // read. A small tail of the previous chunk is prepended so a footer split
-// across two reads is still detected.
+// across two reads is still detected. The marker set depends on the agent
+// running in the leaf: Claude Code's permission dialogs are matched on
+// ANSI-normalized text, everything else uses the Fx footer markers.
 func handlePtyOutput(id string, data string) {
+	activeSesMu.Lock()
+	agentID := ""
+	if w, ok := activeSessions[id]; ok {
+		agentID = w.agentId
+	}
+	activeSesMu.Unlock()
+
 	ptyPendingInputMu.Lock()
 	defer ptyPendingInputMu.Unlock()
+	if agentID == "claude" {
+		// Hold back an escape sequence cut off at the end of this read so
+		// its parameter bytes are not mistaken for text.
+		data = ptyRawCarry[id] + data
+		delete(ptyRawCarry, id)
+		if i := strings.LastIndexByte(data, 0x1b); i >= 0 && len(data)-i < 64 {
+			if loc := ansiSeqRe.FindStringIndex(data[i:]); loc == nil || loc[0] != 0 || loc[1] <= 1 {
+				ptyRawCarry[id] = data[i:]
+				data = data[:i]
+			}
+		}
+		// Match against the whole chunk plus the carried tail: a single
+		// read often holds the entire dialog (question, options, footer),
+		// so trimming before matching could cut the question off.
+		search := ptyOutputTail[id] + normalizePtyText(data)
+		if containsClaudePromptMarker(search) {
+			ptyPendingInput[id] = time.Now()
+			// Drop the matched text so the same dialog render is not
+			// re-detected from the carried tail on the next chunk.
+			search = ""
+		}
+		ptyOutputTail[id] = tailRunes(search, ptyNormTailKeep)
+		return
+	}
 	search := ptyOutputTail[id] + data
 	if len(search) > ptyTailKeep {
 		ptyOutputTail[id] = search[len(search)-ptyTailKeep:]
@@ -507,6 +688,7 @@ func ClearPtyPendingInput(sessionID string) {
 	ptyPendingInputMu.Lock()
 	delete(ptyPendingInput, sessionID)
 	delete(ptyOutputTail, sessionID)
+	delete(ptyRawCarry, sessionID)
 	ptyPendingInputMu.Unlock()
 }
 
@@ -831,6 +1013,10 @@ func handleSessionExit(id string, exitCode int, exitErr error, killed bool) {
 	delete(ptyFocus, id)
 	ptyFocusMu.Unlock()
 
+	ptyInterruptMu.Lock()
+	delete(ptySubmit, id)
+	ptyInterruptMu.Unlock()
+
 	ClearPtyPendingInput(id)
 
 	if !crashed {
@@ -1056,10 +1242,13 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}
 
 	// lastActivity tracks when the watcher last received an actual status change
-	// from the agent log.
-	lastActivity := time.Now()
-	// lastHeartbeat tracks the last poll confirmation from the watcher.
-	lastHeartbeat := time.Now()
+	// from the agent log. lastHeartbeat tracks the last poll confirmation from
+	// the watcher. Both are written by the watcher goroutine and read by the
+	// watchdog goroutine below, so they are stored as atomic UnixNano values.
+	var lastActivityNs, lastHeartbeatNs atomic.Int64
+	lastActivityNs.Store(time.Now().UnixNano())
+	lastHeartbeatNs.Store(time.Now().UnixNano())
+	since := func(v *atomic.Int64) time.Duration { return time.Since(time.Unix(0, v.Load())) }
 
 	// Idle-timeout watchdog: if the agent hasn't emitted a status change in
 	// idleTimeout seconds, or if the watcher itself has stopped calling the
@@ -1092,7 +1281,7 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if time.Since(lastHeartbeat) > 30*time.Second || time.Since(lastActivity) > idleTimeout {
+				if since(&lastHeartbeatNs) > 30*time.Second || since(&lastActivityNs) > idleTimeout {
 					// If the PTY has produced output recently, the agent
 					// process is still alive and actively running a tool —
 					// don't revert to idle.
@@ -1129,11 +1318,12 @@ func watchAgent(ctx context.Context, wCtx *watcherContext) {
 	}()
 
 	watcher.Watch(ctx, wCtx.sessionId, wCtx.cwd, wCtx.resume, func(status, tool, details, title string) {
-		lastActivity = time.Now()
-		lastHeartbeat = time.Now()
+		now := time.Now().UnixNano()
+		lastActivityNs.Store(now)
+		lastHeartbeatNs.Store(now)
 		updateStatus(wCtx.sessionId, wCtx.agentId, wCtx.cwd, status, tool, details, title, "watcher")
 	}, func() {
-		lastHeartbeat = time.Now()
+		lastHeartbeatNs.Store(time.Now().UnixNano())
 	})
 }
 

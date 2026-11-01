@@ -65,4 +65,11 @@ type ExplainStatus struct {
 	// LastPtyInterrupt is the most recent time the user sent the interrupt key
 	// sequence into the leaf's PTY, or "" if none.
 	LastPtyInterrupt string `json:"lastPtyInterrupt,omitempty"`
+	// LastPtyPrompt is the last time an interactive prompt (e.g. a Claude
+	// Code permission dialog) was seen in the leaf's PTY output and not yet
+	// cleared by the watcher, or "" if none.
+	LastPtyPrompt string `json:"lastPtyPrompt,omitempty"`
+	// LastPtySubmit is the last time the user sent answer-like input
+	// (Enter, ESC, Ctrl+C, typed keys) into the leaf's PTY, or "" if none.
+	LastPtySubmit string `json:"lastPtySubmit,omitempty"`
 }

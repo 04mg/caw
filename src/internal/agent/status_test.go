@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -205,5 +206,116 @@ func TestIsResumeCmdRecognizesExactSessionForms(t *testing.T) {	cases := []struc
 		if got := isResumeCmd(c.cmd); got != c.want {
 			t.Errorf("%s: isResumeCmd(%v) = %v, want %v", c.name, c.cmd, got, c.want)
 		}
+	}
+}
+
+func TestIsSubmitInput(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"\r", true},
+		{"1", true},
+		{"hello", true},
+		{"\x03", true},
+		{"\x1b", false}, // recorded by the ESC debounce instead
+		{"\x1b[A", false},
+		{"\x1b[I", false},
+		{"\x1b[O", false},
+		{"\x1b[24;1R", false},
+		{"\x1b[200~", false},
+		{"\x1b[Z", false},
+	}
+	for _, c := range cases {
+		if got := isSubmitInput(c.in); got != c.want {
+			t.Errorf("isSubmitInput(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestHandlePtyInputRecordsSubmit(t *testing.T) {
+	const id = "submit-leaf"
+	SetPtySubmitForTest(id, time.Time{})
+	handlePtyInput(id, "\x1b[A") // navigation only
+	if !LastPtySubmit(id).IsZero() {
+		t.Fatal("arrow key must not count as submit")
+	}
+	handlePtyInput(id, "\r")
+	if LastPtySubmit(id).IsZero() {
+		t.Fatal("Enter must count as submit")
+	}
+	SetPtySubmitForTest(id, time.Time{})
+	handlePtyInput(id, "\x1b")
+	time.Sleep(150 * time.Millisecond)
+	if LastPtySubmit(id).IsZero() {
+		t.Fatal("standalone ESC must count as submit after its debounce")
+	}
+	SetPtySubmitForTest(id, time.Time{})
+	handlePtyInput(id, "\x1b")
+	handlePtyInput(id, "[B") // fragmented arrow key
+	time.Sleep(150 * time.Millisecond)
+	if !LastPtySubmit(id).IsZero() {
+		t.Fatal("fragmented escape sequence must not count as submit")
+	}
+}
+
+// claudePermissionDialogRaw is a real chunk of Claude Code 2.1 PTY output
+// rendering a Bash permission dialog: words are positioned with cursor
+// movement sequences instead of spaces.
+const claudePermissionDialogRaw = "\x1b[1C\x1b[2B\x1b[1mThis\x1b[6Gcommand\x1b[14Grequires\x1b[24Gapproval\r\x1b[1C\x1b[2BDo\x1b[5Gyou\x1b[9Gwant\x1b[14Gto\x1b[17Gproceed?\r\x1b[1C\x1b[1B\x1b[38;5;153m❯\x1b[4G\x1b[38;5;246m1. \x1b[38;5;153mYes\r\x1b[3C\x1b[1B2. \x1b[39mYes, and don’t ask again\r\x1b[1C\x1b[2B\x1b[38;5;246mEsc to cancel · Tab to amend\r"
+
+func TestClaudePermissionDialogDetection(t *testing.T) {
+	if !containsClaudePromptMarker(normalizePtyText(claudePermissionDialogRaw)) {
+		t.Fatalf("dialog not detected; normalized=%q", normalizePtyText(claudePermissionDialogRaw))
+	}
+	for _, s := range []string{
+		"Do you want to make this edit to README.md? ❯ 1. Yes 2. Yes, allow all edits",
+		"Do you want to create notes.txt? 1. Yes",
+	} {
+		if !containsClaudePromptMarker(s) {
+			t.Errorf("expected marker in %q", s)
+		}
+	}
+	for _, s := range []string{
+		"● Do you want to proceed with the refactor? Let me know.",
+		"✻ Brewing… (3s · esc to interrupt)",
+		"❯ 1. Red 2. Blue",
+	} {
+		if containsClaudePromptMarker(s) {
+			t.Errorf("unexpected marker in %q", s)
+		}
+	}
+
+	const id = "claude-dialog-leaf"
+	defer RegisterActiveSessionForTest(id, "claude", "/tmp", []string{"claude"})()
+	ClearPtyPendingInput(id)
+	// Split across two reads in the middle of the dialog.
+	half := len(claudePermissionDialogRaw) / 2
+	handlePtyOutput(id, claudePermissionDialogRaw[:half])
+	handlePtyOutput(id, claudePermissionDialogRaw[half:])
+	if LastPtyPendingInput(id).IsZero() {
+		t.Fatal("split dialog not detected")
+	}
+	ClearPtyPendingInput(id)
+	// Fx footer markers do not apply to a Claude leaf.
+	handlePtyOutput(id, "1–7 Choose now    Enter Answer    Esc Cancel")
+	if !LastPtyPendingInput(id).IsZero() {
+		t.Fatal("Fx marker must not trigger for a Claude leaf")
+	}
+}
+
+// TestClaudePermissionDialogInOneLongChunk: the whole dialog (with long
+// option lines after the question) commonly arrives in a single read; the
+// question must not be trimmed away before matching.
+func TestClaudePermissionDialogInOneLongChunk(t *testing.T) {
+	const id = "claude-dialog-long"
+	defer RegisterActiveSessionForTest(id, "claude", "/tmp", []string{"claude"})()
+	ClearPtyPendingInput(id)
+	long := claudePermissionDialogRaw + strings.Repeat("\x1b[38;5;246m╌", 140) +
+		"\r\x1b[3C\x1b[1B2. Yes, and always allow access to /tmp/caw-e2e/ws-188909-1 from this project\r\x1b[3C\x1b[1B3. Yes, and switch to auto mode · auto mode handles these prompts for you\r\x1b[3C\x1b[1B4. No\r\x1b[1C\x1b[2BEsc to cancel · Tab to amend"
+	handlePtyOutput(id, long)
+	if LastPtyPendingInput(id).IsZero() {
+		t.Fatal("dialog in a single long chunk not detected")
 	}
 }
