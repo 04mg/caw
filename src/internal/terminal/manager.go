@@ -85,6 +85,7 @@ func (m *SessionManager) Create(req CreateRequest) (string, error) {
 	m.sessionsMu.Lock()
 	m.sessions[id] = sess
 	m.sessionsMu.Unlock()
+	setTtyName(id, ps.TtyName())
 
 	if m.store != nil && id != "" && len(req.Cmd) > 0 {
 		if aid := agentBaseName(req.Cmd[0]); isKnownAgent(aid) {
@@ -113,6 +114,7 @@ func (m *SessionManager) buildOnExit(sess *Session, cwd, id string) func() {
 
 		m.sessionsMu.Lock()
 		delete(m.sessions, id)
+		clearTtyName(id)
 
 		stillInUse := false
 		for _, s := range m.sessions {

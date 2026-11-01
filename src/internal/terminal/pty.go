@@ -18,6 +18,15 @@ func (p *Pty) Close() error {
 	return p.ptmx.Close()
 }
 
+// TtyName returns the path of the PTY's slave device (e.g. "/dev/pts/3") as
+// seen by the child process, or "" when unavailable (e.g. Windows ConPTY).
+func (p *Pty) TtyName() string {
+	if p == nil || p.ptmx == nil {
+		return ""
+	}
+	return p.ptmx.Name()
+}
+
 func (p *Pty) Kill() error {
 	if p.cmd != nil && p.cmd.Process != nil {
 		return p.cmd.Process.Kill()

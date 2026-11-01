@@ -35,9 +35,10 @@ func TestEncodeOmpSessionDirTempRelative(t *testing.T) {
 		tmp = resolved
 	}
 
+	// omp: encodeRelativeSessionDirName("-tmp", "") returns the bare prefix.
 	got := encodeOmpSessionDir(tmp)
-	if got != "-tmp-" {
-		t.Fatalf("temp root encode = %q, want %q", got, "-tmp-")
+	if got != "-tmp" {
+		t.Fatalf("temp root encode = %q, want %q", got, "-tmp")
 	}
 
 	got = encodeOmpSessionDir(filepath.Join(tmp, "caw-agent-test"))
@@ -182,5 +183,18 @@ func TestPiStatusForMessageToolSuccessIsThinking(t *testing.T) {
 	})
 	if status != "thinking" {
 		t.Fatalf("tool success status = %q, want thinking", status)
+	}
+}
+
+func TestParseOmpBreadcrumb(t *testing.T) {
+	got := parseOmpBreadcrumb("/home/u/proj\n/home/u/.omp/agent/sessions/-proj/2026_x.jsonl\ncwdstat 1 2\n")
+	if got != "/home/u/.omp/agent/sessions/-proj/2026_x.jsonl" {
+		t.Fatalf("absolute = %q", got)
+	}
+	if got := parseOmpBreadcrumb("/home/u/proj\n.omp-sessions/s.jsonl\nfresh\n"); got != "/home/u/proj/.omp-sessions/s.jsonl" {
+		t.Fatalf("relative = %q", got)
+	}
+	if got := parseOmpBreadcrumb("/home/u/proj\n"); got != "" {
+		t.Fatalf("truncated = %q", got)
 	}
 }
