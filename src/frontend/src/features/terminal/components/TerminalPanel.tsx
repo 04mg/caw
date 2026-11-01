@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, Clipboard, RotateCw } from 'lucide-react'
+import { Copy, Clipboard, RotateCw, ArrowDown } from 'lucide-react'
 import { attachTerminal, parkTerminal, releaseTerminal, getTerminal, getTerminalBackground, reconnectTerminalWs, setTerminalUserScrolling, isTerminalReplaying, type TerminalInstance } from '@/features/terminal/services/terminalRegistry'
 import { SmartContextMenu } from '@/features/explorer/components/SmartContextMenu'
 import { getCustomization, subscribePrefs } from '@/features/prefs/stores/prefsStore'
 import { setAllTerminalBackgroundTransparency } from '../services/terminalRegistry'
+import { attachTouchScroll, isTerminalAtBottom } from '../services/touchScroll'
 
 interface TerminalPanelProps {
   terminalId: string
@@ -43,6 +44,9 @@ function fallbackCopyToClipboard(text: string): boolean {
   }
 }
 
+// Rows the view must be scrolled up before the "jump to bottom" button shows.
+const JUMP_TO_BOTTOM_MIN_ROWS = 2
+
 export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalPanelProps) {
   const elRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -79,6 +83,9 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
   const [savedSelection, setSavedSelection] = useState('')
   const [tuiClipboard, setTuiClipboard] = useState('')
   const [background, setBackground] = useState(() => getCustomization().terminal.background)
+  // "Jump to bottom" button, shown while the scrollback is scrolled away from
+  // the latest output.
+  const [showJump, setShowJump] = useState(false)
 
   useEffect(() => subscribePrefs(() => {
     const next = getCustomization().terminal.background
@@ -105,6 +112,17 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     firstPaintRef.current = true
 
     const forceResizeTimers: ReturnType<typeof setTimeout>[] = []
+    const scrollSubs: { dispose: () => void }[] = []
+    let jumpRaf = 0
+    const checkJump = () => {
+      if (jumpRaf) return
+      jumpRaf = requestAnimationFrame(() => {
+        jumpRaf = 0
+        if (cancelled || !inst) return
+        const buf = inst.term.buffer.active
+        setShowJump(buf.type === 'normal' && buf.baseY - buf.viewportY > JUMP_TO_BOTTOM_MIN_ROWS)
+      })
+    }
 
     const flushResize = (force = false) => {
       fitTimerRef.current = null
@@ -217,6 +235,13 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         inst.term.focus()
       }
 
+      scrollSubs.push(
+        inst.term.onScroll(checkJump),
+        inst.term.onWriteParsed(checkJump),
+        inst.term.buffer.onBufferChange(checkJump),
+      )
+      checkJump()
+
       const ro = new ResizeObserver(() => {
         if (fitTimerRef.current) clearTimeout(fitTimerRef.current)
         // Coalesce rapid resizes (e.g. dragging a panel separator or the
@@ -284,6 +309,10 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
       }
       for (const t of forceResizeTimers) clearTimeout(t)
       forceResizeTimers.length = 0
+      for (const d of scrollSubs) d.dispose()
+      scrollSubs.length = 0
+      if (jumpRaf) cancelAnimationFrame(jumpRaf)
+      setShowJump(false)
       resizeObsRef.current?.disconnect()
       resizeObsRef.current = null
       // Desktop parks non-active terminals: the live xterm.js instance is
@@ -368,135 +397,22 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     }
   }, [])
 
+  // Touch scrolling (phones/tablets): pixel-smooth drag with momentum for
+  // the scrollback, wheel notches for TUIs. See touchScroll.ts. Like the
+  // desktop wheel below, scrolling up pins the view (incoming output can't
+  // yank it back) until the user returns to the bottom, taps "jump to
+  // bottom" or types.
   useEffect(() => {
     const el = elRef.current
     if (!el) return
-
-    const LINES_PER_PX = parseFloat(localStorage.getItem('caw:terminalScrollSensitivity') || '0.02')
-    const FRICTION = parseFloat(localStorage.getItem('caw:terminalScrollFriction') || '0.85')
-    const VELOCITY_THRESHOLD = parseFloat(localStorage.getItem('caw:terminalScrollVelocityThreshold') || '0.05')
-    const SCROLL_GRACE_MS = parseInt(localStorage.getItem('caw:terminalScrollGrace') || '1200', 10)
-
-    let lastY = 0
-    let lastX = 0
-    let lastTime = 0
-    let velocity = 0
-    let active = false
-    let rafId = 0
-    let graceTimer: ReturnType<typeof setTimeout> | null = null
-    let accumDelta = 0
-
-    const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      // xterm.js v6 creates a .xterm-scrollable-element overlay (sibling of
-      // .xterm-viewport) whose wheel handler drives viewport scrolling for
-      // non-TUI apps. Dispatching to .xterm-viewport would bubble to .xterm
-      // but never pass through .xterm-scrollable-element, so the ScrollableElement
-      // never sees the event and nothing scrolls. TUI apps work regardless
-      // because bindMouse's handler on .xterm captures the event and sends
-      // mouse escape sequences.
-      const target = el.querySelector('.xterm-scrollable-element') || el.querySelector('.xterm-viewport') || el
-      if (!target) return
-      accumDelta += deltaY
-      const wholeLines = Math.trunc(accumDelta)
-      if (wholeLines === 0) return
-      accumDelta -= wholeLines
-      target.dispatchEvent(new WheelEvent('wheel', {
-        deltaY: wholeLines,
-        deltaMode: WheelEvent.DOM_DELTA_LINE,
-        bubbles: true,
-        cancelable: true,
-        clientX,
-        clientY,
-      }))
-    }
-
-    const beginGrace = () => {
-      if (graceTimer) clearTimeout(graceTimer)
-      graceTimer = setTimeout(() => {
-        setTerminalUserScrolling(terminalId, false)
-        graceTimer = null
-      }, SCROLL_GRACE_MS)
-    }
-
-    const momentum = () => {
-      if (Math.abs(velocity) < VELOCITY_THRESHOLD) {
-        rafId = 0
-        beginGrace()
-        return
-      }
-      const delta = velocity * 16 * LINES_PER_PX
-      dispatchWheel(delta, lastX, lastY)
-      velocity *= FRICTION
-      rafId = requestAnimationFrame(momentum)
-    }
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return
-      if (keyboardOpenRef.current) return
-      if (rafId) {
-        cancelAnimationFrame(rafId)
-        rafId = 0
-      }
-      if (graceTimer) {
-        clearTimeout(graceTimer)
-        graceTimer = null
-      }
-      const t = e.touches[0]
-      lastY = t.clientY
-      lastX = t.clientX
-      lastTime = Date.now()
-      velocity = 0
-      accumDelta = 0
-      active = true
-      setTerminalUserScrolling(terminalId, true)
-    }
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (!active || e.touches.length !== 1) return
-      // Stop the event before xterm.js' own touchmove listener (registered on
-      // the inner .xterm element) runs in the bubble phase. xterm's
-      // handleTouchMove scrolls the viewport in raw touch pixels, which fights
-      // our fractional-line wheel synthesis and, for normal-buffer shells with
-      // scrollback, clamps ydisp to a bound on the first drag — leaving
-      // subsequent drags doing nothing. Capturing the event on the outer
-      // container and stopping propagation makes our synthetic wheel the sole
-      // scroll authority for both alt-buffer TUIs (arrow-key / mouse protocol)
-      // and normal-buffer shells (viewport scrollback).
-      e.preventDefault()
-      e.stopPropagation()
-      const t = e.touches[0]
-      const now = Date.now()
-      const dy = lastY - t.clientY
-      const dt = Math.max(1, now - lastTime)
-      velocity = dy / dt
-      lastY = t.clientY
-      lastX = t.clientX
-      lastTime = now
-      dispatchWheel(dy * LINES_PER_PX, t.clientX, t.clientY)
-    }
-
-    const onTouchEnd = () => {
-      if (!active) return
-      active = false
-      if (Math.abs(velocity) >= VELOCITY_THRESHOLD) {
-        rafId = requestAnimationFrame(momentum)
-      } else {
-        beginGrace()
-      }
-    }
-
-    el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
-    el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
-    el.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
-
+    const detach = attachTouchScroll(el, {
+      getTerm: () => getTerminal(terminalId)?.term,
+      isEnabled: () => !keyboardOpenRef.current,
+      onScrollStart: () => setTerminalUserScrolling(terminalId, true),
+      onScrollEnd: (atBottom) => setTerminalUserScrolling(terminalId, !atBottom),
+    })
     return () => {
-      if (rafId) cancelAnimationFrame(rafId)
-      if (graceTimer) clearTimeout(graceTimer)
-      el.removeEventListener('touchstart', onTouchStart, { capture: true } as EventListenerOptions)
-      el.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions)
-      el.removeEventListener('touchend', onTouchEnd, { capture: true } as EventListenerOptions)
-      el.removeEventListener('touchcancel', onTouchEnd, { capture: true } as EventListenerOptions)
+      detach()
       setTerminalUserScrolling(terminalId, false)
     }
   }, [terminalId])
@@ -534,8 +450,7 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
           setTerminalUserScrolling(terminalId, true)
           return
         }
-        const buf = inst.term.buffer.active
-        if (buf.viewportY >= buf.baseY) {
+        if (isTerminalAtBottom(inst.term)) {
           setTerminalUserScrolling(terminalId, false)
         }
       })
@@ -615,6 +530,14 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
     setContextMenu(null)
   }
 
+  const handleJumpToBottom = () => {
+    const t = getTerminal(terminalId)
+    if (!t) return
+    t.term.scrollToBottom()
+    setTerminalUserScrolling(terminalId, false)
+    setShowJump(false)
+  }
+
   const handleReload = (e: React.MouseEvent) => {
     e.stopPropagation()
     setContextMenu(null)
@@ -635,6 +558,21 @@ export function TerminalPanel({ terminalId, cwd, cmd, env, isActive }: TerminalP
         </div>
       )}
       <div ref={elRef} className="relative z-[1] h-full w-full overflow-hidden" style={{ backgroundColor: background.assetId || background.applyToPage ? 'transparent' : getTerminalBackground() }} />
+      {showJump && (
+        <button
+          type="button"
+          onClick={handleJumpToBottom}
+          // Don't steal focus from the terminal (or pop the soft keyboard).
+          onMouseDown={(e) => e.preventDefault()}
+          onContextMenu={(e) => e.stopPropagation()}
+          aria-label="Jump to bottom"
+          title="Jump to bottom"
+          data-testid={`terminal-jump-bottom-${terminalId}`}
+          className="absolute bottom-3 right-3 z-[2] flex h-9 w-9 items-center justify-center rounded-full border border-border bg-secondary/85 text-foreground/80 shadow-md backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+        >
+          <ArrowDown size={16} />
+        </button>
+      )}
       {contextMenu && (
         <SmartContextMenu x={contextMenu.x} y={contextMenu.y} ref={contextMenuRef}>
           <button
